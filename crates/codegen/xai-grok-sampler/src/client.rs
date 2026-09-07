@@ -87,6 +87,13 @@ impl GrokRequestHeaders<'_> {
     }
 }
 
+/// Gateways may identify heartbeats by SSE event name or the top-level JSON type.
+fn is_response_keepalive(event_name: &str, data: &str) -> bool {
+    event_name == "keepalive"
+        || serde_json::from_str::<serde_json::Value>(data)
+            .is_ok_and(|value| value.get("type").and_then(|v| v.as_str()) == Some("keepalive"))
+}
+
 /// Deserialize a Responses SSE event, stripping unknown tools and rewriting terminal `total_tokens` from `context_details`.
 pub(crate) fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
     let mut event = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
@@ -1452,7 +1459,7 @@ impl SamplingClient {
 
         let doom_loop_for_stream = doom_loop.clone();
 
-        // The scan item is an `Option`: `Some(None)` skips an absorbed doom-loop event without terminating the stream (`filter_map` below)
+        // The scan item is an `Option`: `Some(None)` skips a heartbeat or absorbed doom-loop event without terminating the stream (`filter_map` below)
         // An outer `None` still ends the stream
         let events = event_stream
             .scan(false, move |had_transport_error, event_res| {
@@ -1484,6 +1491,8 @@ impl SamplingClient {
                             Some(None)
                         } else if let Some(stream_error) = try_parse_stream_error(data) {
                             Some(Some(Err(stream_error)))
+                        } else if is_response_keepalive(&event.event, data) {
+                            Some(None)
                         } else {
                             Some(Some(deserialize_response_event(data)))
                         }
@@ -2120,6 +2129,10 @@ fn stream_collect_error(info: SamplingErrorInfo) -> SamplingError {
         error_code: info.error_code,
     }
 }
+
+#[cfg(test)]
+#[path = "client_keepalive_tests.rs"]
+mod keepalive_tests;
 
 #[cfg(test)]
 mod tests {
