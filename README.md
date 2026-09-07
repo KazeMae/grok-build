@@ -1,3 +1,7 @@
+> **Personal fork:** [KazeMae/grok-build](https://github.com/KazeMae/grok-build) maintains local compatibility fixes on `main`.
+> See [FORK.md](FORK.md) for the patch list, verification, builds, and upstream synchronization.
+> The installation commands below download official binaries, not this fork's patched build.
+
 <div align="center">
 
 <h1>
