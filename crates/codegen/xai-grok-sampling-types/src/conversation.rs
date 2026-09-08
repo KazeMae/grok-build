@@ -5,6 +5,7 @@
 
 mod chat_completions;
 mod messages;
+mod reasoning_portability;
 mod responses;
 
 pub use chat_completions::{conversation_item_to_chat_message, conversation_to_chat_messages};

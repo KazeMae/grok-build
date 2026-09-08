@@ -1,3 +1,4 @@
+use super::reasoning_portability::reasoning_is_portable_to_responses;
 use super::*;
 
 /// Flatten `response.output` into `ConversationItem`s, preserving emission order.
@@ -209,6 +210,9 @@ fn conversation_item_to_input_items(item: &ConversationItem) -> Vec<rs::InputIte
             })]
         }
         ConversationItem::Reasoning(r) => {
+            if !reasoning_is_portable_to_responses(r) {
+                return Vec::new();
+            }
             // `status` is output-only and rejected on input.
             let mut r = r.clone();
             r.status = None;

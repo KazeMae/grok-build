@@ -383,3 +383,66 @@ fn upgrade_legacy_reasoning_singular_anthropic_no_id() {
     assert_eq!(r.id, "");
     assert_eq!(r.encrypted_content.as_deref(), Some("signature-bytes-here"));
 }
+
+fn assistant_block_types(json: &serde_json::Value) -> Vec<&str> {
+    json["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .and_then(|m| m["content"].as_array())
+        .unwrap()
+        .iter()
+        .filter_map(|b| b["type"].as_str())
+        .collect()
+}
+
+#[test]
+fn messages_omits_openai_and_xai_thinking_keeps_text() {
+    let req = ConversationRequest::from_items(vec![
+        ConversationItem::user("hi"),
+        reasoning_sibling("rs_1", "astra thought", Some("gAAAAAencrypted")),
+        ConversationItem::assistant("from astra"),
+        reasoning_sibling("tco_res", "grok thought", Some("tco_SEALED")),
+        ConversationItem::assistant("from grok"),
+    ]);
+    let json = serde_json::to_value(build_messages_request(&req)).unwrap();
+    let types = assistant_block_types(&json);
+    assert!(
+        !types.contains(&"thinking"),
+        "foreign encrypted blobs must not become Messages thinking: {json:#}"
+    );
+    let texts: Vec<&str> = json["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .flat_map(|m| m["content"].as_array().unwrap())
+        .filter(|b| b["type"] == "text")
+        .filter_map(|b| b["text"].as_str())
+        .collect();
+    assert_eq!(texts, vec!["from astra", "from grok"], "{json:#}");
+}
+
+#[test]
+fn messages_keeps_anthropic_thinking_signature() {
+    let req = ConversationRequest::from_items(vec![
+        ConversationItem::user("hi"),
+        reasoning_sibling("", "claude thought", Some("CAsignature")),
+        ConversationItem::assistant("ok"),
+    ]);
+    let json = serde_json::to_value(build_messages_request(&req)).unwrap();
+    let blocks = json["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .and_then(|m| m["content"].as_array())
+        .unwrap();
+    let thinking = blocks
+        .iter()
+        .find(|b| b["type"] == "thinking")
+        .expect("Claude thinking must stay on Messages");
+    assert_eq!(thinking["signature"], "CAsignature");
+    assert_eq!(thinking["thinking"], "claude thought");
+}
