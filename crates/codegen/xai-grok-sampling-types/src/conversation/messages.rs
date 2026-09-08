@@ -1,3 +1,4 @@
+use super::reasoning_portability::reasoning_is_portable_to_messages;
 use super::*;
 
 /// Marks the last block that can carry one, scanning back past `Thinking`, which the API rejects a breakpoint on.
@@ -248,8 +249,12 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
                     cache_control: None,
                 });
             }
-            // `tco_*` blobs carry only `signature`; real reasoning sets `thinking`
+            // `tco_*` / `gAAAAA*` blobs are not Anthropic signatures; replaying them
+            // 400s with `Invalid signature in thinking block`. History is unchanged.
             ConversationItem::Reasoning(r) => {
+                if !reasoning_is_portable_to_messages(r) {
+                    continue;
+                }
                 flush_tool_results(&mut pending_tool_results, &mut messages);
                 let thinking = reasoning_item_text(r);
                 let signature = r

@@ -1626,3 +1626,42 @@ fn serialized_body_contains_no_placeholder_strings() {
         "both reasoning siblings must be present"
     );
 }
+
+fn input_reasoning_ids(req: &ConversationRequest) -> Vec<String> {
+    input_items_json(req)
+        .into_iter()
+        .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("reasoning"))
+        .filter_map(|v| v.get("id").and_then(|id| id.as_str()).map(str::to_owned))
+        .collect()
+}
+
+#[test]
+fn responses_omits_claude_thinking_keeps_openai_and_xai() {
+    let req = ConversationRequest::from_items(vec![
+        ConversationItem::user("hi"),
+        reasoning_sibling("", "claude thought", Some("CAsignature")),
+        ConversationItem::assistant("from claude"),
+        reasoning_sibling("rs_1", "astra thought", Some("gAAAAAencrypted")),
+        ConversationItem::assistant("from astra"),
+        reasoning_sibling("tco_res", "grok thought", Some("tco_SEALED")),
+        ConversationItem::assistant("from grok"),
+    ]);
+    let ids = input_reasoning_ids(&req);
+    assert_eq!(
+        ids,
+        vec!["rs_1".to_string(), "tco_res".to_string()],
+        "{ids:?}"
+    );
+    let input = input_items_json(&req);
+    let texts: Vec<&str> = input
+        .iter()
+        .filter(|v| v.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+        .filter_map(|v| v.get("content").and_then(|c| c.as_str()))
+        .collect();
+    assert!(
+        texts.contains(&"from claude")
+            && texts.contains(&"from astra")
+            && texts.contains(&"from grok"),
+        "assistant text must survive outbound reasoning sanitizing: {input:?}"
+    );
+}

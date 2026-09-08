@@ -77,6 +77,8 @@ Grok supports three API backends. Set `api_backend` in your `[model.*]` config t
 
 When you omit `api_backend`, Grok uses `chat_completions`.
 
+Switching mid-session across backends (for example Responses `gpt-6-astra` to Messages Claude) keeps the full transcript. On the next request Grok omits thinking/reasoning blobs the destination protocol cannot verify — OpenAI `gAAAAA…` / xAI `tco_…` signatures on Messages, and Anthropic `CA…` / empty-id items on Responses. That avoids `Invalid signature in thinking block` and `Invalid 'input[N].id': ''` without a lossy compact. Distinct `model_family` values still trigger a separate compact.
+
 To send provider-specific authentication or version headers -- for example, Anthropic's `x-api-key` -- use the `extra_headers` field described below. Grok sends those headers verbatim with every request to the endpoint.
 
 ---

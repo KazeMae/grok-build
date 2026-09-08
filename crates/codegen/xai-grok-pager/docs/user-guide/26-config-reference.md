@@ -369,7 +369,7 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `model.<id>.max_completion_tokens` | `number` | `yes` | `user` | Per-model max completion tokens. |
 | `model.<id>.max_retries` | `number` | `yes` | `user` | Inference retries for this model. |
 | `model.<id>.model` | `string` | `yes` | `user` | Model id sent to the API. |
-| `model.<id>.model_family` | `string` | `yes` | `user` | Family id used for compaction and capability grouping. |
+| `model.<id>.model_family` | `string` | `yes` | `user` | Family id used for compaction and capability grouping. Distinct families trigger a lossy compact on `/model`. Cross-backend thinking is omitted on the outbound request instead (conversation history is kept). |
 | `model.<id>.model_provider` | `string` | `yes` | `user` | Named `[model_providers.<name>]` provider id for this model. |
 | `model.<id>.name` | `string` | `yes` | `user` | Label shown in the model picker. |
 | `model.<id>.query_params` | `map<string,string>` | `yes` | `user` | Extra query parameters on this model's requests. |
