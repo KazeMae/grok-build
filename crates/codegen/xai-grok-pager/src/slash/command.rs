@@ -7,6 +7,7 @@ use crate::app::actions::Action;
 use crate::app::bundle::BundleState;
 use crate::slash::mode_support::ModeSupport;
 use agent_client_protocol as acp;
+use xai_grok_shell::sampling::types::ReasoningEffort;
 
 /// Provisional scheduled task info for immediate display in the tasks pane.
 ///
@@ -64,6 +65,28 @@ pub enum CommandResult {
 }
 
 /// A suggestion item for command argument completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgPresentation {
+    /// Stable reasoning value used only to localize the visible label and
+    /// description. The option id in `insert_text` remains untouched.
+    ReasoningEffort(ReasoningEffort),
+    /// Client-owned model identity (bundled or exact first-party catalog
+    /// match) used only to localize picker description chrome. Model names,
+    /// ids, and inserted text stay opaque.
+    BundledModel {
+        model_id: &'static str,
+        is_current: bool,
+    },
+    /// A model row without trusted client-owned provenance. Its description
+    /// is server/user-owned and must bypass generic exact-phrase localization.
+    DynamicModel { is_current: bool },
+    /// A non-model row whose label and description are supplied by the server
+    /// or live session state. Preserve both fields byte-for-byte even if they
+    /// happen to equal a client-owned picker phrase.
+    Opaque,
+}
+
+/// A suggestion item for command argument completion.
 #[derive(Debug, Clone)]
 pub struct ArgItem {
     /// Display text shown in the dropdown.
@@ -74,6 +97,9 @@ pub struct ArgItem {
     pub insert_text: String,
     /// Description shown alongside the item.
     pub description: String,
+    /// Optional stable presentation metadata. This must never change the text
+    /// inserted into the prompt or the value sent to the model API.
+    pub presentation: Option<ArgPresentation>,
 }
 
 /// A saved or built-in workflow the `/workflow` picker can launch, sourced from ACP commands that carry `_meta.workflowSource`.
@@ -307,6 +333,19 @@ pub trait SlashCommand: Send + Sync {
     /// Whether this command is a skill (ACP-advertised with skill metadata).
     /// Used for visual theming (accent color, prefix glyph).
     fn is_skill(&self) -> bool {
+        false
+    }
+
+    /// Whether this ACP skill came from the trusted bundled-skill scope.
+    /// Used only to gate exact display-translation allowlists; command
+    /// identity and execution are unaffected.
+    fn is_bundled_skill(&self) -> bool {
+        false
+    }
+
+    /// Whether ACP metadata identifies this as a first-party product-chat
+    /// skill. This is display provenance only; execution remains unchanged.
+    fn is_product_chat_skill(&self) -> bool {
         false
     }
 

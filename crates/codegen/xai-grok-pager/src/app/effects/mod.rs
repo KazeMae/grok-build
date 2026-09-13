@@ -14,7 +14,8 @@ pub(super) use helpers::{
 };
 pub(crate) use helpers::{
     EffectMeta, RestoreProgressMsg, SessionFlags, acp_send_bounded, compact_error,
-    is_disk_full_error, parse_worktree_restore_payload, parse_worktree_strategy_summary,
+    is_disk_full_error, format_rate_limited_user_message_with_locale,
+    parse_worktree_restore_payload, parse_worktree_strategy_summary,
     persist_permission_mode_and_notify, persist_setting, sanitize_user_error,
 };
 #[cfg(feature = "local-workspace")]
@@ -46,7 +47,6 @@ use crate::unified_log as ulog;
 use xai_grok_shell::sampling::error::http_status_from_error;
 use xai_grok_shell::session::{ExtMethodResult, SessionInfoResponse};
 /// The shell's `x.ai/feedback/upload-trace` params. `intent` is omitted (not null) when absent, so a legacy upload's request stays byte-identical to the pre-intent shape.
-/// absent, so a legacy upload's request stays byte-identical to the pre-intent shape.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UploadTraceRequest {
@@ -80,6 +80,28 @@ pub(crate) async fn discover_mcp_servers(
         "mcp server discovery"
     );
     servers
+}
+
+fn switch_model_error_from_acp(
+    error: &acp::Error,
+    prev_model_id: &Option<acp::ModelId>,
+    is_api_key_auth: bool,
+    locale: &crate::locale::LocaleContext,
+) -> SwitchModelError {
+    use xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError;
+
+    if let Some(typed) = ModelSwitchIncompatibleAgentError::from_acp_error(error) {
+        SwitchModelError::IncompatibleAgent {
+            error: typed,
+            prev_model_id: prev_model_id.clone(),
+        }
+    } else {
+        SwitchModelError::Other(format_acp_error_with_locale(
+            error,
+            is_api_key_auth,
+            locale,
+        ))
+    }
 }
 fn apply_permission_mode_override(
     meta: &mut Option<acp::Meta>,
@@ -220,6 +242,7 @@ pub(crate) fn execute(
                 scrub_chat_workspace_bind_meta(&mut meta);
             }
             let preferred_for_preflight = preferred_session_id.clone();
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     if let Some(ref sid) = preferred_for_preflight {
@@ -267,6 +290,7 @@ pub(crate) fn execute(
                                     .meta(meta),
                                 &tx,
                                 "Session creation",
+                                locale.as_ref(),
                             )
                             .await
                     };
@@ -342,6 +366,7 @@ pub(crate) fn execute(
             }
             let restore_code = session_flags.restore_code;
             let resume_local_miss = session_flags.resume_local_miss.clone();
+            let locale = session_flags.locale.clone();
             tracing::info!(
                 ?restore_code,
                 ?load_session_id,
@@ -437,6 +462,7 @@ pub(crate) fn execute(
                                 .meta(meta),
                             &tx,
                             "Worktree session creation",
+                            locale.as_ref(),
                         )
                         .await;
                     match result {
@@ -481,6 +507,7 @@ pub(crate) fn execute(
             }
             let cwd = session_cwd.unwrap_or_else(|| cwd.to_path_buf());
             let acp_session_id = acp::SessionId::new(session_id);
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     let mcp_servers = discover_mcp_servers(cwd.clone()).await;
@@ -493,6 +520,7 @@ pub(crate) fn execute(
                                 .meta(meta),
                             &tx,
                             "Session loading",
+                            locale.as_ref(),
                         )
                         .await;
                     let load_elapsed_ms = load_started.elapsed().as_millis() as u64;
@@ -1065,6 +1093,7 @@ pub(crate) fn execute(
             );
             let target_cwd = cwd.to_path_buf();
             let ptx = progress_tx.clone();
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     let Some((auth_manager, registry_client, storage_client)) = setup
@@ -1083,54 +1112,99 @@ pub(crate) fn execute(
                             Box::new(move |event| {
                                 let msg = match (event.phase, event.step) {
                                     (RestorePhase::Download, PhaseStep::Start) => {
-                                        Some("Downloading session archives...".to_string())
-                                    }
-                                    (RestorePhase::Download, PhaseStep::End) => {
                                         Some(
-                                            format!(
-                                "Downloads finished ({}).",
-                                format_restore_elapsed(event.elapsed),
-                            ),
+                                            locale
+                                                .named_text(
+                                                    "session.restore.progress.download_start",
+                                                    "Downloading session archives...",
+                                                )
+                                                .into_owned(),
                                         )
                                     }
+                                    (RestorePhase::Download, PhaseStep::End) => {
+                                        let elapsed = format_restore_elapsed(event.elapsed);
+                                        Some(localized_named(
+                                            locale.as_ref(),
+                                            "session.restore.progress.download_done",
+                                            "Downloads finished ({elapsed}).",
+                                            &[("elapsed", &elapsed)],
+                                        ))
+                                    }
                                     (RestorePhase::Codebase, PhaseStep::Start) => {
-                                        Some("Restoring code...".to_string())
+                                        Some(
+                                            locale
+                                                .named_text(
+                                                    "session.restore.progress.code_start",
+                                                    "Restoring code...",
+                                                )
+                                                .into_owned(),
+                                        )
                                     }
                                     (RestorePhase::Codebase, PhaseStep::End) => {
-                                        event
-                                            .detail
-                                            .as_ref()
-                                            .map(|detail| format!("Code restored ({detail})."))
+                                        event.detail.as_ref().map(|detail| {
+                                            localized_named(
+                                                locale.as_ref(),
+                                                "session.restore.progress.code_done",
+                                                "Code restored ({detail}).",
+                                                &[("detail", detail)],
+                                            )
+                                        })
                                     }
                                     (RestorePhase::Memory, PhaseStep::Start) => {
-                                        Some("Restoring memory...".to_string())
+                                        Some(
+                                            locale
+                                                .named_text(
+                                                    "session.restore.progress.memory_start",
+                                                    "Restoring memory...",
+                                                )
+                                                .into_owned(),
+                                        )
                                     }
                                     (RestorePhase::SessionState, PhaseStep::Start) => {
-                                        Some("Restoring session state...".to_string())
+                                        Some(
+                                            locale
+                                                .named_text(
+                                                    "session.restore.progress.state_start",
+                                                    "Restoring session state...",
+                                                )
+                                                .into_owned(),
+                                        )
                                     }
                                     (RestorePhase::SessionState, PhaseStep::End) => {
-                                        event
-                                            .detail
-                                            .as_ref()
-                                            .map(|detail| format!("Session state restored ({detail})."))
+                                        event.detail.as_ref().map(|detail| {
+                                            localized_named(
+                                                locale.as_ref(),
+                                                "session.restore.progress.state_done",
+                                                "Session state restored ({detail}).",
+                                                &[("detail", detail)],
+                                            )
+                                        })
                                     }
                                     (RestorePhase::Finalize, _) => {
                                         let elapsed_secs = event.elapsed.as_secs();
-                                        let status = if event.incomplete {
-                                            "Restore incomplete"
-                                        } else {
-                                            "Restore complete"
-                                        };
-                                        if elapsed_secs >= 60 {
-                                            Some(
-                                                format!(
-                                        "{status} ({}m{:02}s).",
-                                        elapsed_secs / 60,
-                                        elapsed_secs % 60
-                                    ),
+                                        let elapsed = if elapsed_secs >= 60 {
+                                            format!(
+                                                "{}m{:02}s",
+                                                elapsed_secs / 60,
+                                                elapsed_secs % 60
                                             )
                                         } else {
-                                            Some(format!("{status} ({elapsed_secs}s)."))
+                                            format!("{elapsed_secs}s")
+                                        };
+                                        if event.incomplete {
+                                            Some(localized_named(
+                                                locale.as_ref(),
+                                                "session.restore.progress.incomplete",
+                                                "Restore incomplete ({elapsed}).",
+                                                &[("elapsed", &elapsed)],
+                                            ))
+                                        } else {
+                                            Some(localized_named(
+                                                locale.as_ref(),
+                                                "session.restore.progress.complete",
+                                                "Restore complete ({elapsed}).",
+                                                &[("elapsed", &elapsed)],
+                                            ))
                                         }
                                     }
                                     _ => None,
@@ -1230,6 +1304,7 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
             let is_api_key_auth = session_flags.is_api_key_auth;
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     ulog::info(
@@ -1273,7 +1348,9 @@ pub(crate) fn execute(
                     TaskResult::PromptResponse {
                         agent_id,
                         result: result
-                            .map_err(|e| format_acp_error(&e, is_api_key_auth)),
+                            .map_err(|e| {
+                                format_acp_error_with_locale(&e, is_api_key_auth, locale.as_ref())
+                            }),
                         http_status,
                         prompt_id: Some(prompt_id),
                     }
@@ -1285,6 +1362,7 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
             let is_api_key_auth = session_flags.is_api_key_auth;
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     ulog::info(
@@ -1326,7 +1404,11 @@ pub(crate) fn execute(
                             agent_id,
                             session_id,
                             prompt_id,
-                            error: format_acp_error(e, is_api_key_auth),
+                            error: format_acp_error_with_locale(
+                                e,
+                                is_api_key_auth,
+                                locale.as_ref(),
+                            ),
                             blocks,
                         };
                     }
@@ -1337,7 +1419,9 @@ pub(crate) fn execute(
                     TaskResult::PromptResponse {
                         agent_id,
                         result: result
-                            .map_err(|e| format_acp_error(&e, is_api_key_auth)),
+                            .map_err(|e| {
+                                format_acp_error_with_locale(&e, is_api_key_auth, locale.as_ref())
+                            }),
                         http_status,
                         prompt_id: Some(prompt_id),
                     }
@@ -1347,6 +1431,7 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
             let is_api_key_auth = session_flags.is_api_key_auth;
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     use xai_grok_shell::extensions::prompt_meta::PromptBlockMeta;
@@ -1399,7 +1484,9 @@ pub(crate) fn execute(
                     TaskResult::PromptResponse {
                         agent_id,
                         result: result
-                            .map_err(|e| format_acp_error(&e, is_api_key_auth)),
+                            .map_err(|e| {
+                                format_acp_error_with_locale(&e, is_api_key_auth, locale.as_ref())
+                            }),
                         http_status,
                         prompt_id: Some(prompt_id),
                     }
@@ -1641,6 +1728,7 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             let screen_mode = session_flags.screen_mode_label;
             let is_api_key_auth = session_flags.is_api_key_auth;
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     let mode_req = acp::SetSessionModeRequest::new(
@@ -1671,7 +1759,9 @@ pub(crate) fn execute(
                     TaskResult::PromptResponse {
                         agent_id,
                         result: result
-                            .map_err(|e| format_acp_error(&e, is_api_key_auth)),
+                            .map_err(|e| {
+                                format_acp_error_with_locale(&e, is_api_key_auth, locale.as_ref())
+                            }),
                         http_status,
                         prompt_id: Some(prompt_id),
                     }
@@ -1867,6 +1957,8 @@ pub(crate) fn execute(
             prev_model_id,
         } => {
             let tx = acp_tx.clone();
+            let is_api_key_auth = session_flags.is_api_key_auth;
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     let meta = effort
@@ -1890,17 +1982,12 @@ pub(crate) fn execute(
                         .await
                         .map(|_| ())
                         .map_err(|e| {
-                            use xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError;
-                            if let Some(typed) = ModelSwitchIncompatibleAgentError::from_acp_error(
+                            switch_model_error_from_acp(
                                 &e,
-                            ) {
-                                SwitchModelError::IncompatibleAgent {
-                                    error: typed,
-                                    prev_model_id: prev_model_id.clone(),
-                                }
-                            } else {
-                                SwitchModelError::Other(sanitize_user_error(&e.to_string()))
-                            }
+                                &prev_model_id,
+                                is_api_key_auth,
+                                locale.as_ref(),
+                            )
                         });
                     TaskResult::SwitchModelComplete {
                         agent_id,
@@ -2388,6 +2475,7 @@ pub(crate) fn execute(
         }
         Effect::FetchMcpsList { agent_id, session_id, cache } => {
             let tx = acp_tx.clone();
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     let params = serde_json::json!({
@@ -2411,17 +2499,21 @@ pub(crate) fn execute(
                                 crate::views::mcps_modal::McpsListResponse,
                             >(inner.clone())
                                 .map(crate::views::mcps_modal::convert_list_response)
-                                .map_err(|_| "couldn't load server list".to_string())
+                                .map_err(|_| {
+                                    locale
+                                        .named_text(
+                                            "extensions.error.server_list",
+                                            "couldn't load server list",
+                                        )
+                                        .into_owned()
+                                })
                         }
-                        Err(e) => {
-                            Err(
-                                sanitize_user_error(
-                                    &format!(
-                        "couldn't load server list: {e}"
-                    ),
-                                ),
-                            )
-                        }
+                        Err(e) => Err(sanitize_user_error(&localized_named(
+                            locale.as_ref(),
+                            "extensions.error.server_list_detail",
+                            "couldn't load server list: {error}",
+                            &[("error", &e.to_string())],
+                        ))),
                     };
                     TaskResult::McpsListLoaded {
                         agent_id,
@@ -3183,17 +3275,25 @@ pub(crate) fn execute(
         }
         Effect::FetchPluginCtaMcps { agent_id, session_id, plugin_name } => {
             let tx = acp_tx.clone();
-            tasks.spawn(fetch_plugin_cta_mcps(agent_id, session_id, plugin_name, tx));
+            let locale = session_flags.locale.clone();
+            tasks.spawn(fetch_plugin_cta_mcps(
+                agent_id,
+                session_id,
+                plugin_name,
+                tx,
+                locale,
+            ));
         }
         Effect::RetryPluginCtaMcps { agent_id, session_id, plugin_name } => {
             let tx = acp_tx.clone();
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     tokio::time::sleep(
                             std::time::Duration::from_millis(CTA_MCP_RETRY_DELAY_MS),
                         )
                         .await;
-                    fetch_plugin_cta_mcps(agent_id, session_id, plugin_name, tx).await
+                    fetch_plugin_cta_mcps(agent_id, session_id, plugin_name, tx, locale).await
                 });
         }
         Effect::DismissCtaInstalled { agent_id, plugin_name } => {
@@ -3278,6 +3378,7 @@ pub(crate) fn execute(
         Effect::ToggleMcpServer { agent_id, session_id, server_name, enabled } => {
             let tx = acp_tx.clone();
             let is_api_key_auth = session_flags.is_api_key_auth;
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     let params = serde_json::json!({
@@ -3293,7 +3394,11 @@ pub(crate) fn execute(
                     );
                     let result = match acp_send(req, &tx).await {
                         Ok(_) => Ok(()),
-                        Err(e) => Err(format_acp_error(&e, is_api_key_auth)),
+                        Err(e) => Err(format_acp_error_with_locale(
+                            &e,
+                            is_api_key_auth,
+                            locale.as_ref(),
+                        )),
                     };
                     TaskResult::McpToggleDone {
                         agent_id,
@@ -4236,6 +4341,7 @@ pub(crate) fn execute(
         Effect::SendBtw { agent_id, session_id, question, minimal_request_id } => {
             let tx = acp_tx.clone();
             let is_api_key_auth = session_flags.is_api_key_auth;
+            let locale = session_flags.locale.clone();
             tasks
                 .spawn(async move {
                     let request = acp::ExtRequest::new(
@@ -4270,7 +4376,11 @@ pub(crate) fn execute(
                         Err(e) => {
                             TaskResult::BtwResponse {
                                 agent_id,
-                                result: Err(format_acp_error(&e, is_api_key_auth)),
+                                result: Err(format_acp_error_with_locale(
+                                    &e,
+                                    is_api_key_auth,
+                                    locale.as_ref(),
+                                )),
                                 minimal_request_id,
                             }
                         }
@@ -5275,7 +5385,7 @@ fn format_auth_lines(is_api_key_auth: bool, api_key_env_set: bool) -> String {
             "  Auth method: API key\n"
         };
         return format!(
-            "{method}  Run `grok login` to use your SuperGrok subscription instead.\n"
+            "{method}  Run `grok-zh login` to use your SuperGrok subscription instead.\n"
         );
     }
     String::from("  Auth method: OAuth\n")

@@ -19,6 +19,7 @@ pub(crate) fn build_prefetched_map(
         let entry = ModelEntry {
             info,
             mtls_cert_dir: None,
+            bundled_catalog_entry: false,
             api_key: None,
             env_key: None,
             auth_provider: None,

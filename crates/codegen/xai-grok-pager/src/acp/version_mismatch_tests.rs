@@ -1,4 +1,6 @@
-use super::{is_version_mismatch_banner, version_mismatch_banner};
+use super::{
+    is_version_mismatch_banner, version_mismatch_banner, version_mismatch_banner_with_locale,
+};
 use crate::glyphs::sanitize_toast_message;
 
 fn expected_banner(client: &str, leader: &str) -> String {
@@ -73,4 +75,22 @@ fn full_banner_matches_sanitize_toast_message() {
     assert!(is_version_mismatch_banner(
         "! Version mismatch: client x, leader y"
     ));
+}
+
+#[test]
+fn localizes_banner_without_losing_version_values_or_detection() {
+    let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let text = version_mismatch_banner_with_locale(
+        r#"{"clientVersion":"0.2.121","leaderVersion":"1.0.0"}"#,
+        Some(&locale),
+    )
+    .expect("banner");
+    assert!(text.contains("版本不一致"));
+    assert!(text.contains("0.2.121"));
+    assert!(text.contains("1.0.0"));
+    assert!(text.contains("grok-zh"));
+    assert!(is_version_mismatch_banner(&text));
 }

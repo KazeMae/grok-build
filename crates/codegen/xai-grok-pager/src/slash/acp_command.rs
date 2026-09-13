@@ -81,6 +81,8 @@ pub struct AcpSlashCommand {
     has_args: bool,
     arg_hint: Option<String>,
     skill: SkillMeta,
+    /// Stable first-party product marker copied from ACP metadata.
+    product_chat_skill: bool,
 }
 
 impl SlashCommand for AcpSlashCommand {
@@ -123,6 +125,17 @@ impl SlashCommand for AcpSlashCommand {
         matches!(self.skill, SkillMeta::Skill(_))
     }
 
+    fn is_bundled_skill(&self) -> bool {
+        matches!(
+            &self.skill,
+            SkillMeta::Skill(identity) if identity.scope == SkillScope::Bundled
+        )
+    }
+
+    fn is_product_chat_skill(&self) -> bool {
+        self.product_chat_skill
+    }
+
     fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
         let text = if args.trim().is_empty() {
             format!("/{}", self.name)
@@ -152,6 +165,12 @@ impl From<&acp::AvailableCommand> for AcpSlashCommand {
             _ => None,
         });
 
+        let product_chat_skill = cmd
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("product"))
+            .and_then(|value| value.as_str())
+            == Some("chat");
         Self {
             name: cmd.name.clone(),
             description: cmd.description.clone(),
@@ -160,6 +179,7 @@ impl From<&acp::AvailableCommand> for AcpSlashCommand {
             has_args: true,
             arg_hint,
             skill: SkillMeta::parse(cmd.meta.as_ref()),
+            product_chat_skill,
         }
     }
 }
@@ -187,6 +207,25 @@ mod tests {
             parse(serde_json::json!({"foo": "bar", "baz": 42})),
             SkillMeta::Absent
         );
+    }
+
+    #[test]
+    fn product_chat_marker_is_preserved_for_display_provenance() {
+        let meta = serde_json::json!({
+            "scope": "server",
+            "path": "chat-product://build-with-ai",
+            "product": "chat"
+        });
+        let cmd = make_cmd("build-with-ai", Some(meta));
+        let acp_cmd = AcpSlashCommand::from(&cmd);
+        assert!(acp_cmd.is_product_chat_skill());
+        assert!(matches!(
+            acp_cmd.skill,
+            SkillMeta::Skill(SkillIdentity {
+                scope: SkillScope::Server,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -316,6 +355,7 @@ mod tests {
                 scope,
                 plugin_name: None,
             }),
+            product_chat_skill: false,
         }
     }
 

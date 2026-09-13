@@ -2,6 +2,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
@@ -117,7 +118,7 @@ pub fn render_menu(
         // Restyle the [x] dismiss control (for the import row)
         if let Some(x_offset) = key.rfind("[x]") {
             let key_x_start = menu_centered.x + menu_centered.width - key_width;
-            let dismiss_start = key_x_start + x_offset as u16;
+            let dismiss_start = key_x_start + key[..x_offset].width() as u16;
             let dismiss_end = dismiss_start + 3;
             let mouse_on_dismiss = mouse_pos
                 .is_some_and(|(mx, my)| my == y && mx >= dismiss_start && mx < dismiss_end);

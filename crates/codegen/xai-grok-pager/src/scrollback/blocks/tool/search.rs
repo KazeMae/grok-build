@@ -154,8 +154,19 @@ impl SearchToolCallBlock {
     }
 
     /// Build the match summary string, adapted by output mode.
-    fn match_summary(&self) -> String {
+    ///
+    /// - `Content`:            `(3 matches in 2 files)` / `(1 match)` / `(no matches)`
+    /// - `FilesWithMatches`:   `(3 files)` / `(1 file)` / `(no matches)`
+    /// - `Count`:              `(42 matches across 5 files)` / `(no matches)`
+    fn match_summary(&self, locale: &crate::locale::LocaleContext) -> String {
+        let zh = locale.locale() == crate::locale::UiLocale::ZhCn;
         if self.match_count == 0 {
+            if zh {
+                return match self.meta.output_mode {
+                    SearchOutputMode::FilesWithMatches => "（无文件）".to_string(),
+                    _ => "（无匹配）".to_string(),
+                };
+            }
             return match self.meta.output_mode {
                 SearchOutputMode::FilesWithMatches => "(no files)".to_string(),
                 _ => "(no matches)".to_string(),
@@ -164,6 +175,16 @@ impl SearchToolCallBlock {
         match self.meta.output_mode {
             SearchOutputMode::Content => {
                 let file_count = self.file_matches.len();
+                if zh {
+                    return if file_count > 1 {
+                        format!(
+                            "（{} 个匹配，位于 {} 个文件）",
+                            self.match_count, file_count
+                        )
+                    } else {
+                        format!("（{} 个匹配）", self.match_count)
+                    };
+                }
                 if file_count > 1 {
                     format!("({} matches in {} files)", self.match_count, file_count)
                 } else if self.match_count == 1 {
@@ -174,6 +195,9 @@ impl SearchToolCallBlock {
             }
             SearchOutputMode::FilesWithMatches => {
                 let n = self.match_count; // match_count = # of files in this mode
+                if zh {
+                    return format!("（{n} 个文件）");
+                }
                 if n == 1 {
                     "(1 file)".to_string()
                 } else {
@@ -182,6 +206,16 @@ impl SearchToolCallBlock {
             }
             SearchOutputMode::Count => {
                 let file_count = self.file_paths.len().max(self.file_matches.len());
+                if zh {
+                    return if file_count > 1 {
+                        format!(
+                            "（{} 个匹配，遍及 {} 个文件）",
+                            self.match_count, file_count
+                        )
+                    } else {
+                        format!("（{} 个匹配）", self.match_count)
+                    };
+                }
                 if file_count > 1 {
                     format!("({} matches across {} files)", self.match_count, file_count)
                 } else if self.match_count == 1 {
@@ -206,6 +240,7 @@ impl SearchToolCallBlock {
         muted: bool,
         dim_details: bool,
         width: Option<usize>,
+        locale: &crate::locale::LocaleContext,
     ) -> Line<'static> {
         let text_style = if muted {
             theme.muted()
@@ -229,7 +264,13 @@ impl SearchToolCallBlock {
             theme.fg(theme.path)
         };
 
-        let mut spans = vec![Span::styled("Search ".to_string(), bold_style)];
+        let label = locale
+            .named_text("scrollback.tool.search.label", "Search ")
+            .into_owned();
+        let in_label = locale
+            .named_text("scrollback.tool.search.in", " in ")
+            .into_owned();
+        let mut spans = vec![Span::styled(label, bold_style)];
 
         // The search term: the glob when it replaces a trivial pattern, otherwise the quoted pattern
         if self.is_trivial_pattern()
@@ -243,7 +284,7 @@ impl SearchToolCallBlock {
 
             // Case 2: glob shown as the first "in" scope (string-styled, not path-styled)
             if let Some(ref glob) = self.meta.glob {
-                spans.push(Span::styled(" in ".to_string(), text_style));
+                spans.push(Span::styled(in_label.clone(), text_style));
                 spans.push(Span::styled(glob.to_string(), pattern_style));
             }
         }
@@ -251,15 +292,16 @@ impl SearchToolCallBlock {
         // Path scope (always after glob if both present).
         // When width is constrained, shorten the path the way the fish shell does
         if let Some(ref path) = self.meta.path {
-            spans.push(Span::styled(" in ".to_string(), text_style));
+            spans.push(Span::styled(in_label, text_style));
             if let Some(w) = width {
                 let used: usize = spans
                     .iter()
                     .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                     .sum();
-                let summary = format!(" {}", self.match_summary());
+                let summary = format!(" {}", self.match_summary(locale));
                 // Reserve space for summary; if path can't fit even without it, drop summary.
-                let path_budget = w.saturating_sub(used + summary.len());
+                let path_budget = w
+                    .saturating_sub(used + unicode_width::UnicodeWidthStr::width(summary.as_str()));
                 let shortened = crate::render::tool_paths::shorten_path(path, path_budget);
                 spans.push(Span::styled(shortened, path_style));
             } else {
@@ -267,15 +309,15 @@ impl SearchToolCallBlock {
             }
         }
 
-        // The match summary always comes last
-        // When width is constrained, only include it if there's room
-        let summary = format!(" {}", self.match_summary());
+        // Match summary — always last.
+        // When width-constrained, only include if there's room.
+        let summary = format!(" {}", self.match_summary(locale));
         if let Some(w) = width {
             let used: usize = spans
                 .iter()
                 .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                 .sum();
-            if used + summary.len() <= w {
+            if used + unicode_width::UnicodeWidthStr::width(summary.as_str()) <= w {
                 spans.push(Span::styled(summary, detail_style));
             }
         } else {
@@ -316,8 +358,8 @@ impl SearchToolCallBlock {
     }
 
     /// Build a single comma-separated metadata line. Always present (at minimum shows `mode: pattern`). Glob is never
-    /// shown here (always inline in header).
-    fn metadata_line(&self, theme: &Theme) -> Line<'static> {
+    /// shown here (always inline in header). All flags use `key: value` form. Values in primary fg, keys in muted.
+    fn metadata_line(&self, theme: &Theme, locale: &crate::locale::LocaleContext) -> Line<'static> {
         let label_style = theme.muted();
         let value_style = theme.primary();
 
@@ -325,31 +367,70 @@ impl SearchToolCallBlock {
 
         // Mode comes first so the user sees what kind of search this is
         let mode_str = match self.meta.output_mode {
-            SearchOutputMode::Content => "pattern",
-            SearchOutputMode::FilesWithMatches => "files",
-            SearchOutputMode::Count => "count",
+            SearchOutputMode::Content => locale
+                .named_text("scrollback.tool.search.mode.pattern", "pattern")
+                .into_owned(),
+            SearchOutputMode::FilesWithMatches => locale
+                .named_text("scrollback.tool.search.mode.files", "files")
+                .into_owned(),
+            SearchOutputMode::Count => locale
+                .named_text("scrollback.tool.search.mode.count", "count")
+                .into_owned(),
         };
         parts.push(vec![
-            Span::styled("mode: ", label_style),
-            Span::styled(mode_str.to_string(), value_style),
+            Span::styled(
+                locale
+                    .named_text("scrollback.tool.search.metadata.mode", "mode: ")
+                    .into_owned(),
+                label_style,
+            ),
+            Span::styled(mode_str, value_style),
         ]);
 
         if let Some(ref ft) = self.meta.file_type {
             parts.push(vec![
-                Span::styled("type: ", label_style),
+                Span::styled(
+                    locale
+                        .named_text("scrollback.tool.search.metadata.type", "type: ")
+                        .into_owned(),
+                    label_style,
+                ),
                 Span::styled(ft.to_string(), value_style),
             ]);
         }
         if self.meta.case_insensitive {
             parts.push(vec![
-                Span::styled("case-insensitive: ", label_style),
-                Span::styled("true", value_style),
+                Span::styled(
+                    locale
+                        .named_text(
+                            "scrollback.tool.search.metadata.case_insensitive",
+                            "case-insensitive: ",
+                        )
+                        .into_owned(),
+                    label_style,
+                ),
+                Span::styled(
+                    locale
+                        .named_text("scrollback.tool.boolean.true", "true")
+                        .into_owned(),
+                    value_style,
+                ),
             ]);
         }
         if self.meta.multiline {
             parts.push(vec![
-                Span::styled("multiline: ", label_style),
-                Span::styled("true", value_style),
+                Span::styled(
+                    locale
+                        .named_text("scrollback.tool.search.metadata.multiline", "multiline: ")
+                        .into_owned(),
+                    label_style,
+                ),
+                Span::styled(
+                    locale
+                        .named_text("scrollback.tool.boolean.true", "true")
+                        .into_owned(),
+                    value_style,
+                ),
             ]);
         }
 
@@ -380,6 +461,7 @@ impl BlockContent for SearchToolCallBlock {
                     muted_collapsed,
                     dim_details,
                     Some(ctx.content_width()),
+                    &ctx.locale,
                 ))],
             },
             DisplayMode::Truncated | DisplayMode::Expanded => {
@@ -388,12 +470,15 @@ impl BlockContent for SearchToolCallBlock {
                     false,
                     dim_details,
                     None,
+                    &ctx.locale,
                 ))];
 
                 // Metadata line (mode and non-default input fields, comma-separated)
                 // Blank line separates header from metadata.
                 lines.push(BlockLine::separator(Line::from("")));
-                lines.push(BlockLine::separator(self.metadata_line(&theme)));
+                lines.push(BlockLine::separator(
+                    self.metadata_line(&theme, &ctx.locale),
+                ));
 
                 let has_results = !self.file_matches.is_empty() || !self.file_paths.is_empty();
 
@@ -402,10 +487,11 @@ impl BlockContent for SearchToolCallBlock {
                 } else if self.match_count == 0 {
                     // No results: show a hint
                     lines.push(Line::from("").into());
-                    lines.push(
-                        Line::from(Span::styled("  (no results)".to_string(), theme.muted()))
-                            .into(),
-                    );
+                    let no_results = ctx
+                        .locale
+                        .named_text("scrollback.tool.no_results", "  (no results)")
+                        .into_owned();
+                    lines.push(Line::from(Span::styled(no_results, theme.muted())).into());
                 }
 
                 if !self.file_matches.is_empty() {

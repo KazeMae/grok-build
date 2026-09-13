@@ -7,7 +7,9 @@ use unicode_width::UnicodeWidthStr;
 
 pub use super::chrome::HeaderUpgradeCta;
 use super::layout::{MIN_DASHBOARD_WIDTH, compute_layout};
-use super::row::{DashboardRow, RowBadge, build_rows_with_roster, build_rows_with_workspace};
+use super::row::{
+    DashboardRow, RowBadge, build_rows_with_roster_and_locale, build_rows_with_workspace,
+};
 use super::state::{
     DashboardRowId, DashboardState, DashboardStopAction, Filter, Focusable, Grouping,
     LocationPickerState, RenameDraft, RowState, SPINNER_DIVISOR, SectionKey,
@@ -22,9 +24,46 @@ use crate::util::format_time_ago;
 /// At the ~30 Hz dashboard tick this toggles roughly every 0.33 s, about a 1.5 Hz blink.
 const NEEDS_INPUT_BLINK_DIVISOR: u64 = 10;
 
-// Row markers use the filled (◆) / hollow (◇) diamonds from `crate::glyphs` (with CP437 fallbacks on legacy consoles)
-// The dashboard uses diamonds instead of circles so this view reads differently from sibling activity views, which use circles
-// Filled marks the non-working states that need a strong visual presence (needs-input, completed, failed, blocked); hollow marks idle rows
+fn dashboard_text<'a>(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    locale
+        .map(|locale| locale.named_text(id, english))
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed(english))
+}
+
+fn dashboard_static(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
+fn localized_row_state(
+    locale: Option<&crate::locale::LocaleContext>,
+    state: RowState,
+) -> &'static str {
+    match state {
+        RowState::NeedsInput => dashboard_static(locale, "dashboard.state.awaiting", "Awaiting"),
+        RowState::Working => dashboard_static(locale, "dashboard.state.working", "Working"),
+        RowState::Idle => dashboard_static(locale, "dashboard.state.idle", "Idle"),
+        RowState::Inactive => dashboard_static(locale, "dashboard.state.inactive", "Inactive"),
+        RowState::Completed => dashboard_static(locale, "dashboard.state.done", "Done"),
+        RowState::Failed => dashboard_static(locale, "dashboard.state.failed", "Failed"),
+    }
+}
+
+// Row markers use the filled (◆) / hollow (◇) diamonds from `crate::glyphs`
+// (with CP437 fallbacks on legacy consoles). The dashboard uses
+// diamonds instead of circles to differentiate this view's vocabulary from
+// sibling activity views (which use circles). Filled marks the non-working states that
+// need a strong visual presence (needs-input, completed, failed, blocked);
+// hollow marks idle rows.
 
 fn ensure_peek_viewport_lifecycle(
     state: &mut DashboardState,
@@ -63,7 +102,7 @@ const GROUP_HEADER_HEIGHT: u16 = 2;
 /// The user must press Space to peek (which routes the permission question and options into the
 /// peek panel) and then a number key to answer.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn render_dashboard(
+pub fn render_dashboard(
     buf: &mut Buffer,
     area: Rect,
     state: &mut DashboardState,
@@ -90,7 +129,45 @@ pub(crate) fn render_dashboard(
     // App-level billing mirror the `/usage` modal renders its allowance from
     credit_balance: Option<&crate::views::credit_bar::CreditBalance>,
 ) -> Option<(u16, u16)> {
+    render_dashboard_with_locale(
+        buf,
+        area,
+        state,
+        agents,
+        registry,
+        pending_hint,
+        roster,
+        workspace_dashboard_enabled,
+        row_inputs,
+        dashboard_session_picker,
+        dashboard_sessions_loading,
+        upgrade_cta,
+        credit_balance,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_dashboard_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut DashboardState,
+    agents: &mut IndexMap<AgentId, AgentView>,
+    registry: &crate::actions::ActionRegistry,
+    pending_hint: Option<crate::views::shortcuts_bar::PendingHint>,
+    roster: &[crate::app::roster::RosterEntry],
+    workspace_dashboard_enabled: bool,
+    row_inputs: super::row::WorkspaceRowInputs<'_>,
+    dashboard_session_picker: Option<
+        &mut crate::views::session_picker_surface::SessionPickerSurface,
+    >,
+    dashboard_sessions_loading: bool,
+    upgrade_cta: Option<HeaderUpgradeCta<'_>>,
+    credit_balance: Option<&crate::views::credit_bar::CreditBalance>,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> Option<(u16, u16)> {
     state.workspace_membership_mode = workspace_dashboard_enabled;
+    state.set_ui_locale(locale);
     // Cache whether a pinned (non-dismissible) promo CTA is live so the key handler can steal Ctrl+O for it; the dispatch re-resolves the gate
     state.pinned_upgrade_cta_live = upgrade_cta.is_some_and(|cta| cta.pinned);
     state.clear_chrome_hit_areas();
@@ -116,7 +193,9 @@ pub(crate) fn render_dashboard(
     let rows = if workspace_dashboard_enabled {
         build_rows_with_workspace(agents, row_inputs, &state.filter, home)
     } else {
-        build_rows_with_roster(
+        // The dashboard is not anchored to a specific agent; treat every row equally for
+        // highlighting while retaining the locale-aware legacy roster renderer.
+        build_rows_with_roster_and_locale(
             agents,
             &state.pinned,
             &state.reorder,
@@ -124,9 +203,11 @@ pub(crate) fn render_dashboard(
             &state.filter,
             home,
             roster,
+            Some(state.ui_locale()),
         )
     };
-    // Chat-conversation roster rows can't be deleted from the dashboard yet; record them so the `[✗]` button and the Ctrl+X arm both skip them
+    // Chat-conversation roster rows can't be deleted from the dashboard
+    // yet — record them so the `[✗]` and Ctrl+X arm both skip them.
     state.conversation_row_ids = if workspace_dashboard_enabled {
         Default::default()
     } else {
@@ -157,7 +238,7 @@ pub(crate) fn render_dashboard(
             width: area.width,
             height: banner_h,
         };
-        render_dashboard_banner(buf, banner_area, &theme, &rows, grouping, state);
+        render_dashboard_banner(buf, banner_area, &theme, &rows, grouping, state, locale);
         return None;
     }
 
@@ -168,7 +249,7 @@ pub(crate) fn render_dashboard(
     let reply_text_w = layout.dispatch.width.saturating_sub(6);
 
     match state.selected.clone() {
-        Some(sel) => match super::peek::compute_peek_fields(&sel, agents) {
+        Some(sel) => match super::peek::compute_peek_fields_with_locale(&sel, agents, locale) {
             Some(fields) => {
                 let question = fields.question.is_some();
                 let peek_min = if question {
@@ -270,9 +351,15 @@ pub(crate) fn render_dashboard(
     // Body: key off visible rows (local agents and roster), not the local map alone
     if rows.is_empty() {
         if state.filter.is_active() {
-            render_no_match(buf, layout.list, &theme, &state.filter);
+            render_no_match_with_locale(buf, layout.list, &theme, &state.filter, locale);
         } else {
-            render_empty_state(buf, layout.list, &theme, dashboard_sessions_loading);
+            render_empty_state_with_locale(
+                buf,
+                layout.list,
+                &theme,
+                dashboard_sessions_loading,
+                locale,
+            );
         }
     } else if area.width < MIN_DASHBOARD_WIDTH {
         render_narrow_rows_with_grouping(buf, layout.list, &theme, &rows, grouping, state);
@@ -321,7 +408,14 @@ pub(crate) fn render_dashboard(
                     .get(parent)
                     .is_some_and(|p| p.subagent_views.contains_key(child_session_id));
                 if parent_ok && !loaded {
-                    (Some("Subagent not loaded"), false)
+                    (
+                        Some(dashboard_static(
+                            locale,
+                            "dashboard.peek.subagent_not_loaded",
+                            "Subagent not loaded",
+                        )),
+                        false,
+                    )
                 } else {
                     (None, loaded)
                 }
@@ -341,7 +435,7 @@ pub(crate) fn render_dashboard(
             } else {
                 None
             };
-            super::peek::render_peek_panel(
+            super::peek::render_peek_panel_with_locale(
                 buf,
                 layout.dispatch,
                 panel,
@@ -353,6 +447,7 @@ pub(crate) fn render_dashboard(
                 Some(layout.list).filter(|r| r.area() > 0),
                 live_tail,
                 empty_hint,
+                locale,
             )
         } else {
             Default::default()
@@ -384,12 +479,13 @@ pub(crate) fn render_dashboard(
         state.peek_reply_rect = None;
         // Record the box rect so a click anywhere on it focuses the input (see `handle_mouse`)
         state.dispatch_rect = Some(layout.dispatch);
-        let cursor = render_dispatch(
+        let cursor = render_dispatch_with_locale(
             buf,
             layout.dispatch,
             &theme,
             state,
             Some(layout.list).filter(|r| r.area() > 0),
+            locale,
         );
         // Completion dropdowns paint ABOVE the dispatch box
         // The `@` file-search picker and the `/` slash dropdown never render together
@@ -399,14 +495,14 @@ pub(crate) fn render_dashboard(
             state.slash_dropdown_items_area = None;
             state.slash_dropdown_hit = Default::default();
         } else {
-            render_slash_dropdown(buf, area, layout.dispatch, &theme, state);
+            render_slash_dropdown(buf, area, layout.dispatch, &theme, state, locale);
             state.file_search_dropdown_items_area = None;
         }
         cursor
     };
 
     // Footer.
-    render_footer(
+    render_footer_with_locale(
         buf,
         layout.footer,
         &theme,
@@ -415,6 +511,7 @@ pub(crate) fn render_dashboard(
         selected_state,
         peek_active,
         pending_hint,
+        locale,
     );
 
     if let Some(surface) = dashboard_session_picker {
@@ -441,6 +538,7 @@ pub(crate) fn render_dashboard(
                 source_filter: surface.source_filter,
                 pending_delete: false,
                 chat_mode: false,
+                locale: Some(state.ui_locale()),
             },
         );
         surface.state.hit_areas = (hit_areas.search_bar.width > 0).then_some(hit_areas);
@@ -451,7 +549,7 @@ pub(crate) fn render_dashboard(
     // footer hints. When Some, we suppress the dispatch cursor because input is routed to the modal
     // until it closes.
     if let Some(modal) = state.shortcuts_modal.as_mut() {
-        crate::views::shortcuts_help::render_modal(
+        crate::views::shortcuts_help::render_modal_with_locale(
             buf,
             area,
             &modal.entries,
@@ -463,10 +561,12 @@ pub(crate) fn render_dashboard(
             &modal.mode,
             &theme,
             /* compact */ false,
+            locale,
         );
         return None;
     }
 
+    let usage_locale = state.ui_locale().clone();
     if let Some(modal) = state.usage_modal.as_mut() {
         crate::views::usage_modal::render_usage_modal(
             buf,
@@ -475,6 +575,7 @@ pub(crate) fn render_dashboard(
             credit_balance,
             /* compact */ false,
             &theme,
+            &usage_locale,
         );
         return None;
     }
@@ -482,14 +583,16 @@ pub(crate) fn render_dashboard(
     // The location picker overlays everything too (mutually exclusive with the shortcuts modal in practice)
     // When open, input is routed to it, so the dispatch cursor is suppressed
     if let Some(modal) = state.location_picker.as_mut() {
-        render_location_picker(buf, area, &theme, modal);
+        render_location_picker_with_locale(buf, area, &theme, modal, locale);
         return None;
     }
 
     // The worktree-label dialog overlays the dashboard while the user names the worktree for a dashboard-dispatched agent
     // Input is routed to it, so the dispatch cursor is suppressed
     if let Some(dialog) = state.worktree_dialog.as_ref() {
-        crate::views::new_worktree_dialog::render_new_worktree_dialog(area, buf, dialog);
+        crate::views::new_worktree_dialog::render_new_worktree_dialog_with_locale(
+            area, buf, dialog, locale,
+        );
         return None;
     }
 
@@ -502,8 +605,8 @@ pub(crate) fn render_dashboard(
 
 const RENAME_PREFIX: &str = "rename: ";
 
-fn rename_editor_view(draft: &RenameDraft, width: u16) -> (&str, u16) {
-    let prefix_width = UnicodeWidthStr::width(RENAME_PREFIX) as u16;
+fn rename_editor_view<'a>(draft: &'a RenameDraft, width: u16, prefix: &str) -> (&'a str, u16) {
+    let prefix_width = UnicodeWidthStr::width(prefix) as u16;
     let editor_width = width.saturating_sub(prefix_width);
     let viewport = draft.viewport(editor_width as usize);
     let visible = &draft.text()[viewport.visible_byte_range];
@@ -520,18 +623,14 @@ fn render_rename_editor(
     width: u16,
     style: Style,
     draft: &RenameDraft,
+    prefix: &str,
 ) {
     if width == 0 {
         return;
     }
-    let prefix_width = UnicodeWidthStr::width(RENAME_PREFIX) as u16;
-    buf.set_span(
-        x,
-        y,
-        &Span::styled(RENAME_PREFIX, style),
-        prefix_width.min(width),
-    );
-    let (visible, _) = rename_editor_view(draft, width);
+    let prefix_width = UnicodeWidthStr::width(prefix) as u16;
+    buf.set_span(x, y, &Span::styled(prefix, style), prefix_width.min(width));
+    let (visible, _) = rename_editor_view(draft, width, prefix);
     if !visible.is_empty() && prefix_width < width {
         buf.set_span(
             x + prefix_width,
@@ -559,7 +658,12 @@ fn rename_cursor_pos(state: &DashboardState, rows: &[DashboardRow]) -> Option<(u
     let chrome_width = marker_width + 1 + indent_width + icon_width + 1;
     let content_x = rect.x.saturating_add(chrome_width);
     let content_width = rect.x.saturating_add(rect.width).saturating_sub(content_x);
-    let (_, cursor_offset) = rename_editor_view(rn, content_width);
+    let prefix = dashboard_static(
+        Some(state.ui_locale()),
+        "dashboard.rename.prefix",
+        RENAME_PREFIX,
+    );
+    let (_, cursor_offset) = rename_editor_view(rn, content_width, prefix);
     let cursor_x = content_x
         .saturating_add(cursor_offset)
         .min(rect.x.saturating_add(rect.width.saturating_sub(1)));
@@ -576,6 +680,7 @@ fn render_dashboard_banner(
     rows: &[DashboardRow],
     grouping: Grouping,
     state: &mut DashboardState,
+    locale: Option<&crate::locale::LocaleContext>,
 ) {
     use ratatui::widgets::{Block, Borders, Widget};
 
@@ -599,14 +704,25 @@ fn render_dashboard_banner(
             needs_input += 1;
         }
     }
-    let agent_word = if total == 1 { "agent" } else { "agents" };
-    let mut title_parts: Vec<String> = vec!["Dashboard".to_string()];
-    title_parts.push(format!("{total} {agent_word}"));
+    let mut title_parts: Vec<String> =
+        vec![dashboard_static(locale, "dashboard.banner.title", "Dashboard").to_string()];
+    let total_template = if total == 1 {
+        dashboard_text(locale, "dashboard.banner.agent.one", "{count} agent")
+    } else {
+        dashboard_text(locale, "dashboard.banner.agent.many", "{count} agents")
+    };
+    title_parts.push(total_template.replace("{count}", &total.to_string()));
     if working > 0 {
-        title_parts.push(format!("{working} working"));
+        title_parts.push(
+            dashboard_text(locale, "dashboard.banner.working", "{count} working")
+                .replace("{count}", &working.to_string()),
+        );
     }
     if needs_input > 0 {
-        title_parts.push(format!("{needs_input} awaiting"));
+        title_parts.push(
+            dashboard_text(locale, "dashboard.banner.awaiting", "{count} awaiting")
+                .replace("{count}", &needs_input.to_string()),
+        );
     }
     let title = format!(" {} ", title_parts.join(" · "));
 
@@ -634,7 +750,11 @@ fn render_dashboard_banner(
         return;
     }
     if rows.is_empty() {
-        let hint = " No sessions yet. Esc to dispatch one. ";
+        let hint = dashboard_static(
+            locale,
+            "dashboard.banner.empty",
+            " No sessions yet. Esc to dispatch one. ",
+        );
         let trunc = truncate_str(hint, inner.width as usize);
         buf.set_string(inner.x, inner.y, trunc, theme.dim().bg(theme.bg_base));
         return;
@@ -655,40 +775,57 @@ fn render_location_picker(
     theme: &Theme,
     modal: &mut LocationPickerState,
 ) {
+    render_location_picker_with_locale(buf, area, theme, modal, None);
+}
+
+fn render_location_picker_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    modal: &mut LocationPickerState,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     use crate::views::modal_window::{
-        ModalSizing, ModalWindowConfig, Shortcut, push_vim_nav_search_hint, render_modal_window,
+        ModalSizing, ModalWindowConfig, Shortcut, render_modal_window,
     };
     use crate::views::picker::{
-        PickerEntry, PickerRow, render_divider, render_picker_content,
+        PickerEntry, PickerRow, render_divider, render_picker_content_with_scrollbar_x_and_locale,
         render_picker_search_bar_with_label,
     };
 
     let mut shortcuts = vec![
         Shortcut {
-            label: "\u{2191}\u{2193} nav",
+            label: dashboard_static(locale, "picker.shortcut.nav", "\u{2191}\u{2193} nav"),
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "Tab complete",
+            label: dashboard_static(locale, "picker.shortcut.complete", "Tab complete"),
             clickable: false,
             id: 1,
         },
         Shortcut {
-            label: "Enter select",
+            label: dashboard_static(locale, "picker.shortcut.select", "Enter select"),
             clickable: false,
             id: 2,
         },
         Shortcut {
-            label: "Esc close",
+            label: dashboard_static(locale, "picker.shortcut.close", "Esc close"),
             clickable: false,
             id: 3,
         },
     ];
-    // Show `i search` in the footer when vim nav mode is active (the picker starts in input mode, but Esc drops to nav under vim)
-    push_vim_nav_search_hint(&mut shortcuts, modal.picker.search_active);
+    // Surface `i search` in the footer when vim nav mode is active (input-default
+    // picker, but Esc drops to nav under vim).
+    if !modal.picker.search_active && crate::appearance::cache::load_vim_mode() {
+        shortcuts.push(Shortcut {
+            label: dashboard_static(locale, "picker.shortcut.search_vim", "i search"),
+            clickable: false,
+            id: 0,
+        });
+    }
     let config = ModalWindowConfig {
-        title: "Change directory",
+        title: dashboard_static(locale, "dashboard.location.title", "Change directory"),
         tabs: None,
         shortcuts: &shortcuts,
         sizing: ModalSizing::medium(),
@@ -719,11 +856,11 @@ fn render_location_picker(
         // Reserve room at the right of the path row for the worktree toggle button, only when the modal is wide enough to keep a usable path field
         // Otherwise the field spans the full width and the button is hidden
         let wt_text = if modal.worktree_mode {
-            "[worktree:on]"
+            dashboard_static(locale, "dashboard.location.worktree_on", "[worktree:on]")
         } else {
-            "[worktree:off]"
+            dashboard_static(locale, "dashboard.location.worktree_off", "[worktree:off]")
         };
-        let wt_w = wt_text.len() as u16; // ASCII, so byte length equals display width
+        let wt_w = UnicodeWidthStr::width(wt_text) as u16;
         const WT_GAP: u16 = 1;
         const MIN_PATH_W: u16 = 16;
         let (path_w, wt_rect) = if show_worktree && content_area.width >= wt_w + WT_GAP + MIN_PATH_W
@@ -746,7 +883,7 @@ fn render_location_picker(
             content_area.y,
             path_w,
             theme,
-            " path: ",
+            dashboard_static(locale, "dashboard.location.path", " path: "),
             &modal.picker,
             /* active */ false,
             /* show_hint */ false,
@@ -768,12 +905,16 @@ fn render_location_picker(
                 Style::default().fg(label_fg).bg(theme.bg_base),
             );
             if modal.worktree_mode
-                && let Some(on_at) = wt_text.find("on")
+                && let Some(state_start) = wt_text.char_indices().rev().find_map(|(index, ch)| {
+                    (ch == ':' || ch == '\u{ff1a}').then_some(index + ch.len_utf8())
+                })
             {
+                let state = wt_text[state_start..].trim_end_matches(']');
+                let state_x = r.x + UnicodeWidthStr::width(&wt_text[..state_start]) as u16;
                 buf.set_string(
-                    r.x + on_at as u16,
+                    state_x,
                     r.y,
-                    "on",
+                    state,
                     Style::default().fg(theme.accent_success).bg(theme.bg_base),
                 );
             }
@@ -805,8 +946,16 @@ fn render_location_picker(
     let badges: Vec<String> = visible
         .iter()
         .map(|c| match &c.worktree {
-            Some(name) if name == &c.label => "worktree".to_string(),
-            Some(name) => format!("worktree: {name}"),
+            Some(name) if name == &c.label => {
+                dashboard_static(locale, "dashboard.location.worktree_badge", "worktree")
+                    .to_string()
+            }
+            Some(name) => dashboard_text(
+                locale,
+                "dashboard.location.worktree_named",
+                "worktree: {name}",
+            )
+            .replace("{name}", name),
             None => String::new(),
         })
         .collect();
@@ -856,7 +1005,7 @@ fn render_location_picker(
         })
         .collect();
 
-    let hits = render_picker_content(
+    let hits = render_picker_content_with_scrollbar_x_and_locale(
         buf,
         content_area,
         theme,
@@ -866,6 +1015,9 @@ fn render_location_picker(
         /* non_selectable_clickable */ &[],
         Some(theme.bg_base),
         /* loading */ false,
+        /* loading_tick */ 0,
+        content_area.x + content_area.width.saturating_sub(1),
+        locale,
     );
     modal.content_hits = Some(hits);
 }
@@ -1246,7 +1398,14 @@ fn render_rows_with_grouping(
                 let selected = state.selected_section == Some(key);
                 let hovered = state.hovered_section == Some(key);
                 render_group_header(
-                    buf, line_rect, theme, "Pinned", *count, collapsed, selected, hovered,
+                    buf,
+                    line_rect,
+                    theme,
+                    dashboard_static(Some(state.ui_locale()), "dashboard.group.pinned", "Pinned"),
+                    *count,
+                    collapsed,
+                    selected,
+                    hovered,
                 );
                 mark(&mut line_bg, 0, theme.bg_base);
                 // Full-height hit rect (label and trailing gap): no hover/click dead zone between items
@@ -1268,7 +1427,7 @@ fn render_rows_with_grouping(
                     buf,
                     line_rect,
                     theme,
-                    rs.group_label(),
+                    localized_row_state(Some(state.ui_locale()), *rs),
                     *count,
                     collapsed,
                     selected,
@@ -1309,6 +1468,7 @@ fn render_rows_with_grouping(
                     *expanded,
                     state.selected_idle_overflow,
                     state.hovered_idle_overflow,
+                    Some(state.ui_locale()),
                 );
                 mark(&mut line_bg, 0, theme.bg_base);
                 // Full-height hit rect (label and trailing gap): no hover/click dead zone below the overflow row
@@ -1476,6 +1636,7 @@ fn render_idle_overflow(
     expanded: bool,
     selected: bool,
     hovered: bool,
+    locale: Option<&crate::locale::LocaleContext>,
 ) {
     let bg = Style::default().bg(theme.bg_base);
     let fill = " ".repeat(rect.width as usize);
@@ -1492,9 +1653,10 @@ fn render_idle_overflow(
     }
     .bg(theme.bg_base);
     let label = if expanded {
-        "show fewer".to_string()
+        dashboard_static(locale, "dashboard.overflow.show_fewer", "show fewer").to_string()
     } else {
-        format!("{hidden} more")
+        dashboard_text(locale, "dashboard.overflow.more", "{count} more")
+            .replace("{count}", &hidden.to_string())
     };
     // A `+` / `-` expand indicator in the icon column and the label in the agent-name column, so the row aligns with the Idle rows above
     // Columns: marker (1) + gap (1) + icon + gap (1); the Idle group is top-level, so indent is 0
@@ -1723,6 +1885,11 @@ fn render_row(
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
             rn,
+            dashboard_static(
+                Some(state.ui_locale()),
+                "dashboard.rename.prefix",
+                RENAME_PREFIX,
+            ),
         );
         return;
     }
@@ -1824,12 +1991,13 @@ fn render_row(
         };
         // Fallback "New session #<id>" gets two-tone styling: the `New session` head in the primary colour, the ` #id` suffix dim
         // Detection requires the shared prefix plus a `#` so real titles that merely start with "New session" are not dimmed
+        let new_session_label = super::row::new_session_label(Some(state.ui_locale()));
         let dim_suffix = (!row.is_more_placeholder)
-            .then(|| row.label.strip_prefix(super::row::NEW_SESSION_LABEL))
+            .then(|| row.label.strip_prefix(new_session_label))
             .flatten()
             .filter(|rest| rest.starts_with(" #"));
         if let Some(suffix) = dim_suffix {
-            let head_trunc = truncate_str(super::row::NEW_SESSION_LABEL, title_avail as usize);
+            let head_trunc = truncate_str(new_session_label, title_avail as usize);
             let head_w = UnicodeWidthStr::width(&head_trunc[..]) as u16;
             buf.set_string(cx, title_y, &head_trunc, label_style);
             cx += head_w;
@@ -1869,8 +2037,14 @@ fn render_row(
             }
             let label = match badge {
                 RowBadge::NeedsInput | RowBadge::Worktree | RowBadge::Pinned => continue,
-                RowBadge::Failed => "failed",
-                RowBadge::BgTask => "bg",
+                RowBadge::Failed => {
+                    dashboard_static(Some(state.ui_locale()), "dashboard.badge.failed", "failed")
+                }
+                RowBadge::BgTask => dashboard_static(
+                    Some(state.ui_locale()),
+                    "dashboard.badge.background_task",
+                    "bg",
+                ),
             };
             let chip = format!(" [{label}]");
             let cw = UnicodeWidthStr::width(chip.as_str()) as u16;
@@ -1908,15 +2082,23 @@ fn render_row(
             // The awaiting-input subtitle is `Pending: …`
             // Paint the `Pending:` prefix in yellow so the actionable state stands out, and the rest in the normal secondary colour
             const PENDING_PREFIX: &str = "Pending:";
-            if let Some(rest) = trunc.strip_prefix(PENDING_PREFIX) {
+            let pending_prefix = dashboard_static(
+                Some(state.ui_locale()),
+                "dashboard.row.pending_prefix",
+                PENDING_PREFIX,
+            );
+            if let Some(rest) = secondary.strip_prefix(pending_prefix) {
+                let prefix_w = UnicodeWidthStr::width(pending_prefix) as u16;
                 buf.set_string(
                     content_start_x,
                     sec_y,
-                    PENDING_PREFIX,
+                    pending_prefix,
                     Style::default().bg(bg).fg(theme.warning),
                 );
-                let prefix_w = UnicodeWidthStr::width(PENDING_PREFIX) as u16;
-                buf.set_string(content_start_x + prefix_w, sec_y, rest, secondary_style);
+                if prefix_w < avail {
+                    let rest = truncate_str(rest, (avail - prefix_w) as usize);
+                    buf.set_string(content_start_x + prefix_w, sec_y, rest, secondary_style);
+                }
             } else {
                 buf.set_string(content_start_x, sec_y, trunc, secondary_style);
             }
@@ -2020,7 +2202,14 @@ fn render_narrow_rows_with_grouping(
                 let selected = state.selected_section == Some(key);
                 let hovered = state.hovered_section == Some(key);
                 render_group_header_narrow(
-                    buf, line_rect, theme, "Pinned", *count, collapsed, selected, hovered,
+                    buf,
+                    line_rect,
+                    theme,
+                    dashboard_static(Some(state.ui_locale()), "dashboard.group.pinned", "Pinned"),
+                    *count,
+                    collapsed,
+                    selected,
+                    hovered,
                 );
                 state
                     .section_rects
@@ -2037,7 +2226,7 @@ fn render_narrow_rows_with_grouping(
                     buf,
                     line_rect,
                     theme,
-                    rs.group_label(),
+                    localized_row_state(Some(state.ui_locale()), *rs),
                     *count,
                     collapsed,
                     selected,
@@ -2063,6 +2252,7 @@ fn render_narrow_rows_with_grouping(
                     *expanded,
                     state.selected_idle_overflow,
                     state.hovered_idle_overflow,
+                    Some(state.ui_locale()),
                 );
                 state.idle_overflow_rect = Some(Rect::new(area.x, y, body_width, 1));
                 y += 1;
@@ -2110,6 +2300,11 @@ fn render_narrow_rows_with_grouping(
                     .bg(bg)
                     .add_modifier(Modifier::BOLD),
                 rn,
+                dashboard_static(
+                    Some(state.ui_locale()),
+                    "dashboard.rename.prefix",
+                    RENAME_PREFIX,
+                ),
             );
         } else {
             let marker = if selected {
@@ -2177,20 +2372,46 @@ fn render_narrow_rows_with_grouping(
     }
 }
 
-/// Rendered when agents exist but the filter has hidden every row.
-/// Distinct from the empty-state hint so the user knows their filter is what's hiding the rows.
+/// Rendered when agents exist but the filter has
+/// hidden every row. Distinct from the empty-state hint so the
+/// user knows their filter is what's hiding the rows.
+#[cfg(test)]
 fn render_no_match(buf: &mut Buffer, area: Rect, theme: &Theme, filter: &Filter) {
+    render_no_match_with_locale(buf, area, theme, filter, None);
+}
+
+fn render_no_match_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    filter: &Filter,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     if area.area() == 0 {
         return;
     }
     let hint = match filter {
-        Filter::None => "No matching rows.".to_string(),
-        Filter::Agent(n) => format!("No agents match `a:{n}`. Press Esc to clear the filter."),
-        Filter::State(s) => format!(
-            "No agents in state `{}`: press Esc to clear the filter.",
-            s.group_label()
-        ),
-        Filter::Substring(n) => format!("No rows match `{n}`: press Esc to clear the filter."),
+        Filter::None => {
+            dashboard_text(locale, "dashboard.filter.none", "No matching rows.").into_owned()
+        }
+        Filter::Agent(n) => dashboard_text(
+            locale,
+            "dashboard.filter.agent",
+            "No agents match `a:{value}`. Press Esc to clear the filter.",
+        )
+        .replace("{value}", n),
+        Filter::State(s) => dashboard_text(
+            locale,
+            "dashboard.filter.state",
+            "No agents in state `{state}`: press Esc to clear the filter.",
+        )
+        .replace("{state}", localized_row_state(locale, *s)),
+        Filter::Substring(n) => dashboard_text(
+            locale,
+            "dashboard.filter.substring",
+            "No rows match `{value}`: press Esc to clear the filter.",
+        )
+        .replace("{value}", n),
     };
     let truncated = truncate_str(&hint, area.width.saturating_sub(2) as usize);
     // Explicit offset to avoid `area.y + 1.min(...)` precedence ambiguity
@@ -2204,16 +2425,31 @@ fn render_no_match(buf: &mut Buffer, area: Rect, theme: &Theme, filter: &Filter)
     );
 }
 
+#[cfg(test)]
 fn render_empty_state(buf: &mut Buffer, area: Rect, theme: &Theme, loading: bool) {
+    render_empty_state_with_locale(buf, area, theme, loading, None);
+}
+
+fn render_empty_state_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    loading: bool,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     if area.area() == 0 {
         return;
     }
     // A single dim line: the dispatch input below is the call to action, so no multi-line onboarding is needed (but never render a blank screen)
     // While the local session roster is being fetched we show a loading hint so a fresh open doesn't flash the "no agents" copy before rows land
     let line = if loading {
-        "Loading sessions…"
+        dashboard_static(locale, "dashboard.empty.loading", "Loading sessions…")
     } else {
-        "No agents yet, type a prompt to start one."
+        dashboard_static(
+            locale,
+            "dashboard.empty.no_agents",
+            "No agents yet, type a prompt to start one.",
+        )
     };
     let truncated = truncate_str(line, area.width.saturating_sub(2) as usize);
     // See `render_no_match` for the precedence rationale.
@@ -2269,6 +2505,7 @@ fn paint_dispatch_config_badge(
     theme: &Theme,
     state: &DashboardState,
     input_focused: bool,
+    locale: Option<&crate::locale::LocaleContext>,
 ) {
     use crate::views::dashboard::DashboardDispatchMode;
     use crate::views::prompt_widget::{PromptFlag, PromptInfo};
@@ -2279,28 +2516,33 @@ fn paint_dispatch_config_badge(
     let model_label = state
         .pending_model
         .as_ref()
-        .map(|m| match m.effort {
-            Some(effort) => format!("{} ({effort})", m.display),
-            None => m.display.clone(),
+        .map(|m| crate::views::localized_model_name(m.display.clone(), m.effort, locale))
+        .or_else(|| {
+            state.models.current_model_name().map(|model| {
+                crate::views::localized_model_name(model, state.models.reasoning_effort, locale)
+            })
         })
-        .or_else(|| state.models.current_model_name())
         .unwrap_or_default();
 
     // Mode flag, styled exactly like the chat prompt's mode flags.
     let mut flags: Vec<PromptFlag> = Vec::new();
     match state.pending_mode {
         DashboardDispatchMode::Plan => flags.push(PromptFlag {
-            text: "plan",
+            text: dashboard_static(locale, "mode.plan.label", "plan"),
             color: Some(theme.accent_plan),
             bold: false,
         }),
         DashboardDispatchMode::Auto => flags.push(PromptFlag {
-            text: "auto",
+            text: dashboard_static(locale, "mode.auto.label", "auto"),
             color: Some(theme.accent_system),
             bold: false,
         }),
         DashboardDispatchMode::AlwaysApprove => flags.push(PromptFlag {
-            text: "always-approve",
+            text: locale
+                .map(|locale| {
+                    locale.named_static_text("mode.always_approve.label", "always-approve")
+                })
+                .unwrap_or("always-approve"),
             color: None,
             bold: false,
         }),
@@ -2325,19 +2567,32 @@ fn paint_dispatch_config_badge(
         width: area.width.saturating_sub(2),
         height: 1,
     };
-    state
-        .dispatch
-        .render_info_line(buf, info_rect, &info, theme.bg_base, theme, input_focused);
+    state.dispatch.render_info_line(
+        buf,
+        info_rect,
+        &info,
+        theme.bg_base,
+        theme,
+        input_focused,
+        locale,
+    );
 }
 
-/// Paint the left-aligned `● rec` badge on a box's top border while the mic is hot.
-/// Shared by the dispatch box and the peek panel that replaces it, so a capture started in either box shows the same indicator.
-pub(super) fn paint_record_badge(buf: &mut Buffer, area: Rect, theme: &Theme, listening: bool) {
+/// Paint the left-aligned `● rec` badge on a box's top border while the mic is
+/// hot. Shared by the dispatch box and the peek panel that replaces it, so a
+/// capture started in either surface shows the same indicator.
+pub(super) fn paint_record_badge(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    listening: bool,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     if listening && area.width >= 12 {
         buf.set_string(
             area.x + 2,
             area.y,
-            " \u{25CF} rec ",
+            dashboard_static(locale, "dashboard.recording.badge", " \u{25CF} rec "),
             Style::default()
                 .fg(theme.accent_error)
                 .bg(theme.bg_base)
@@ -2346,12 +2601,24 @@ pub(super) fn paint_record_badge(buf: &mut Buffer, area: Rect, theme: &Theme, li
     }
 }
 
+#[cfg(test)]
 fn render_dispatch(
     buf: &mut Buffer,
     area: Rect,
     theme: &Theme,
     state: &mut DashboardState,
     overlay_area: Option<Rect>,
+) -> Option<(u16, u16)> {
+    render_dispatch_with_locale(buf, area, theme, state, overlay_area, None)
+}
+
+fn render_dispatch_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    state: &mut DashboardState,
+    overlay_area: Option<Rect>,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> Option<(u16, u16)> {
     use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
@@ -2387,11 +2654,13 @@ fn render_dispatch(
         // Show dispatch-validation feedback (e.g. "Too short") as a right-aligned badge on the box's top border.
         // It stays visible even while the rejected text is still in the input
         paint_dispatch_feedback_badge(buf, area, theme, state.error_toast.as_deref());
-        // Bottom-right model and mode indicator, painted through the shared prompt info-line renderer
-        // Its style, spacing, and position match the chat prompt's info line exactly
-        // Always shows the model the next agent will use (the `/model`-staged choice, else the current default), plus the staged mode as a flag
-        paint_dispatch_config_badge(buf, area, theme, state, input_focused);
-        paint_record_badge(buf, area, theme, state.voice_listening);
+        // Bottom-right model + mode indicator, painted through the shared
+        // prompt info-line renderer so its style, spacing, and position match
+        // the chat prompt's info line exactly. Always shows the model the next
+        // spawned agent will use (the `/model`-staged choice, else the current
+        // default), plus the staged mode as a flag.
+        paint_dispatch_config_badge(buf, area, theme, state, input_focused, locale);
+        paint_record_badge(buf, area, theme, state.voice_listening, locale);
         Rect {
             x: inner.x + 1,
             y: inner.y,
@@ -2415,7 +2684,7 @@ fn render_dispatch(
     // The prefix makes it unmistakable that typing filters rows (Enter confirms) rather than dispatching
     // Chips and multiline are not rendered here
     if state.search_mode {
-        let prefix = "Search: ";
+        let prefix = dashboard_static(locale, "dashboard.search.prefix", "Search: ");
         let prefix_w = UnicodeWidthStr::width(prefix) as u16;
         let painted_prefix_w = prefix_w.min(content.width);
         buf.set_span(
@@ -2434,7 +2703,14 @@ fn render_dispatch(
         let avail = content.width - painted_prefix_w;
         let cursor_column = if state.dispatch.text().is_empty() {
             if avail > 0 {
-                let placeholder = truncate_str("Type to filter sessions\u{2026}", avail as usize);
+                let placeholder = truncate_str(
+                    dashboard_static(
+                        locale,
+                        "dashboard.search.placeholder",
+                        "Type to filter sessions\u{2026}",
+                    ),
+                    avail as usize,
+                );
                 buf.set_string(
                     editor_x,
                     content.y,
@@ -2499,7 +2775,11 @@ fn render_dispatch(
         // whatever row the overview cursor is on. It only paints while the input is UNFOCUSED (matching
         // `PromptWidget::draw`).
         if !input_focused {
-            let msg = "Dispatch a new agent";
+            let msg = dashboard_static(
+                locale,
+                "dashboard.dispatch.placeholder",
+                "Dispatch a new agent",
+            );
             let style = theme.dim().bg(theme.bg_base);
             let trunc = truncate_str(msg, content.width.saturating_sub(prefix_w) as usize);
             buf.set_string(content.x + prefix_w, content.y, trunc, style);
@@ -2520,7 +2800,15 @@ fn render_dispatch(
     };
     state
         .dispatch
-        .draw(buf, content, overlay_area, &style, None, voice_overlay)
+        .draw_with_locale(
+            buf,
+            content,
+            overlay_area,
+            &style,
+            None,
+            voice_overlay,
+            locale,
+        )
         .cursor_pos
 }
 
@@ -2564,12 +2852,15 @@ fn render_slash_dropdown(
     dispatch_rect: Rect,
     theme: &Theme,
     state: &mut DashboardState,
+    locale: Option<&crate::locale::LocaleContext>,
 ) {
     use ratatui::widgets::{Clear, Widget};
 
-    use crate::views::slash_dropdown::{desired_item_rows, render_dropdown as render_slash};
+    use crate::views::slash_dropdown::{
+        desired_item_rows, localized_snapshot, render_dropdown as render_slash,
+    };
 
-    let snap = state.dispatch.slash_snapshot();
+    let snap = localized_snapshot(state.dispatch.slash_snapshot(), locale);
     if !snap.open || snap.matches.is_empty() {
         state.slash_dropdown_items_area = None;
         state.slash_dropdown_hit = Default::default();
@@ -2784,6 +3075,31 @@ fn render_footer(
     peek_active: bool,
     pending_hint: Option<crate::views::shortcuts_bar::PendingHint>,
 ) {
+    render_footer_with_locale(
+        buf,
+        area,
+        theme,
+        state,
+        registry,
+        selected_state,
+        peek_active,
+        pending_hint,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_footer_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    state: &DashboardState,
+    registry: &crate::actions::ActionRegistry,
+    selected_state: Option<RowState>,
+    peek_active: bool,
+    pending_hint: Option<crate::views::shortcuts_bar::PendingHint>,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     use ratatui::widgets::Widget;
 
     use crate::input::key::{KeyShortcut, key};
@@ -2808,6 +3124,7 @@ fn render_footer(
     // Otherwise the keys would set a pending quit but the dashboard would show no "press again" feedback
     if let Some(pending) = pending_hint {
         ShortcutsBar::new(&[])
+            .with_locale(locale)
             .with_pending(Some(pending))
             .render(inner, buf);
         return;
@@ -2830,6 +3147,7 @@ fn render_footer(
                 HintItem::new(key!('n'), "cancel"),
             ];
             ShortcutsBar::new(&hints)
+                .with_locale(locale)
                 .compact(4, None)
                 .render(inner, buf);
         } else {
@@ -2848,6 +3166,7 @@ fn render_footer(
                 },
             };
             ShortcutsBar::new(&[])
+                .with_locale(locale)
                 .with_pending(Some(pending))
                 .render(inner, buf);
         }
@@ -2862,6 +3181,7 @@ fn render_footer(
             HintItem::new(key!(Esc), "cancel"),
         ];
         ShortcutsBar::new(&hints)
+            .with_locale(locale)
             .compact(4, None)
             .render(inner, buf);
         return;
@@ -2875,6 +3195,7 @@ fn render_footer(
             HintItem::new(key!(Esc), "cancel"),
         ];
         ShortcutsBar::new(&hints)
+            .with_locale(locale)
             .compact(4, None)
             .render(inner, buf);
         return;
@@ -2923,6 +3244,7 @@ fn render_footer(
                 HintItem::new(key!(Tab), "input"),
             ];
             ShortcutsBar::new(&hints)
+                .with_locale(locale)
                 .compact(4, Some(HintItem::new(help, "shortcuts")))
                 .render(inner, buf);
             return;
@@ -2940,6 +3262,7 @@ fn render_footer(
                 HintItem::new(key!(Tab), "input"),
             ];
             ShortcutsBar::new(&hints)
+                .with_locale(locale)
                 .compact(4, Some(HintItem::new(help, "shortcuts")))
                 .render(inner, buf);
             return;
@@ -2966,6 +3289,7 @@ fn render_footer(
         }
 
         ShortcutsBar::new(&hints)
+            .with_locale(locale)
             .compact(4, Some(HintItem::new(help, "shortcuts")))
             .render(inner, buf);
         return;
@@ -3177,6 +3501,7 @@ fn render_footer(
     };
 
     ShortcutsBar::new(&hints)
+        .with_locale(locale)
         .compact(4, Some(help_hint))
         .render(inner, buf);
 }
@@ -3288,6 +3613,28 @@ pub fn render_popup_overlay(
     Option<crate::terminal::overlay::PostFlush>,
     bool,
 ) {
+    render_popup_overlay_with_locale(buf, area, theme, title_label, state, None, draw_agent)
+}
+
+pub fn render_popup_overlay_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    title_label: &str,
+    state: &mut DashboardState,
+    locale: Option<&crate::locale::LocaleContext>,
+    draw_agent: impl FnOnce(
+        Rect,
+        &mut Buffer,
+    ) -> (
+        Option<(u16, u16)>,
+        Option<crate::terminal::overlay::PostFlush>,
+    ),
+) -> (
+    Option<(u16, u16)>,
+    Option<crate::terminal::overlay::PostFlush>,
+    bool,
+) {
     use ratatui::widgets::{Block, Borders, Clear, Widget};
 
     if area.area() == 0 {
@@ -3316,7 +3663,11 @@ pub fn render_popup_overlay(
         outline.render(area, buf);
         if area.height >= 3 && area.width >= 6 {
             let hint = truncate_str(
-                "(terminal too small: Esc to close)",
+                dashboard_static(
+                    locale,
+                    "dashboard.popup.too_small",
+                    "(terminal too small: Esc to close)",
+                ),
                 area.width.saturating_sub(2) as usize,
             );
             buf.set_string(
@@ -3405,6 +3756,7 @@ pub fn render_dashboard_session_overlay(
         hover_close,
         1,
         1,
+        None,
     );
     Some(DashboardOverlayChrome {
         content: frame.content,
@@ -3431,8 +3783,40 @@ pub fn render_dashboard_session_header(
     pad_right: u16,
     pad_top: u16,
 ) -> Option<DashboardOverlayChrome> {
-    // Need room for the header band (`pad_top` + 1 title row) plus at least one body row
-    // Also need enough width for the title and chips after the side padding is removed
+    render_dashboard_session_header_with_locale(
+        buf,
+        area,
+        theme,
+        title_label,
+        position,
+        hover_prev,
+        hover_next,
+        hover_close,
+        pad_left,
+        pad_right,
+        pad_top,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_dashboard_session_header_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    title_label: &str,
+    position: Option<(usize, usize)>,
+    hover_prev: bool,
+    hover_next: bool,
+    hover_close: bool,
+    pad_left: u16,
+    pad_right: u16,
+    pad_top: u16,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> Option<DashboardOverlayChrome> {
+    // Need room for the header band (`pad_top` + 1 title row) plus at
+    // least one body row, and enough width for the title + chips after
+    // the side padding is removed.
     let band_height = pad_top.saturating_add(1);
     if area.area() == 0
         || area.height <= band_height
@@ -3470,6 +3854,7 @@ pub fn render_dashboard_session_header(
         hover_close,
         0,
         0,
+        locale,
     );
     let content = Rect {
         x: area.x,
@@ -3499,11 +3884,12 @@ fn paint_session_title_bar(
     hover_close: bool,
     left_inset: u16,
     right_inset: u16,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> (Option<Rect>, Option<Rect>, Option<Rect>) {
     // `‹` / `›` / `✗` are all painted as plain bracketed text (no button background fills). Hover only
     // changes the fg color (`text_primary` vs `gray`) for subtle clickability feedback. The close
     // button is labelled with its destination ("Dashboard") rather than a generic `[✗]`.
-    let close_label = "[Dashboard]";
+    let close_label = dashboard_static(locale, "dashboard.session.return", "[Dashboard]");
     let prev_label = format!("[{}]", crate::glyphs::chevron_left());
     let next_label = format!("[{}]", crate::glyphs::chevron());
     let close_w = UnicodeWidthStr::width(close_label) as u16;

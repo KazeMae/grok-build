@@ -14,7 +14,7 @@ use xai_grok_tools::types::tool::ToolKind;
 
 use crate::scrollback::block::RenderBlock;
 use crate::scrollback::blocks::tool::{
-    SentMessagePresentation, SentMessageToolCallBlock, ToolCallBlock,
+    SentMessageDetail, SentMessagePresentation, SentMessageToolCallBlock, ToolCallBlock,
 };
 
 pub(super) fn is_tool(tool_call: &acp::ToolCall) -> bool {
@@ -74,16 +74,17 @@ fn presentation(
         Some(output) => match output.disposition() {
             SendSubagentMessageDisposition::Accepted => SentMessagePresentation::Sent,
             SendSubagentMessageDisposition::Rejected => SentMessagePresentation::Rejected {
-                reason: output.to_string(),
+                reason: SentMessageDetail::Delivery(output),
             },
             SendSubagentMessageDisposition::Unconfirmed => SentMessagePresentation::Unconfirmed {
-                reason: output.to_string(),
+                reason: SentMessageDetail::Delivery(output),
             },
         },
-        None => SentMessagePresentation::Rejected {
-            reason: content_text(tool_call).unwrap_or_else(|| {
-                "Message was not accepted or delivery details are unavailable.".to_owned()
-            }),
+        None => match content_text(tool_call) {
+            Some(reason) => SentMessagePresentation::Rejected {
+                reason: reason.into(),
+            },
+            None => SentMessagePresentation::RejectedUnavailable,
         },
     }
 }

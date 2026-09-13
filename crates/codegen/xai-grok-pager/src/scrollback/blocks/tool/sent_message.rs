@@ -2,9 +2,11 @@
 //!
 //! Destination and message arguments are inert literal text: they never enter generic media discovery, command interpretation, or Q&A parsing.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use ratatui::text::{Line, Span};
+use xai_grok_tools::implementations::grok_build::send_subagent_message::SendSubagentMessageOutput;
 
 use crate::appearance::AppearanceConfig;
 use crate::render::wrapping::{RtOptions, word_wrap_lines, word_wrap_lines_with_joiners};
@@ -18,13 +20,34 @@ use crate::theme::Theme;
 
 const SENT_MESSAGE_ID_RANGE: u16 = 0;
 const SENT_MESSAGE_TEXT_RANGE: u16 = 1;
+pub(crate) const UNAVAILABLE_DELIVERY_REASON: &str =
+    "Message was not accepted or delivery details are unavailable.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SentMessageDetail {
+    Raw(String),
+    Delivery(SendSubagentMessageOutput),
+}
+
+impl From<String> for SentMessageDetail {
+    fn from(value: String) -> Self {
+        Self::Raw(value)
+    }
+}
+
+impl From<&str> for SentMessageDetail {
+    fn from(value: &str) -> Self {
+        Self::Raw(value.to_owned())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SentMessagePresentation {
     Sending,
     Sent,
-    Rejected { reason: String },
-    Unconfirmed { reason: String },
+    Rejected { reason: SentMessageDetail },
+    RejectedUnavailable,
+    Unconfirmed { reason: SentMessageDetail },
 }
 
 impl SentMessagePresentation {
@@ -32,16 +55,66 @@ impl SentMessagePresentation {
         match self {
             Self::Sending => "Sending message to subagent",
             Self::Sent => "Sent message to subagent",
-            Self::Rejected { .. } => "Failed to send message to subagent",
+            Self::Rejected { .. } | Self::RejectedUnavailable => {
+                "Failed to send message to subagent"
+            }
             Self::Unconfirmed { .. } => "Message delivery unconfirmed",
         }
     }
 
-    fn detail(&self) -> Option<(&str, MessageDetailStyle)> {
+    fn title_with_locale(&self, locale: &crate::locale::LocaleContext) -> &'static str {
+        let (id, english) = match self {
+            Self::Sending => (
+                "scrollback.sent_message.title.sending",
+                "Sending message to subagent",
+            ),
+            Self::Sent => (
+                "scrollback.sent_message.title.sent",
+                "Sent message to subagent",
+            ),
+            Self::Rejected { .. } | Self::RejectedUnavailable => (
+                "scrollback.sent_message.title.rejected",
+                "Failed to send message to subagent",
+            ),
+            Self::Unconfirmed { .. } => (
+                "scrollback.sent_message.title.unconfirmed",
+                "Message delivery unconfirmed",
+            ),
+        };
+        locale.named_static_text(id, english)
+    }
+
+    fn detail(&self) -> Option<(Cow<'_, str>, MessageDetailStyle)> {
         match self {
             Self::Sending | Self::Sent => None,
-            Self::Rejected { reason } => Some((reason, MessageDetailStyle::Error)),
-            Self::Unconfirmed { reason } => Some((reason, MessageDetailStyle::Warning)),
+            Self::Rejected { reason } => Some((reason.english(), MessageDetailStyle::Error)),
+            Self::RejectedUnavailable => Some((
+                Cow::Borrowed(UNAVAILABLE_DELIVERY_REASON),
+                MessageDetailStyle::Error,
+            )),
+            Self::Unconfirmed { reason } => Some((reason.english(), MessageDetailStyle::Warning)),
+        }
+    }
+
+    fn detail_with_locale<'a>(
+        &'a self,
+        locale: &'a crate::locale::LocaleContext,
+    ) -> Option<(Cow<'a, str>, MessageDetailStyle)> {
+        match self {
+            Self::Sending | Self::Sent => None,
+            Self::RejectedUnavailable => Some((
+                locale.named_text(
+                    "scrollback.sent_message.unavailable_reason",
+                    UNAVAILABLE_DELIVERY_REASON,
+                ),
+                MessageDetailStyle::Error,
+            )),
+            Self::Rejected { reason } => {
+                Some((reason.localized(locale), MessageDetailStyle::Error))
+            }
+            Self::Unconfirmed { reason } => {
+                Some((reason.localized(locale), MessageDetailStyle::Warning))
+            }
         }
     }
 
@@ -49,17 +122,81 @@ impl SentMessagePresentation {
         match self {
             Self::Sending if is_running => theme.accent_running,
             Self::Sending | Self::Sent => theme.accent_tool,
-            Self::Rejected { .. } => theme.accent_error,
+            Self::Rejected { .. } | Self::RejectedUnavailable => theme.accent_error,
             Self::Unconfirmed { .. } => theme.warning,
         }
     }
 
     pub(crate) fn is_failure(&self) -> bool {
-        matches!(self, Self::Rejected { .. })
+        matches!(self, Self::Rejected { .. } | Self::RejectedUnavailable)
     }
 
     pub(crate) fn is_unconfirmed(&self) -> bool {
         matches!(self, Self::Unconfirmed { .. })
+    }
+}
+
+impl SentMessageDetail {
+    fn english(&self) -> Cow<'_, str> {
+        match self {
+            Self::Raw(reason) => Cow::Borrowed(reason),
+            Self::Delivery(output) => Cow::Owned(output.to_string()),
+        }
+    }
+
+    fn localized<'a>(&'a self, locale: &'a crate::locale::LocaleContext) -> Cow<'a, str> {
+        match self {
+            Self::Raw(reason) => Cow::Borrowed(reason),
+            Self::Delivery(output) => Cow::Owned(localized_delivery_detail(locale, output)),
+        }
+    }
+}
+
+fn localized_delivery_detail(
+    locale: &crate::locale::LocaleContext,
+    output: &SendSubagentMessageOutput,
+) -> String {
+    let text = |id: &str, english: &str| locale.named_text(id, english).into_owned();
+    match output {
+        SendSubagentMessageOutput::NotFoundOrNotOwned => text(
+            "scrollback.sent_message.reason.not_found_or_not_owned",
+            "Subagent not found or not owned by this session.",
+        ),
+        SendSubagentMessageOutput::NotActiveOrFinalizing => text(
+            "scrollback.sent_message.reason.not_active_or_finalizing",
+            "Subagent is not active or is finalizing.",
+        ),
+        SendSubagentMessageOutput::Saturated { max_in_flight } => text(
+            "scrollback.sent_message.reason.saturated",
+            "Message admission is saturated (maximum {max_in_flight} in flight).",
+        )
+        .replace("{max_in_flight}", &max_in_flight.to_string()),
+        SendSubagentMessageOutput::AdmissionUncertain => text(
+            "scrollback.sent_message.reason.admission_uncertain",
+            "Message admission could not be confirmed; the message may or may not have been accepted.",
+        ),
+        SendSubagentMessageOutput::NotAcceptedBeforeDeadline => text(
+            "scrollback.sent_message.reason.not_accepted_before_deadline",
+            "Message was not accepted before the delivery deadline.",
+        ),
+        SendSubagentMessageOutput::Unsupported => text(
+            "scrollback.sent_message.reason.unsupported",
+            "Active agent messages are unsupported in this context.",
+        ),
+        SendSubagentMessageOutput::Limit {
+            max_bytes,
+            observed_bytes,
+        } => text(
+            "scrollback.sent_message.reason.limit",
+            "Message size is invalid: observed {observed_bytes} bytes; maximum is {max_bytes} bytes.",
+        )
+        .replace("{observed_bytes}", &observed_bytes.to_string())
+        .replace("{max_bytes}", &max_bytes.to_string()),
+        SendSubagentMessageOutput::ChannelClosed => text(
+            "scrollback.sent_message.reason.channel_closed",
+            "Message was not accepted because the subagent channel closed.",
+        ),
+        _ => output.to_string(),
     }
 }
 
@@ -127,18 +264,26 @@ impl SentMessageToolCallBlock {
             self.text.clone(),
             self.presentation
                 .detail()
-                .map(|(detail, _)| detail.to_owned()),
+                .map(|(detail, _)| detail.into_owned()),
         ])
     }
 
-    fn header(&self, theme: &Theme, is_muted: bool) -> Line<'static> {
+    fn header(
+        &self,
+        theme: &Theme,
+        is_muted: bool,
+        locale: &crate::locale::LocaleContext,
+    ) -> Line<'static> {
         let style = if is_muted {
             theme.muted()
         } else {
             theme.primary()
         }
         .add_modifier(ratatui::style::Modifier::BOLD);
-        Line::from(Span::styled(self.presentation.title(), style))
+        Line::from(Span::styled(
+            self.presentation.title_with_locale(locale),
+            style,
+        ))
     }
 
     pub(crate) fn rendered_output(&self, ctx: &BlockContext) -> RenderedBlockOutput {
@@ -193,13 +338,13 @@ impl BlockContent for SentMessageToolCallBlock {
             ctx.mute_when_collapsed(ctx.appearance.scrollback.blocks.tool.muted_collapsed);
         if ctx.mode == DisplayMode::Collapsed {
             return BlockOutput {
-                lines: vec![self.header(&theme, is_muted).into()],
+                lines: vec![self.header(&theme, is_muted, &ctx.locale).into()],
             };
         }
 
         let width = (ctx.width as usize).saturating_sub(2).max(20);
-        let mut lines: Vec<BlockLine> = vec![self.header(&theme, false).into()];
-        if let Some((detail, style)) = self.presentation.detail() {
+        let mut lines: Vec<BlockLine> = vec![self.header(&theme, false, &ctx.locale).into()];
+        if let Some((detail, style)) = self.presentation.detail_with_locale(&ctx.locale) {
             let color = match style {
                 MessageDetailStyle::Error => theme.accent_error,
                 MessageDetailStyle::Warning => theme.warning,
@@ -218,12 +363,18 @@ impl BlockContent for SentMessageToolCallBlock {
         }
 
         lines.push(Line::from("").into());
+        let subagent_id_label = ctx
+            .locale
+            .named_static_text("scrollback.sent_message.subagent_id", "Subagent ID: ");
         let id_wrap = RtOptions::new(width)
-            .initial_indent(Line::from(Span::styled("Subagent ID: ", theme.muted())));
+            .initial_indent(Line::from(Span::styled(subagent_id_label, theme.muted())));
         let id_value = Line::from(Span::styled(
             self.subagent_id
                 .as_deref()
-                .unwrap_or("unavailable")
+                .unwrap_or_else(|| {
+                    ctx.locale
+                        .named_static_text("scrollback.sent_message.unavailable", "unavailable")
+                })
                 .to_owned(),
             theme.primary(),
         ));
@@ -241,7 +392,8 @@ impl BlockContent for SentMessageToolCallBlock {
         }
         lines.push(Line::from("").into());
         lines.push(BlockLine::separator(Line::from(Span::styled(
-            "Message:",
+            ctx.locale
+                .named_static_text("scrollback.sent_message.message", "Message:"),
             theme.muted(),
         ))));
         match &self.text {
@@ -274,8 +426,11 @@ impl BlockContent for SentMessageToolCallBlock {
                 }
             }
             None => {
+                let unavailable = ctx
+                    .locale
+                    .named_static_text("scrollback.sent_message.unavailable", "unavailable");
                 let mut line =
-                    BlockLine::styled(Line::from(Span::styled("unavailable", theme.muted())));
+                    BlockLine::styled(Line::from(Span::styled(unavailable, theme.muted())));
                 line.selectable = Selectable::None;
                 lines.push(line);
             }
@@ -296,6 +451,7 @@ impl BlockContent for SentMessageToolCallBlock {
     fn bullet(&self, ctx: &BlockContext) -> Option<AccentStyle> {
         match &self.presentation {
             SentMessagePresentation::Rejected { .. }
+            | SentMessagePresentation::RejectedUnavailable
             | SentMessagePresentation::Unconfirmed { .. } => Some(AccentStyle::static_color(
                 self.presentation.accent(&Theme::current(), ctx.is_running),
             )),

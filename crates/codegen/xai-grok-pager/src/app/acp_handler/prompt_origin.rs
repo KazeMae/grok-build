@@ -41,11 +41,18 @@ pub(crate) fn suppress_replay_marker_for_origin(
 pub(super) fn rate_limited_wake_failure_event(
     agent_result: Option<&str>,
     elapsed: Option<std::time::Duration>,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> crate::scrollback::blocks::SessionEvent {
     crate::scrollback::blocks::SessionEvent::TurnFailed {
-        error: agent_result
-            .map(str::to_string)
-            .unwrap_or_else(|| "rate limited".to_string()),
+        error: agent_result.map(str::to_string).unwrap_or_else(|| {
+            locale
+                .map(|locale| {
+                    locale
+                        .named_text("session.rate_limit.fallback", "rate limited")
+                        .into_owned()
+                })
+                .unwrap_or_else(|| "rate limited".to_string())
+        }),
         elapsed,
     }
 }
@@ -152,7 +159,11 @@ pub(super) fn finish_wake_turn(agent: &mut AgentView, prompt_id: &str, terminal:
                     elapsed,
                 ))
             } else {
-                Some(rate_limited_wake_failure_event(agent_result, elapsed))
+                Some(rate_limited_wake_failure_event(
+                    agent_result,
+                    elapsed,
+                    Some(agent.scrollback.locale()),
+                ))
             }
         }
         // Silent wakes stay markerless; `terminal_marker` below cannot see the turn's origin, so skip it here

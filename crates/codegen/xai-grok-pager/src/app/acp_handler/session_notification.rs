@@ -1,6 +1,6 @@
 use super::*;
+use crate::app::effects::format_rate_limited_user_message_with_locale;
 use xai_grok_shell::extensions::notification::HookAnnotationKind;
-use xai_grok_shell::sampling::error::format_rate_limited_user_message;
 /// The one scrollback line a failed run gets; success gets none and a deny is already annotated by the shell.
 /// "ignored" is literal (fail-open); a config-tier source has no name worth showing, so its line names only the event.
 pub(super) fn failed_hook_line(
@@ -167,6 +167,7 @@ fn synthesize_replay_turn_marker(
             super::prompt_origin::rate_limited_wake_failure_event(
                 agent_result,
                 elapsed_ms.map(std::time::Duration::from_millis),
+                Some(agent.scrollback.locale()),
             )
         })
     })
@@ -381,16 +382,33 @@ pub(super) fn handle_session_notification_with_origin(
                             false
                         } else {
                             let event = if stop_reason == "rate_limit" {
-                                super::prompt_origin::rate_limited_wake_failure_event(
-                                    agent_result.as_deref(),
-                                    None,
-                                )
+                                crate::scrollback::blocks::SessionEvent::TurnFailed {
+                                    error: agent_result
+                                        .as_deref()
+                                        .map(str::to_string)
+                                        .unwrap_or_else(|| {
+                                            agent
+                                                .scrollback
+                                                .locale()
+                                                .named_text(
+                                                    "session.rate_limit.fallback",
+                                                    "rate limited",
+                                                )
+                                                .into_owned()
+                                        }),
+                                    elapsed: None,
+                                }
                             } else {
-                                crate::app::turn_completion::failed_turn_event(
-                                    error_kind,
-                                    agent_result.as_deref(),
-                                    None,
-                                )
+                                crate::scrollback::blocks::SessionEvent::TurnFailed {
+                                    error: crate::app::error_display::format_request_failure_with_locale(
+                                        None,
+                                        error_kind,
+                                        agent_result.as_deref().unwrap_or("unknown error"),
+                                        Some(agent.scrollback.locale()),
+                                    )
+                                    .message(),
+                                    elapsed: None,
+                                }
                             };
                             agent.push_end_marker_block(event);
                             true
@@ -898,8 +916,11 @@ pub(super) fn handle_session_notification_with_origin(
             }
             tracing::debug!("Hook annotation: {message}");
             let event = match kind {
-                HookAnnotationKind::Note => SessionEvent::HookAnnotation { message },
                 HookAnnotationKind::ToolOutcome => SessionEvent::HookOutcome { message },
+                other => SessionEvent::HookAnnotation {
+                    message,
+                    kind: Some(other),
+                },
             };
             agent
                 .scrollback
@@ -1052,9 +1073,13 @@ pub(super) fn handle_session_notification_with_origin(
                 false
             } else if let Some(pending_id) = agent.pending_recap_entry.take() {
                 agent.scrollback.remove_entry(pending_id);
-                agent.show_toast(crate::app::dispatch::recap_unavailable_toast(
-                    crate::app::dispatch::scrollback_has_user_messages(&agent.scrollback),
-                ));
+                let has_messages =
+                    crate::app::dispatch::scrollback_has_user_messages(&agent.scrollback);
+                let toast = crate::app::dispatch::recap_unavailable_toast_with_locale(
+                    agent.scrollback.locale(),
+                    has_messages,
+                );
+                agent.show_toast(toast);
                 true
             } else {
                 false
@@ -1156,7 +1181,10 @@ pub(super) fn handle_session_notification_with_origin(
             actually_changed
         }
         XaiSessionUpdate::MemoryFiles { files } => {
-            let entries = crate::views::memory_modal::build_entries(files);
+            let entries = crate::views::memory_modal::build_entries_with_locale(
+                files,
+                Some(agent.scrollback.locale()),
+            );
             let modal_state = crate::views::memory_modal::MemoryModalState::new(entries);
             agent.active_modal = Some(crate::views::modal::ActiveModal::MemoryBrowser {
                 state: Box::new(modal_state),
@@ -1363,7 +1391,8 @@ pub(super) fn handle_child_session_notification(
         | XaiSessionUpdate::RetryState(_)
         | XaiSessionUpdate::MemoryFlushCompleted { .. }
         | XaiSessionUpdate::MemoryDreamCompleted { .. }
-        | XaiSessionUpdate::MemorySessionSaved { .. } => {
+        | XaiSessionUpdate::MemorySessionSaved { .. }
+        | XaiSessionUpdate::HookAnnotation { .. } => {
             let mut changed = false;
             if let Some(child_view) = agent.child_view_for_live_update_mut(child_sid) {
                 changed = apply_child_view_session_event(child_view, &update, is_api_key_auth);
@@ -1419,6 +1448,11 @@ pub(crate) fn apply_child_view_session_event(
     update: &XaiSessionUpdate,
     is_api_key_auth: bool,
 ) -> bool {
+    if matches!(update, XaiSessionUpdate::HookAnnotation { .. })
+        && !child_view.hook_annotations_visible
+    {
+        return false;
+    }
     let changed = apply_session_event(
         update,
         &mut child_view.session,
@@ -1510,6 +1544,14 @@ pub(super) fn apply_session_event(
             let message = notes.join("\n");
             tracing::info!("Image dropped: {message}");
             scrollback.push_block(RenderBlock::system(message));
+            true
+        }
+        XaiSessionUpdate::HookAnnotation { message, kind } => {
+            tracing::debug!("Child hook annotation: {message}");
+            scrollback.push_block(RenderBlock::session_event(SessionEvent::HookAnnotation {
+                message: message.clone(),
+                kind: Some(*kind),
+            }));
             true
         }
         _ => false,
@@ -1606,18 +1648,24 @@ pub(super) fn apply_retry_state(
                 is_reauth = true;
                 scrollback.push_block(RenderBlock::session_event(SessionEvent::ReAuthRequired));
             } else if *rate_limited {
-                let error = crate::app::effects::sanitize_user_error(
-                    &format_rate_limited_user_message(Some(reason.as_str()), is_api_key_auth),
+                let error = format_rate_limited_user_message_with_locale(
+                    Some(reason.as_str()),
+                    is_api_key_auth,
+                    scrollback.locale(),
                 );
                 scrollback.push_block(RenderBlock::session_event(SessionEvent::RetryFailed {
                     error,
                     error_type: None,
                 }));
             } else {
-                scrollback.push_block(RenderBlock::session_event(
-                    crate::app::error_display::format_request_failure(None, None, reason)
-                        .into_session_event(),
-                ));
+                let event = crate::app::error_display::format_request_failure_with_locale(
+                    None,
+                    None,
+                    reason,
+                    Some(scrollback.locale()),
+                )
+                .into_session_event();
+                scrollback.push_block(RenderBlock::session_event(event));
             }
         }
         RetryState::Failed {
@@ -1652,10 +1700,14 @@ pub(super) fn apply_retry_state(
                     error_type: Some(error_type.clone()),
                 }));
             } else {
-                scrollback.push_block(RenderBlock::session_event(
-                    crate::app::error_display::format_request_failure(None, Some(wire), message)
-                        .into_session_event(),
-                ));
+                let event = crate::app::error_display::format_request_failure_with_locale(
+                    None,
+                    Some(wire),
+                    message,
+                    Some(scrollback.locale()),
+                )
+                .into_session_event();
+                scrollback.push_block(RenderBlock::session_event(event));
             }
         }
     }

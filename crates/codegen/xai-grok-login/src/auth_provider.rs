@@ -561,13 +561,21 @@ pub fn test_backdate_provider_mint(name: &str, age: std::time::Duration) {
 #[cfg(any(test, feature = "test-support"))]
 pub fn test_counting_provider(name: &str, dir: &std::path::Path) -> AuthProviderRef {
     let counter = dir.join("count");
+    let command = if cfg!(windows) {
+        format!(
+            "@echo run>> {c} & @for /f %i in ('type {c} ^| wc -l') do @printf tok-%s %i",
+            c = counter.display()
+        )
+    } else {
+        format!(
+            "echo run >> {c}; printf 'tok-%s' \"$(wc -l < {c} | tr -d ' ')\"",
+            c = counter.display()
+        )
+    };
     AuthProviderRef::new(
         name.to_owned(),
         AuthProviderConfig {
-            command: format!(
-                "echo run >> {c}; printf 'tok-%s' \"$(wc -l < {c} | tr -d ' ')\"",
-                c = counter.display()
-            ),
+            command,
             args: None,
             token_ttl_secs: Some(3600),
             timeout_secs: None,

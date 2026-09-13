@@ -17,6 +17,16 @@ use super::app_view::InputOutcome;
 use crate::theme::Theme;
 use crate::views::modal::{self, ActiveModal};
 
+fn modal_static_text(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
 impl AgentView {
     /// `suggest_args` falls back to model rows when the query is not in effort phase.
     /// Model-phase reasoning rows use a trailing space in `insert_text`; effort rows do not.
@@ -113,6 +123,7 @@ impl AgentView {
         use crate::views::modal::ActiveModal;
         use crate::views::modal_window::{self as mw, ModalWindowOutcome};
 
+        let ui_locale = self.scrollback.locale().clone();
         // Peek at the modal type to decide dispatch strategy.
         let Some(ref mut modal) = self.active_modal else {
             return InputOutcome::Changed;
@@ -259,6 +270,7 @@ impl AgentView {
             window,
             previous_palette,
             standalone,
+            locale,
             ..
         } = modal
         {
@@ -278,7 +290,8 @@ impl AgentView {
                         // Esc in DocViewer goes back to the DocPicker list
                         // Shuttle the palette snapshot so DocPicker can restore it on its own Esc.
                         let prev = previous_palette.take();
-                        self.active_modal = Some(crate::views::modal::howto_list_modal(prev));
+                        self.active_modal =
+                            Some(crate::views::modal::howto_list_modal_for(prev, *locale));
                     }
                     return InputOutcome::Changed;
                 }
@@ -311,12 +324,12 @@ impl AgentView {
             }
             // Detail owns Esc (back to browse); skip chrome so it doesn't close the modal.
             let footer = if mode.is_detail() {
-                shortcuts_help::modal_footer_detail()
+                shortcuts_help::modal_footer_detail_with_locale(Some(&ui_locale))
             } else {
-                shortcuts_help::modal_footer(*filter_active)
+                shortcuts_help::modal_footer_with_locale(*filter_active, Some(&ui_locale))
             };
             let chrome_cfg = mw::ModalWindowConfig {
-                title: "Keyboard Shortcuts",
+                title: ui_locale.named_static_text("shortcuts.title", "Keyboard Shortcuts"),
                 tabs: None,
                 shortcuts: &footer,
                 sizing: crate::views::shortcuts_help::modal_sizing(
@@ -334,7 +347,7 @@ impl AgentView {
                     _ => return InputOutcome::Changed,
                 }
             }
-            match shortcuts_help::handle_input(
+            match shortcuts_help::handle_input_with_locale(
                 key,
                 entries,
                 state,
@@ -342,6 +355,7 @@ impl AgentView {
                 collapsed_sections,
                 expanded_ids,
                 mode,
+                Some(&ui_locale),
             ) {
                 ShortcutsHelpOutcome::Close => {
                     self.active_modal = None;
@@ -702,6 +716,7 @@ impl AgentView {
             return self.handle_arg_picker_input(ev);
         }
 
+        let palette_locale = self.scrollback.locale().clone();
         let Some(ref mut modal) = self.active_modal else {
             return InputOutcome::Changed;
         };
@@ -711,10 +726,11 @@ impl AgentView {
                 entries: _, state, ..
             } => {
                 // Build filtered entries for count and non-selectable indices.
-                let filtered = crate::views::modal::filter_palette_entries(
+                let filtered = crate::views::modal::filter_palette_entries_with_locale(
                     state.query(),
                     self.sharing_enabled,
                     &self.prompt.slash_controller,
+                    Some(&palette_locale),
                 );
                 let non_sel: Vec<bool> = filtered
                     .iter()
@@ -789,7 +805,10 @@ impl AgentView {
                                     })
                                 };
                                 self.active_modal =
-                                    Some(crate::views::modal::howto_list_modal(prev));
+                                    Some(crate::views::modal::howto_list_modal_for(
+                                        prev,
+                                        palette_locale.locale(),
+                                    ));
                                 InputOutcome::Changed
                             }
                             PaletteCommand::KeyboardShortcuts => {
@@ -928,10 +947,11 @@ impl AgentView {
                         if let Some(ActiveModal::CommandPalette { entries, state, .. }) =
                             self.active_modal.as_mut()
                         {
-                            *entries = crate::views::modal::filter_palette_entries(
+                            *entries = crate::views::modal::filter_palette_entries_with_locale(
                                 state.query(),
                                 sharing_enabled,
                                 &self.prompt.slash_controller,
+                                Some(&palette_locale),
                             );
                             state.selected = state.selected.min(entries.len().saturating_sub(1));
                         }
@@ -1237,6 +1257,7 @@ impl AgentView {
             entries,
             state,
             previous_palette,
+            locale,
             ..
         }) = &mut self.active_modal
         {
@@ -1312,9 +1333,11 @@ impl AgentView {
                         let content = doc.content.to_string();
                         // Shuttle the palette snapshot through DocViewer so it can be passed back to DocPicker when the user presses Esc
                         let prev = previous_palette.take();
+                        let doc_locale = *locale;
                         self.active_modal = Some(ActiveModal::DocViewer {
                             title,
                             content,
+                            locale: doc_locale,
                             scroll: 0,
                             window: crate::views::modal_window::ModalWindowState::new(),
                             cached_lines: None,
@@ -1361,6 +1384,7 @@ impl AgentView {
         use crate::views::modal::ActiveModal;
         use crate::views::modal_window::{self as mw, ModalWindowOutcome};
         use crossterm::event::MouseEventKind;
+        let ui_locale = self.scrollback.locale().clone();
 
         // Picker-based modals: route through ModalWindow chrome first, then delegate content events to the picker input handler
         if matches!(
@@ -1403,11 +1427,15 @@ impl AgentView {
                         Some(ActiveModal::DocViewer {
                             previous_palette,
                             standalone,
+                            locale,
                             ..
                         }) => {
                             if !standalone {
                                 self.active_modal =
-                                    Some(crate::views::modal::howto_list_modal(previous_palette));
+                                    Some(crate::views::modal::howto_list_modal_for(
+                                        previous_palette,
+                                        locale,
+                                    ));
                             }
                         }
                         Some(
@@ -1471,13 +1499,14 @@ impl AgentView {
                     }) = &mut self.active_modal
                     {
                         use crate::views::shortcuts_help::{self, ShortcutsHelpOutcome};
-                        return match shortcuts_help::handle_mouse(
+                        return match shortcuts_help::handle_mouse_with_locale(
                             mouse,
                             entries,
                             state,
                             *filter_active,
                             collapsed_sections,
                             mode,
+                            Some(&ui_locale),
                         ) {
                             ShortcutsHelpOutcome::Close => {
                                 self.active_modal = None;
@@ -1665,14 +1694,18 @@ impl AgentView {
             return;
         };
         let delivery = crate::clipboard::copy_text_or_file(&id);
-        self.show_toast(delivery.toast_message().as_ref());
+        let message =
+            crate::clipboard_toast::localized_copy_toast(self.scrollback.locale(), &delivery);
+        self.show_toast(&message);
     }
 
     /// Copy Session-info text (`y` / footer "copy all") and toast the delivery outcome.
     /// Mirrors [`Self::copy_usage_modal_session_id`].
     fn copy_usage_modal_text(&mut self, text: &str) {
         let delivery = crate::clipboard::copy_text_or_file(text);
-        self.show_toast(delivery.toast_message().as_ref());
+        let message =
+            crate::clipboard_toast::localized_copy_toast(self.scrollback.locale(), &delivery);
+        self.show_toast(&message);
     }
 
     /// Draw the active modal overlay: the per-`ActiveModal`-variant render dispatch, called from `draw` which early-returns afterwards.
@@ -1685,6 +1718,7 @@ impl AgentView {
         buf: &mut Buffer,
         theme: Theme,
         compact: bool,
+        locale: Option<&crate::locale::LocaleContext>,
     ) {
         if let Some(ref mut active_modal) = self.active_modal {
             use crate::views::modal_window::{
@@ -1695,17 +1729,21 @@ impl AgentView {
             // Standard footer shortcuts for picker-style modals.
             let mut picker_shortcuts: Vec<Shortcut> = vec![
                 Shortcut {
-                    label: "\u{2191}/\u{2193} nav",
+                    label: modal_static_text(
+                        locale,
+                        "picker.shortcut.nav",
+                        "\u{2191}/\u{2193} nav",
+                    ),
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "Enter select",
+                    label: modal_static_text(locale, "picker.shortcut.select", "Enter select"),
                     clickable: false,
                     id: 0,
                 },
                 Shortcut {
-                    label: "Esc close",
+                    label: modal_static_text(locale, "picker.shortcut.close", "Esc close"),
                     clickable: false,
                     id: 0,
                 },
@@ -1719,12 +1757,16 @@ impl AgentView {
                 window,
             } = active_modal
             {
-                // Command palette: ModalWindow chrome and picker content
-                let filtered = modal::filter_palette_entries(
+                // Command palette: ModalWindow chrome + picker content.
+                let mut filtered = modal::filter_palette_entries_with_locale(
                     state.query(),
                     self.sharing_enabled,
                     &self.prompt.slash_controller,
+                    locale,
                 );
+                if let Some(locale) = locale {
+                    modal::localize_palette_entries_for_display(&mut filtered, locale);
+                }
                 let non_sel: Vec<bool> = filtered
                     .iter()
                     .map(|e| matches!(e.command, modal::PaletteCommand::SectionHeader(_)))
@@ -1757,9 +1799,13 @@ impl AgentView {
                     .collect();
                 let compact = self.scrollback.appearance().prompt.compact;
                 // Surface `i search` in the footer when vim nav mode is active.
-                mw::push_vim_nav_search_hint(&mut picker_shortcuts, state.search_active);
+                mw::push_vim_nav_search_hint_with_locale(
+                    &mut picker_shortcuts,
+                    state.search_active,
+                    locale,
+                );
                 let modal_config = ModalWindowConfig {
-                    title: "Commands",
+                    title: modal_static_text(locale, "picker.title.commands", "Commands"),
                     tabs: None,
                     shortcuts: &picker_shortcuts,
                     sizing: ModalSizing {
@@ -1776,7 +1822,7 @@ impl AgentView {
                 };
                 if let Some(mca) = mw::render_modal_window(buf, area, window, &modal_config, &theme)
                 {
-                    picker::render_picker_in_modal(
+                    picker::render_picker_in_modal_with_locale(
                         buf,
                         mca.content,
                         mca.inner_x,
@@ -1786,6 +1832,7 @@ impl AgentView {
                         &picker_entries,
                         &non_sel,
                         false,
+                        locale,
                     );
                 }
             } else if let modal::ActiveModal::ArgPicker {
@@ -1799,18 +1846,46 @@ impl AgentView {
             {
                 // Arg picker: ModalWindow chrome and picker content
                 let title = match command.as_str() {
-                    "model" | "m" if !args_query.is_empty() => "Pick reasoning effort",
-                    "model" | "m" => "Pick model",
-                    "theme" | "t" => "Pick theme",
-                    _ => "Pick option",
+                    "model" | "m" if !args_query.is_empty() => modal_static_text(
+                        locale,
+                        "picker.title.reasoning_effort",
+                        "Pick reasoning effort",
+                    ),
+                    "model" | "m" => modal_static_text(locale, "picker.title.model", "Pick model"),
+                    "theme" | "t" => modal_static_text(locale, "picker.title.theme", "Pick theme"),
+                    _ => modal_static_text(locale, "picker.title.option", "Pick option"),
                 };
+                let localized_displays: Vec<String> = items
+                    .iter()
+                    .map(|item| {
+                        locale
+                            .map(|locale| {
+                                crate::views::slash_dropdown::localized_arg_item_display(
+                                    locale, item,
+                                )
+                            })
+                            .unwrap_or_else(|| item.display.clone())
+                    })
+                    .collect();
+                let localized_descriptions: Vec<String> = items
+                    .iter()
+                    .map(|item| {
+                        locale
+                            .map(|locale| {
+                                crate::views::slash_dropdown::localized_arg_item_description(
+                                    locale, item,
+                                )
+                            })
+                            .unwrap_or_else(|| item.description.clone())
+                    })
+                    .collect();
                 let picker_entries: Vec<PickerEntry> = items
                     .iter()
                     .enumerate()
-                    .map(|(i, item)| {
+                    .map(|(i, _item)| {
                         PickerEntry::Row(PickerRow {
-                            label: &item.display,
-                            right_label: &item.description,
+                            label: &localized_displays[i],
+                            right_label: &localized_descriptions[i],
                             selected: state.hovered == Some(i)
                                 || (state.hovered.is_none() && i == state.selected),
                             expanded: false,
@@ -1828,7 +1903,11 @@ impl AgentView {
                     .collect();
                 let compact = self.scrollback.appearance().prompt.compact;
                 // Surface `i search` in the footer when vim nav mode is active.
-                mw::push_vim_nav_search_hint(&mut picker_shortcuts, state.search_active);
+                mw::push_vim_nav_search_hint_with_locale(
+                    &mut picker_shortcuts,
+                    state.search_active,
+                    locale,
+                );
                 let modal_config = ModalWindowConfig {
                     title,
                     tabs: None,
@@ -1847,7 +1926,7 @@ impl AgentView {
                 };
                 if let Some(mca) = mw::render_modal_window(buf, area, window, &modal_config, &theme)
                 {
-                    picker::render_picker_in_modal(
+                    picker::render_picker_in_modal_with_locale(
                         buf,
                         mca.content,
                         mca.inner_x,
@@ -1857,6 +1936,7 @@ impl AgentView {
                         &picker_entries,
                         &[],
                         false,
+                        locale,
                     );
                 }
             } else if let modal::ActiveModal::SessionPicker {
@@ -1877,7 +1957,7 @@ impl AgentView {
                 use crate::app::app_view::filter_session_entries;
                 use crate::views::picker::PickerField;
                 use crate::views::session_picker::{
-                    build_content_entry_data, build_content_header_label,
+                    build_content_entry_data_with_locale, build_content_header_label_with_locale,
                 };
                 // While a delete confirmation is armed, the footer swaps to a "y confirm / n cancel" prompt
                 // Otherwise show the normal hints plus the `d delete` action
@@ -1886,12 +1966,16 @@ impl AgentView {
                 let mut session_shortcuts: Vec<Shortcut> = if pending_delete.is_some() {
                     vec![
                         Shortcut {
-                            label: "y confirm delete",
+                            label: modal_static_text(
+                                locale,
+                                "session.shortcut.confirm_delete",
+                                "y confirm delete",
+                            ),
                             clickable: false,
                             id: 0,
                         },
                         Shortcut {
-                            label: "n cancel",
+                            label: modal_static_text(locale, "session.shortcut.cancel", "n cancel"),
                             clickable: false,
                             id: 0,
                         },
@@ -1900,19 +1984,31 @@ impl AgentView {
                     let external =
                         *source_filter == crate::views::session_picker::SourceFilter::External;
                     let mut shortcuts = vec![Shortcut {
-                        label: "\u{2191}\u{2193} nav",
+                        label: modal_static_text(
+                            locale,
+                            "session.shortcut.nav",
+                            "\u{2191}\u{2193} nav",
+                        ),
                         clickable: false,
                         id: 0,
                     }];
                     if !external {
                         shortcuts.extend([
                             Shortcut {
-                                label: "e expand",
+                                label: modal_static_text(
+                                    locale,
+                                    "session.shortcut.expand",
+                                    "e expand",
+                                ),
                                 clickable: false,
                                 id: 0,
                             },
                             Shortcut {
-                                label: "/ search",
+                                label: modal_static_text(
+                                    locale,
+                                    "session.shortcut.search",
+                                    "/ search",
+                                ),
                                 clickable: false,
                                 id: 0,
                             },
@@ -1920,13 +2016,17 @@ impl AgentView {
                     }
                     if !chat_mode {
                         shortcuts.push(Shortcut {
-                            label: "f filter",
+                            label: modal_static_text(locale, "session.shortcut.filter", "f filter"),
                             clickable: false,
                             id: 0,
                         });
                         if !external {
                             shortcuts.push(Shortcut {
-                                label: "d delete",
+                                label: modal_static_text(
+                                    locale,
+                                    "session.shortcut.delete",
+                                    "d delete",
+                                ),
                                 clickable: false,
                                 id: 0,
                             });
@@ -1936,11 +2036,17 @@ impl AgentView {
                 };
                 // Surface `i search` in the footer when vim nav mode is active.
                 if pending_delete.is_none() {
-                    mw::push_vim_nav_search_hint(&mut session_shortcuts, state.search_active);
+                    mw::push_vim_nav_search_hint_with_locale(
+                        &mut session_shortcuts,
+                        state.search_active,
+                        locale,
+                    );
                 }
                 let compact = self.scrollback.appearance().prompt.compact;
                 let modal_config = ModalWindowConfig {
-                    title: "Resume session",
+                    title: locale
+                        .map(|locale| locale.text(crate::locale::TextKey::SessionResume))
+                        .unwrap_or("Resume session"),
                     tabs: None,
                     shortcuts: &session_shortcuts,
                     sizing: ModalSizing {
@@ -1958,7 +2064,7 @@ impl AgentView {
                 if let Some(mca) = mw::render_modal_window(buf, area, window, &modal_config, &theme)
                 {
                     let content_area = mca.content;
-                    picker::render_picker_search_bar(
+                    picker::render_picker_search_bar_with_locale(
                         buf,
                         content_area.x,
                         content_area.y,
@@ -1968,6 +2074,7 @@ impl AgentView {
                         state.search_active,
                         true,
                         Some(theme.bg_base),
+                        locale,
                     );
                     // Render filter indicator on the search bar row (hidden in chat mode; every row is a conversation)
                     if chat_mode {
@@ -1979,7 +2086,7 @@ impl AgentView {
                             content_area.y,
                             content_area.width,
                             &theme,
-                            source_filter.label(),
+                            source_filter.localized_label(locale),
                             "f",
                             source_filter.is_active(),
                             state.filter_hovered,
@@ -2012,11 +2119,12 @@ impl AgentView {
                     let entries_data = entries.as_deref().unwrap_or(&[]);
                     let filtered_indices =
                         filter_session_entries(entries.as_deref(), filter_query, *source_filter);
-                    let built = crate::views::session_picker::build_session_entry_data(
+                    let built = crate::views::session_picker::build_session_entry_data_with_locale(
                         entries_data,
                         &filtered_indices,
                         state,
                         content_area.width,
+                        locale,
                     );
                     let fields_vecs: Vec<Vec<PickerField>> = built
                         .iter()
@@ -2046,23 +2154,25 @@ impl AgentView {
                         && !source_filter.is_content_search_disabled()
                         && !filter_query.is_empty()
                     {
-                        build_content_entry_data(
+                        build_content_entry_data_with_locale(
                             hits,
                             entries_data,
                             &filtered_indices,
                             state,
                             content_start,
+                            locale,
                         )
                     } else {
                         Vec::new()
                     };
                     let has_content_rows = !content_entry_data.is_empty();
-                    let effective_content_loading =
-                        *content_loading && !source_filter.is_content_search_disabled();
-                    let spinner_label = build_content_header_label(
+                    let effective_content_loading = *content_loading
+                        && *source_filter != crate::views::session_picker::SourceFilter::External;
+                    let spinner_label = build_content_header_label_with_locale(
                         effective_content_loading,
                         has_content_rows,
                         self.scrollback.tick_count(),
+                        locale,
                     );
                     let show_content_header = has_content_rows
                         || (effective_content_loading && !filter_query.trim().is_empty());
@@ -2106,7 +2216,11 @@ impl AgentView {
                             summary_lines: &[],
                             dimmed: false,
                             indent: 1,
-                            badge: if has_snippet { "match" } else { "" },
+                            badge: if has_snippet {
+                                modal_static_text(locale, "session.badge.match", "match")
+                            } else {
+                                ""
+                            },
                             badge_color: Some(theme.accent_user),
                             collapsible: true,
                             underline_last_desc: false,
@@ -2117,9 +2231,10 @@ impl AgentView {
                     let hidden_hint = if chat_mode {
                         None
                     } else {
-                        crate::views::session_picker::hidden_external_hint(
+                        crate::views::session_picker::hidden_external_hint_with_locale(
                             entries.as_deref(),
                             *source_filter,
+                            locale,
                         )
                     };
 
@@ -2147,7 +2262,7 @@ impl AgentView {
                         entries_area.y += 1;
                         entries_area.height -= 1;
                     }
-                    let content_hit = picker::render_picker_content_with_scrollbar_x(
+                    let content_hit = picker::render_picker_content_with_scrollbar_x_and_locale(
                         buf,
                         entries_area,
                         &theme,
@@ -2164,6 +2279,7 @@ impl AgentView {
                         ),
                         self.scrollback.tick_count(),
                         mca.inner_x + mca.inner_width - 1,
+                        locale,
                     );
                     state.hit_areas = Some(picker::PickerHitAreas {
                         close_button: Rect::default(),
@@ -2183,7 +2299,7 @@ impl AgentView {
             {
                 let compact = self.scrollback.appearance().prompt.compact;
                 modal::render_doc_picker_overlay(
-                    buf, area, window, entries, state, compact, &theme,
+                    buf, area, window, entries, state, compact, &theme, locale,
                 );
             } else if let modal::ActiveModal::DocViewer {
                 title,
@@ -2205,6 +2321,7 @@ impl AgentView {
                     cached_lines,
                     compact,
                     &theme,
+                    locale,
                 );
             } else if let modal::ActiveModal::RememberNoteReview {
                 ref raw_content,
@@ -2220,21 +2337,25 @@ impl AgentView {
 
                 let has_enhanced = enhanced_content.is_some();
                 let tab_label = if showing_enhanced {
-                    "Tab raw"
+                    modal_static_text(locale, "memory_note.shortcut.raw", "Tab raw")
                 } else if has_enhanced {
-                    "Tab enhanced"
+                    modal_static_text(locale, "memory_note.shortcut.enhanced", "Tab enhanced")
                 } else {
-                    "enhancing\u{2026}"
+                    modal_static_text(locale, "memory_note.enhancing", "enhancing\u{2026}")
                 };
 
                 let shortcuts: Vec<Shortcut> = vec![
                     Shortcut {
-                        label: "\u{2191}/\u{2193} scroll",
+                        label: modal_static_text(
+                            locale,
+                            "memory_note.shortcut.scroll",
+                            "\u{2191}/\u{2193} scroll",
+                        ),
                         clickable: false,
                         id: 0,
                     },
                     Shortcut {
-                        label: "Enter save",
+                        label: modal_static_text(locale, "memory_note.shortcut.save", "Enter save"),
                         clickable: false,
                         id: 0,
                     },
@@ -2244,7 +2365,11 @@ impl AgentView {
                         id: 0,
                     },
                     Shortcut {
-                        label: "Esc cancel",
+                        label: modal_static_text(
+                            locale,
+                            "memory_note.shortcut.cancel",
+                            "Esc cancel",
+                        ),
                         clickable: false,
                         id: 0,
                     },
@@ -2252,7 +2377,7 @@ impl AgentView {
 
                 let compact = self.scrollback.appearance().prompt.compact;
                 let modal_config = mw::ModalWindowConfig {
-                    title: "Memory Note",
+                    title: modal_static_text(locale, "memory_note.title", "Memory Note"),
                     tabs: None,
                     shortcuts: &shortcuts,
                     sizing: mw::ModalSizing {
@@ -2319,21 +2444,29 @@ impl AgentView {
                 use crate::views::shortcuts_help;
                 // Detail screen reuses the same modal chrome with a different footer
                 if mode.is_detail() {
-                    shortcuts_help::render_detail(buf, area, window, mode, &theme, compact);
+                    let title = locale
+                        .map(|locale| locale.text(crate::locale::TextKey::ShortcutsTitle))
+                        .unwrap_or("Keyboard Shortcuts");
+                    shortcuts_help::render_detail_with_title_and_locale(
+                        buf, area, window, mode, &theme, compact, title, locale,
+                    );
                     return;
                 }
-                let rows = shortcuts_help::CheatsheetRows::build(
+                let rows = shortcuts_help::CheatsheetRows::build_with_locale(
                     entries,
                     state.query(),
                     *filter_active,
                     collapsed_sections,
+                    locale,
                 );
                 let help_refs = rows.help_refs();
                 let picker_entries = rows.picker_entries(state, expanded_ids, &help_refs);
                 let non_sel: Vec<bool> = vec![false; picker_entries.len()];
-                let footer = shortcuts_help::modal_footer(*filter_active);
+                let footer = shortcuts_help::modal_footer_with_locale(*filter_active, locale);
                 let modal_config = mw::ModalWindowConfig {
-                    title: "Keyboard Shortcuts",
+                    title: locale
+                        .map(|locale| locale.text(crate::locale::TextKey::ShortcutsTitle))
+                        .unwrap_or("Keyboard Shortcuts"),
                     tabs: None,
                     shortcuts: &footer,
                     sizing: shortcuts_help::modal_sizing(compact),
@@ -2342,7 +2475,7 @@ impl AgentView {
                 if let Some(mca) = mw::render_modal_window(buf, area, window, &modal_config, &theme)
                 {
                     let searching = state.search_active || !state.query().is_empty();
-                    picker::render_picker_in_modal_inner(
+                    picker::render_picker_in_modal_inner_with_locale(
                         buf,
                         mca.content,
                         mca.inner_x,
@@ -2354,9 +2487,12 @@ impl AgentView {
                         false,
                         searching,
                         !searching,
+                        locale,
                     );
                 }
             } else if let modal::ActiveModal::UsageInfo { state } = active_modal {
+                let default_locale = crate::locale::LocaleContext::default();
+                let locale = locale.unwrap_or(&default_locale);
                 crate::views::usage_modal::render_usage_modal(
                     buf,
                     area,
@@ -2364,29 +2500,57 @@ impl AgentView {
                     self.credit_balance.as_ref(),
                     compact,
                     &theme,
+                    locale,
                 );
             } else if let modal::ActiveModal::MemoryBrowser { state: mem_state } = active_modal {
-                crate::views::memory_modal::render_memory_modal(buf, area, mem_state, compact);
+                crate::views::memory_modal::render_memory_modal_with_locale(
+                    buf, area, mem_state, compact, locale,
+                );
             } else if let modal::ActiveModal::Settings {
                 state: settings_state,
             } = active_modal
             {
-                crate::views::settings_modal::render_settings_modal(
+                crate::views::settings_modal::render_settings_modal_with_locale(
                     buf,
                     area,
                     settings_state,
                     compact,
                     None,
+                    locale,
                 );
             } else if matches!(
                 active_modal,
                 modal::ActiveModal::ResetSettingsConfirm { .. }
             ) {
                 // Render settings modal with reset-confirm overlay.
-                let prompt = crate::views::modal::reset_confirm_prompt(active_modal)
-                    .unwrap_or_else(|| "Reset setting to default?".to_owned());
-                let breadcrumb = crate::views::modal::reset_confirm_breadcrumb(active_modal)
-                    .unwrap_or_else(|| "Reset setting".to_owned());
+                let prompt =
+                    crate::views::modal::reset_confirm_prompt_with_locale(active_modal, locale)
+                        .unwrap_or_else(|| {
+                            locale
+                                .map(|locale| {
+                                    locale
+                                        .named_text(
+                                            "settings.ui.reset_fallback",
+                                            "Reset setting to default?",
+                                        )
+                                        .into_owned()
+                                })
+                                .unwrap_or_else(|| "Reset setting to default?".to_owned())
+                        });
+                let breadcrumb =
+                    crate::views::modal::reset_confirm_breadcrumb_with_locale(active_modal, locale)
+                        .unwrap_or_else(|| {
+                            locale
+                                .map(|locale| {
+                                    locale
+                                        .named_text(
+                                            "settings.ui.reset_breadcrumb_fallback",
+                                            "Reset setting",
+                                        )
+                                        .into_owned()
+                                })
+                                .unwrap_or_else(|| "Reset setting".to_owned())
+                        });
                 if let modal::ActiveModal::ResetSettingsConfirm { settings_state, .. } =
                     active_modal
                 {
@@ -2394,12 +2558,13 @@ impl AgentView {
                         prompt: &prompt,
                         breadcrumb_suffix: &breadcrumb,
                     };
-                    crate::views::settings_modal::render_settings_modal(
+                    crate::views::settings_modal::render_settings_modal_with_locale(
                         buf,
                         area,
                         settings_state,
                         compact,
                         Some(&overlay),
+                        locale,
                     );
                 }
             }
@@ -3076,7 +3241,7 @@ mod command_palette_vim_input_tests {
             }
             let area = Rect::new(0, 0, 80, 24);
             let mut buf = Buffer::empty(area);
-            agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false);
+            agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false, None);
 
             let theme = crate::theme::Theme::current();
             let search_bar = match agent.active_modal.as_ref() {

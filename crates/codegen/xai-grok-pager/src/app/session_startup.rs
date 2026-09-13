@@ -3,6 +3,7 @@
 //! Built once from CLI flags and consumed by interactive resolve, the event loop, and headless mode.
 //! Resume, new-with-id, and fork are thus not re-derived in three places.
 use super::cli::PagerArgs;
+use crate::locale::LocaleContext;
 use std::path::{Path, PathBuf};
 pub(crate) fn stamp_phase_traceparent(meta: &mut Option<agent_client_protocol::Meta>) {
     let Some(span) = xai_grok_telemetry::startup::current_phase_span() else {
@@ -12,6 +13,19 @@ pub(crate) fn stamp_phase_traceparent(meta: &mut Option<agent_client_protocol::M
         meta.get_or_insert_with(agent_client_protocol::Meta::new)
             .insert("traceparent".into(), serde_json::Value::String(tp));
     }
+}
+
+fn localized_named(
+    locale: &LocaleContext,
+    id: &str,
+    english: &str,
+    arguments: &[(&str, &str)],
+) -> String {
+    let mut output = locale.named_text(id, english).into_owned();
+    for (name, value) in arguments {
+        output = output.replace(&format!("{{{name}}}"), value);
+    }
+    output
 }
 /// Session-create intent deferred until [`AppView::session_startup_allowed`].
 ///
@@ -294,6 +308,15 @@ impl PagerArgs {
 /// User-facing refusal when process-wide `--chat` would open a local Build disk row.
 pub const CHAT_MODE_LOCAL_BUILD_REFUSAL: &str = "cannot open a local Build session while --chat is active; \
 resume a conversation or start a new chat (/chat)";
+
+pub fn chat_mode_local_build_refusal(locale: &crate::locale::LocaleContext) -> String {
+    locale
+        .named_text(
+            "session.chat.local_build_refusal",
+            CHAT_MODE_LOCAL_BUILD_REFUSAL,
+        )
+        .into_owned()
+}
 /// User-facing error when `--chat` is combined with leader mode.
 pub const CHAT_MODE_LEADER_CONFLICT: &str = "gateway chat mode (--chat) cannot run with leader mode; \
 pass --no-leader or disable [cli] use_leader in config";
@@ -624,7 +647,7 @@ pub fn probe_advertised_tool_ids() -> Option<Vec<String>> {
 }
 #[cfg(feature = "local-workspace")]
 fn local_workspace_ack_path() -> Option<std::path::PathBuf> {
-    Some(xai_dirs::resolve_grok_home()?.join("local_workspace_ack"))
+    xai_grok_config::user_grok_home().map(|home| home.join("local_workspace_ack"))
 }
 /// Conservative shape check for a chat-mode `--resume <id>` passthrough.
 /// The id skips disk and GCS resolution and flows to the gateway, but the local cwd-collision check also path-joins it.
@@ -780,16 +803,17 @@ pub use xai_grok_shell::session::persistence::RecentSessionSelection;
 async fn most_recent_session_id(
     cwd: &str,
     selection: RecentSessionSelection,
+    locale: &LocaleContext,
 ) -> anyhow::Result<(String, Option<String>)> {
     let summaries = xai_grok_shell::session::persistence::list_summaries(Some(cwd)).await?;
     let first = summaries
         .iter()
         .find(|summary| selection.admits(summary) && !summary.is_unused_optimistic_husk())
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "No session found for current directory. \
-                 Use 'grok' to start a new session."
-            )
+            anyhow::anyhow!(locale.named_text(
+                "session.startup.no_session_for_cwd",
+                "No session found for current directory. Use 'grok-zh' to start a new session.",
+            ))
         })?;
     Ok((first.info.id.to_string(), first.display_title_opt()))
 }
@@ -835,17 +859,36 @@ pub async fn materialize_startup(
     ctx: MaterializeCtx,
     intent: SessionStartupIntent,
 ) -> anyhow::Result<MaterializedStartup> {
+    let locale = LocaleContext::default();
+    materialize_startup_with_locale(ctx, intent, &locale).await
+}
+
+pub async fn materialize_startup_with_locale(
+    ctx: MaterializeCtx,
+    intent: SessionStartupIntent,
+    locale: &LocaleContext,
+) -> anyhow::Result<MaterializedStartup> {
     let cwd = std::env::current_dir()
         .map_err(|e| anyhow::anyhow!("Failed to get cwd: {e}"))?
         .to_string_lossy()
         .to_string();
-    materialize_startup_for_cwd(ctx, intent, &cwd).await
+    materialize_startup_for_cwd_with_locale(ctx, intent, &cwd, locale).await
 }
 /// Same as [`materialize_startup`] but with an explicit process cwd (tests, headless).
 pub async fn materialize_startup_for_cwd(
     ctx: MaterializeCtx,
     intent: SessionStartupIntent,
     cwd: &str,
+) -> anyhow::Result<MaterializedStartup> {
+    let locale = LocaleContext::default();
+    materialize_startup_for_cwd_with_locale(ctx, intent, cwd, &locale).await
+}
+
+pub async fn materialize_startup_for_cwd_with_locale(
+    ctx: MaterializeCtx,
+    intent: SessionStartupIntent,
+    cwd: &str,
+    locale: &LocaleContext,
 ) -> anyhow::Result<MaterializedStartup> {
     if ctx.chat_mode && matches!(intent, SessionStartupIntent::ForkFrom { .. }) {
         anyhow::bail!("{CHAT_MODE_FORK_CONFLICT}");
@@ -868,7 +911,8 @@ pub async fn materialize_startup_for_cwd(
                 anyhow::bail!("chat-mode resume requires a build with the `chat` cargo feature");
             }
             let started = std::time::Instant::now();
-            let (id, title) = most_recent_session_id(cwd, ctx.recent_session_selection).await?;
+            let (id, title) =
+                most_recent_session_id(cwd, ctx.recent_session_selection, locale).await?;
             tracing::info!(
                 source = "local",
                 elapsed_ms = started.elapsed().as_millis() as u64,
@@ -890,7 +934,8 @@ pub async fn materialize_startup_for_cwd(
             if let Some(ref nid) = new_session_id {
                 ensure_session_id_available(nid, cwd)?;
             }
-            let (id, title) = most_recent_session_id(cwd, ctx.recent_session_selection).await?;
+            let (id, title) =
+                most_recent_session_id(cwd, ctx.recent_session_selection, locale).await?;
             Ok(MaterializedStartup::Fork {
                 parent_session_id: id,
                 parent_cwd: None,
@@ -915,7 +960,7 @@ pub async fn materialize_startup_for_cwd(
                     suppress_code_restore: false,
                 });
             }
-            let r = resolve_existing_session(ctx, &session_id, cwd).await?;
+            let r = resolve_existing_session(ctx, &session_id, cwd, locale).await?;
             Ok(MaterializedStartup::Resume {
                 session_id: r.id,
                 original_cwd: r.original_cwd,
@@ -929,7 +974,7 @@ pub async fn materialize_startup_for_cwd(
             new_session_id,
             ..
         } => {
-            let r = resolve_existing_session(ctx, &session_id, cwd).await?;
+            let r = resolve_existing_session(ctx, &session_id, cwd, locale).await?;
             if let Some(ref nid) = new_session_id {
                 let new_cwd = effective_fork_new_cwd(cwd, r.original_cwd.as_deref());
                 ensure_session_id_available(nid, &new_cwd)?;
@@ -968,12 +1013,16 @@ async fn resolve_existing_session(
     ctx: MaterializeCtx,
     session_id: &str,
     cwd: &str,
+    locale: &LocaleContext,
 ) -> anyhow::Result<ResolvedExisting> {
     if let Some(local_id) = xai_grok_shell::session::resolve_local_session(session_id, cwd) {
         tracing::info!(session_id = %session_id, local_id = %local_id, "Session found locally");
         if !in_place_restore_code_allowed(ctx.restore_code, ctx.has_worktree, session_id, &local_id)
         {
-            anyhow::bail!("{REMOTE_RESTORE_NEEDS_WORKTREE}");
+            anyhow::bail!(locale.named_text(
+                "session.startup.remote_restore.needs_worktree",
+                REMOTE_RESTORE_NEEDS_WORKTREE,
+            ));
         }
         return Ok(ResolvedExisting {
             id: local_id,
@@ -990,8 +1039,13 @@ async fn resolve_existing_session(
             "Session found locally under different CWD"
         );
         eprintln!(
-            "Session {} found locally (originally in {})",
-            session_id, original_cwd
+            "{}",
+            localized_named(
+                locale,
+                "session.startup.local_found_other_cwd",
+                "Session {session_id} found locally (originally in {cwd})",
+                &[("session_id", session_id), ("cwd", &original_cwd)],
+            )
         );
         return Ok(ResolvedExisting {
             id: session_id.to_string(),
@@ -1005,7 +1059,7 @@ async fn resolve_existing_session(
     if !arg_is_uuid
         && ctx.title_resolution == TitleResolution::Allowed
         && let Some(resolved) =
-            resolve_session_by_title(session_id, cwd, ctx.recent_session_selection).await?
+            resolve_session_by_title(session_id, cwd, ctx.recent_session_selection, locale).await?
     {
         return Ok(resolved);
     }
@@ -1019,11 +1073,22 @@ async fn resolve_existing_session(
                 "Session not found locally; deferring restore to worktree resume handler"
             );
             eprintln!(
-                "Session {:?} not found locally; it will be restored into the new worktree.",
-                session_id
+                "{}",
+                localized_named(
+                    locale,
+                    "session.startup.remote_restore.not_found_local",
+                    "Session {session_id} not found locally; it will be restored into the new worktree.",
+                    &[("session_id", session_id)],
+                )
             );
             if !ctx.restore_code {
-                eprintln!("{WORKTREE_NO_RESTORE_CODE_NOTICE}");
+                eprintln!(
+                    "{}",
+                    locale.named_text(
+                        "session.startup.remote_restore.worktree_no_code",
+                        WORKTREE_NO_RESTORE_CODE_NOTICE,
+                    )
+                );
             }
             Ok(ResolvedExisting {
                 id: session_id.to_string(),
@@ -1035,25 +1100,40 @@ async fn resolve_existing_session(
         }
         RemoteMissPlan::RejectInPlaceCodeRestore { title_miss_hint } => {
             if title_miss_hint {
+                let hint = super::session_title_resolve::title_miss_hint(session_id);
                 anyhow::bail!(
-                    "{REMOTE_RESTORE_NEEDS_WORKTREE}; {}",
-                    super::session_title_resolve::title_miss_hint(session_id)
+                    "{}; {hint}",
+                    locale.named_text(
+                        "session.startup.remote_restore.needs_worktree",
+                        REMOTE_RESTORE_NEEDS_WORKTREE,
+                    )
                 );
             }
-            anyhow::bail!("{REMOTE_RESTORE_NEEDS_WORKTREE}")
+            anyhow::bail!(locale.named_text(
+                "session.startup.remote_restore.needs_worktree",
+                REMOTE_RESTORE_NEEDS_WORKTREE,
+            ))
         }
         RemoteMissPlan::NotFound { title_miss_hint } => {
             if title_miss_hint {
-                anyhow::bail!(
-                    "Session does not exist: {}",
-                    super::session_title_resolve::title_miss_hint(session_id)
-                );
+                let hint = super::session_title_resolve::title_miss_hint(session_id);
+                anyhow::bail!(localized_named(
+                    locale,
+                    "session.startup.not_found_with_hint",
+                    "Session does not exist: {hint}",
+                    &[("hint", &hint)],
+                ));
             }
-            anyhow::bail!("Session does not exist")
+            anyhow::bail!(locale.named_text("session.startup.not_found", "Session does not exist",))
         }
         RemoteMissPlan::RestoreConversation => {
-            let restored =
-                restore_session_from_remote(session_id, cwd, ctx.restore_progress_on_stdout).await;
+            let restored = restore_session_from_remote(
+                session_id,
+                cwd,
+                ctx.restore_progress_on_stdout,
+                locale,
+            )
+            .await;
             if arg_is_uuid {
                 return restored;
             }
@@ -1120,26 +1200,42 @@ async fn restore_session_from_remote(
     session_id: &str,
     cwd: &str,
     progress_on_stdout: bool,
+    locale: &LocaleContext,
 ) -> anyhow::Result<ResolvedExisting> {
-    let raw_config = xai_grok_shell::config::load_effective_config()
-        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+    let raw_config = xai_grok_shell::config::load_effective_config().map_err(|e| {
+        anyhow::anyhow!(localized_named(
+            locale,
+            "session.startup.remote_restore.load_config_failed",
+            "Failed to load config: {error}",
+            &[("error", &e.to_string())],
+        ))
+    })?;
     if let Some((false, source)) =
         xai_grok_shell::util::config::session_registry_local_override_sourced(Some(&raw_config))
     {
-        anyhow::bail!(
-            "Session does not exist locally (session registry is disabled by {})",
-            source.label()
-        );
+        anyhow::bail!(localized_named(
+            locale,
+            "session.startup.remote_restore.registry_disabled",
+            "Session does not exist locally (session registry is disabled by {source})",
+            &[("source", source.label())],
+        ));
     }
-    emit_pre_tui_restore_line(
-        progress_on_stdout,
-        &format!(
-            "Session {:?} not found locally, restoring conversation from remote...",
-            session_id
-        ),
+    let started_message = localized_named(
+        locale,
+        "session.startup.remote_restore.started",
+        "Session {session_id} not found locally, restoring conversation from remote...",
+        &[("session_id", session_id)],
     );
+    emit_pre_tui_restore_line(progress_on_stdout, &started_message);
     let agent_config = xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config)
-        .map_err(|e| anyhow::anyhow!("Failed to create agent config: {}", e))?;
+        .map_err(|e| {
+            anyhow::anyhow!(localized_named(
+                locale,
+                "session.startup.remote_restore.agent_config_failed",
+                "Failed to create agent config: {error}",
+                &[("error", &e.to_string())],
+            ))
+        })?;
     use xai_grok_login::{AuthManager, ensure_authenticated_or_noninteractive};
     use xai_grok_shell::agent::session_registry_client::SessionRegistryClient;
     use xai_grok_shell::session::restore::{RestoreSessionOpts, restore_session_with_storage};
@@ -1153,7 +1249,14 @@ async fn restore_session_from_remote(
         None,
     )
     .await
-    .map_err(|e| anyhow::anyhow!("Failed to authenticate for session restore: {}", e))?;
+    .map_err(|e| {
+        anyhow::anyhow!(localized_named(
+            locale,
+            "session.startup.remote_restore.auth_failed",
+            "Failed to authenticate for session restore: {error}",
+            &[("error", &e.to_string())],
+        ))
+    })?;
     let auth_manager = std::sync::Arc::new(AuthManager::new_with_proxy_base_url(
         &grok_home(),
         agent_config.grok_com_config.clone(),
@@ -1196,24 +1299,27 @@ async fn restore_session_from_remote(
         Err(_) => (true, None),
     };
     let recovered_local_id = xai_grok_shell::session::find_local_child_for_remote(session_id, cwd);
+    let restore_error = restore_result
+        .as_ref()
+        .and_then(|r| r.as_ref().err())
+        .map(|e| format!("{e:#}"));
     match classify_remote_restore(
         timed_out,
         restore_result
             .as_ref()
             .and_then(|r| r.as_ref().ok())
             .map(|r| r.local_session_id.as_str()),
-        restore_result
-            .as_ref()
-            .and_then(|r| r.as_ref().err())
-            .map(|e| format!("{e:#}"))
-            .as_deref(),
+        restore_error.as_deref(),
         recovered_local_id.as_deref(),
     ) {
         RemoteRestoreOutcome::Restored { local_session_id } => {
-            emit_pre_tui_restore_line(
-                progress_on_stdout,
-                &format!("  Restored conversation as local session {local_session_id}"),
+            let message = localized_named(
+                locale,
+                "session.startup.remote_restore.success",
+                "Restored conversation as local session {local_session_id}",
+                &[("local_session_id", &local_session_id)],
             );
+            emit_pre_tui_restore_line(progress_on_stdout, &format!("  {message}"));
             Ok(ResolvedExisting {
                 id: local_session_id,
                 original_cwd: None,
@@ -1224,17 +1330,29 @@ async fn restore_session_from_remote(
         }
         RemoteRestoreOutcome::RecoveredAfterFailure { local_session_id } => {
             let msg = if timed_out {
-                format!(
-                    "Remote restore timed out after {}s; continuing with conversation {local_session_id}.",
-                    REMOTE_RESTORE_TIMEOUT.as_secs(),
+                let seconds = REMOTE_RESTORE_TIMEOUT.as_secs().to_string();
+                localized_named(
+                    locale,
+                    "session.startup.remote_restore.recovered_timeout",
+                    "Remote restore timed out after {seconds}s; continuing with conversation {local_session_id}.",
+                    &[
+                        ("seconds", &seconds),
+                        ("local_session_id", &local_session_id),
+                    ],
                 )
-            } else if let Some(Err(e)) = restore_result {
-                format!(
-                    "Remote restore failed ({e:#}); continuing with conversation {local_session_id}."
+            } else if let Some(error) = restore_error.as_deref() {
+                localized_named(
+                    locale,
+                    "session.startup.remote_restore.recovered_failed",
+                    "Remote restore failed ({error}); continuing with conversation {local_session_id}.",
+                    &[("error", error), ("local_session_id", &local_session_id)],
                 )
             } else {
-                format!(
-                    "Remote restore incomplete; continuing with conversation {local_session_id}."
+                localized_named(
+                    locale,
+                    "session.startup.remote_restore.recovered_incomplete",
+                    "Remote restore incomplete; continuing with conversation {local_session_id}.",
+                    &[("local_session_id", &local_session_id)],
                 )
             };
             emit_pre_tui_restore_line(progress_on_stdout, &msg);
@@ -1246,7 +1364,29 @@ async fn restore_session_from_remote(
                 suppress_code_restore: true,
             })
         }
-        RemoteRestoreOutcome::Failed(msg) => anyhow::bail!("{msg}"),
+        RemoteRestoreOutcome::Failed(_msg) => {
+            if timed_out {
+                let seconds = REMOTE_RESTORE_TIMEOUT.as_secs().to_string();
+                anyhow::bail!(localized_named(
+                    locale,
+                    "session.startup.remote_restore.timeout_failed",
+                    "Timed out restoring session from remote after {seconds}s. Conversation cannot be recovered.",
+                    &[("seconds", &seconds)],
+                ));
+            }
+            if let Some(error) = restore_error.as_deref() {
+                anyhow::bail!(localized_named(
+                    locale,
+                    "session.startup.remote_restore.failed",
+                    "Failed to restore session from remote: {error}",
+                    &[("error", error)],
+                ));
+            }
+            anyhow::bail!(locale.named_text(
+                "session.startup.remote_restore.history_unavailable",
+                "Failed to restore session from remote: conversation history was unavailable.",
+            ));
+        }
     }
 }
 fn emit_pre_tui_restore_line(on_stdout: bool, line: &str) {
@@ -1301,6 +1441,7 @@ async fn resolve_session_by_title(
     arg: &str,
     cwd: &str,
     selection: RecentSessionSelection,
+    locale: &LocaleContext,
 ) -> anyhow::Result<Option<ResolvedExisting>> {
     let summaries = xai_grok_shell::session::persistence::list_summaries(Some(cwd)).await?;
     let candidates: Vec<_> = summaries
@@ -1312,7 +1453,15 @@ async fn resolve_session_by_title(
     };
     let id = chosen.info.id.to_string();
     tracing::info!(session_id = %id, "Session resolved by title");
-    eprintln!("Resuming session {} (matched by title)", id);
+    eprintln!(
+        "{}",
+        localized_named(
+            locale,
+            "session.startup.resuming_by_title",
+            "Resuming session {session_id} (matched by title)",
+            &[("session_id", &id)],
+        )
+    );
     Ok(Some(ResolvedExisting {
         id,
         original_cwd: None,

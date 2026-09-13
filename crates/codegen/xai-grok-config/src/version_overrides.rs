@@ -33,14 +33,18 @@ pub struct VersionOverrideMeta {
 pub enum VersionOverrideError {
     #[error("version_overrides: failed to deserialize: {0}")]
     Deserialize(#[from] toml::de::Error),
-    #[error("version_overrides[{index}].minimum_version = {value:?} is not valid semver: {source}")]
+    #[error(
+        "version_overrides[{index}].minimum_version = {value:?} is not a valid release version: {source}"
+    )]
     InvalidMinimumVersion {
         index: usize,
         value: String,
         #[source]
         source: semver::Error,
     },
-    #[error("version_overrides[{index}].maximum_version = {value:?} is not valid semver: {source}")]
+    #[error(
+        "version_overrides[{index}].maximum_version = {value:?} is not a valid release version: {source}"
+    )]
     InvalidMaximumVersion {
         index: usize,
         value: String,

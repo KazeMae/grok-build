@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::session::mcp_servers::{SharedMcpState, Superseded};
+use sha2::Digest as _;
 
 /// The `McpInitCancelled` reason for a pass whose generation was replaced.
 pub(super) fn init_cancelled_reason(
@@ -320,6 +321,10 @@ async fn build_mcp_catalog(
                     tool_id: tool.tool_id.clone(),
                     tool_name: tool.tool_name.clone(),
                     call_id: tool.call_id.clone(),
+                    description_sha256: format!(
+                        "{:x}",
+                        sha2::Sha256::digest(tool.description.as_bytes())
+                    ),
                 },
             ));
             tools.push(ToolMetadata {

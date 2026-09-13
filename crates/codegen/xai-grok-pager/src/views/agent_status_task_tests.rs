@@ -14,7 +14,7 @@ fn line_text(line: &Line<'_>) -> String {
 #[test]
 fn hidden_for_zero_counts() {
     let theme = Theme::groknight();
-    assert!(task_status_line(TaskStatusCounts::default(), &theme, false).is_none());
+    assert!(task_status_line(TaskStatusCounts::default(), &theme, false, 0, None).is_none());
 }
 
 #[test]
@@ -24,7 +24,8 @@ fn running_is_a_static_diamond_not_a_spinner() {
         running: 2,
         paused_workflows: 0,
     };
-    let first = task_status_line(counts, &theme, false).expect("running line");
+    let first = task_status_line(counts, &theme, false, 0, None).expect("running line");
+    let next = task_status_line(counts, &theme, false, 4, None).expect("running line");
 
     assert_eq!(
         line_text(&first),
@@ -43,8 +44,8 @@ fn paused_is_static_warning_styled_and_hover_bold() {
         running: 0,
         paused_workflows: 3,
     };
-    let first = task_status_line(counts, &theme, false).expect("paused line");
-    let hovered = task_status_line(counts, &theme, true).expect("paused line");
+    let first = task_status_line(counts, &theme, false, 0, None).expect("paused line");
+    let hovered = task_status_line(counts, &theme, true, 0, None).expect("paused line");
 
     assert_eq!(line_text(&first), "P 3");
     assert_eq!(first.spans[0].style.fg, Some(theme.warning));
@@ -59,7 +60,7 @@ fn mixed_uses_separate_styles_and_neither_animates() {
         running: 1,
         paused_workflows: 2,
     };
-    let line = task_status_line(counts, &theme, false).expect("mixed line");
+    let line = task_status_line(counts, &theme, false, 0, None).expect("mixed line");
 
     assert_eq!(line.spans.len(), 2);
     assert_eq!(line.spans[0].style.fg, Some(theme.accent_running));
@@ -69,4 +70,26 @@ fn mixed_uses_separate_styles_and_neither_animates() {
         format!("{} 1", crate::glyphs::diamond_filled())
     );
     assert_eq!(line.spans[1].content, "  P 2");
+}
+
+#[test]
+fn chinese_localizes_the_paused_prefix_without_changing_counts() {
+    let theme = Theme::groknight();
+    let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let line = task_status_line(
+        TaskStatusCounts {
+            running: 0,
+            paused_workflows: 3,
+        },
+        &theme,
+        false,
+        0,
+        Some(&locale),
+    )
+    .expect("paused line");
+
+    assert_eq!(line_text(&line), "暂停 3");
 }

@@ -18,7 +18,7 @@ use crate::scrollback::types::{col_past_grapheme, grapheme_cells_at, slice_displ
 
 use crate::scrollback::blocks::ContextInfoBlock;
 use crate::theme::Theme;
-use crate::views::credit_bar::CreditBalance;
+use crate::views::credit_bar::{CreditBalance, localized_reset_display};
 use crate::views::modal_window::{
     self as mw, ModalSizing, ModalWindowConfig, ModalWindowState, Shortcut,
 };
@@ -44,11 +44,17 @@ impl UsageInfoTab {
         UsageInfoTab::SessionInfo,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, locale: &crate::locale::LocaleContext) -> &'static str {
         match self {
-            UsageInfoTab::ContextUsage => "Context usage",
-            UsageInfoTab::UsageLimit => "Usage limit",
-            UsageInfoTab::SessionInfo => "Session info",
+            UsageInfoTab::ContextUsage => {
+                locale.named_static_text("palette.context_usage", "Context usage")
+            }
+            UsageInfoTab::UsageLimit => {
+                locale.named_static_text("usage.modal.tab.limit", "Usage limit")
+            }
+            UsageInfoTab::SessionInfo => {
+                locale.named_static_text("palette.session_info", "Session info")
+            }
         }
     }
 
@@ -557,25 +563,28 @@ pub fn render_usage_modal(
     balance: Option<&CreditBalance>,
     compact: bool,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
 ) {
-    let labels: Vec<&str> = UsageInfoTab::ALL.iter().map(|t| t.label()).collect();
+    let labels: Vec<&str> = UsageInfoTab::ALL.iter().map(|t| t.label(locale)).collect();
     state.window.active_tab = state.active_tab.index();
 
     let mut shortcuts: Vec<Shortcut> = vec![
         Shortcut {
-            label: "Tab switch",
+            label: locale.named_static_text("usage.modal.footer.tabs", "Tab switch"),
             clickable: false,
             id: 0,
         },
         Shortcut {
-            label: "\u{2191}/\u{2193} scroll",
+            label: locale
+                .named_static_text("usage.modal.footer.scroll", "\u{2191}/\u{2193} scroll"),
             clickable: false,
             id: 0,
         },
     ];
     if state.ctx.session_id.is_some() {
         shortcuts.push(Shortcut {
-            label: "c copy session ID",
+            label: locale
+                .named_static_text("usage.modal.footer.copy_session_id", "c copy session ID"),
             clickable: true,
             id: COPY_SESSION_ID_SHORTCUT,
         });
@@ -584,13 +593,13 @@ pub fn render_usage_modal(
         && state.session_fields.as_ref().is_some_and(|f| !f.is_empty())
     {
         shortcuts.push(Shortcut {
-            label: "y copy all",
+            label: locale.named_static_text("usage.modal.footer.copy_all", "y copy all"),
             clickable: true,
             id: COPY_ALL_SESSION_INFO_SHORTCUT,
         });
     }
     shortcuts.push(Shortcut {
-        label: "Esc close",
+        label: locale.named_static_text("usage.modal.footer.close", "Esc close"),
         clickable: false,
         id: 0,
     });
@@ -639,10 +648,9 @@ pub fn render_usage_modal(
         return;
     };
     let content = mca.content;
-    let tab = tab_content(state, balance, theme, content.width);
+    let tab = tab_content(state, balance, theme, content.width, locale);
     state.content_rect = content;
     let plain_lines: Vec<String> = tab.lines.iter().map(ToString::to_string).collect();
-    // Endpoints index these strings; drop any gesture if the painted text changed.
     if state.plain_lines != plain_lines {
         state.clear_text_drag();
     }
@@ -830,15 +838,16 @@ fn tab_content(
     balance: Option<&CreditBalance>,
     theme: &Theme,
     width: u16,
+    locale: &crate::locale::LocaleContext,
 ) -> TabContent {
     match state.active_tab {
         UsageInfoTab::ContextUsage => {
-            TabContent::from_lines(context_tab_lines(state, theme, width))
+            TabContent::from_lines(context_tab_lines(state, theme, width, locale))
         }
         UsageInfoTab::UsageLimit => {
-            TabContent::from_lines(usage_limit_lines(state, balance, theme))
+            TabContent::from_lines(usage_limit_lines(state, balance, theme, locale))
         }
-        UsageInfoTab::SessionInfo => session_info_content(state, theme),
+        UsageInfoTab::SessionInfo => session_info_content(state, theme, locale),
     }
 }
 
@@ -856,20 +865,56 @@ fn muted_line(theme: &Theme, s: impl Into<String>) -> Line<'static> {
     Line::from(Span::styled(s.into(), theme.muted()))
 }
 
-fn context_tab_lines(state: &UsageInfoModalState, theme: &Theme, width: u16) -> Vec<Line<'static>> {
+fn localized_template(
+    locale: &crate::locale::LocaleContext,
+    id: &str,
+    english: &str,
+    arguments: &[(&str, &str)],
+) -> String {
+    let mut output = locale.named_text(id, english).into_owned();
+    for (name, value) in arguments {
+        output = output.replace(&format!("{{{name}}}"), value);
+    }
+    output
+}
+
+fn context_tab_lines(
+    state: &UsageInfoModalState,
+    theme: &Theme,
+    width: u16,
+    locale: &crate::locale::LocaleContext,
+) -> Vec<Line<'static>> {
     if let Some(error) = &state.context_error {
         return vec![muted_line(
             theme,
-            format!("Couldn't load context usage: {error}"),
+            localized_template(
+                locale,
+                "usage.modal.context.load_failed",
+                "Couldn't load context usage: {error}",
+                &[("error", error)],
+            ),
         )];
     }
     if let Some(block) = &state.context {
         return block.lines_for_width(theme, width);
     }
     if state.ctx.session_id.is_none() {
-        return vec![muted_line(theme, "No active session.")];
+        return vec![muted_line(
+            theme,
+            locale
+                .named_text("usage.modal.no_active_session", "No active session.")
+                .into_owned(),
+        )];
     }
-    vec![muted_line(theme, "Loading context usage\u{2026}")]
+    vec![muted_line(
+        theme,
+        locale
+            .named_text(
+                "usage.modal.context.loading",
+                "Loading context usage\u{2026}",
+            )
+            .into_owned(),
+    )]
 }
 
 /// Account allowance followed by this session's token/cost totals.
@@ -877,23 +922,58 @@ fn usage_limit_lines(
     state: &UsageInfoModalState,
     balance: Option<&CreditBalance>,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     if state.ctx.chat_kind {
         // Gateway chat sessions have no Build coding credits to show.
     } else if !state.ctx.usage_visible {
-        lines.push(muted_line(theme, "Usage limits are managed by your team."));
+        lines.push(muted_line(
+            theme,
+            locale
+                .named_text(
+                    "usage.modal.limit.managed_by_team",
+                    "Usage limits are managed by your team.",
+                )
+                .into_owned(),
+        ));
     } else if let Some(url) = &state.ctx.billing_redirect_url {
-        lines.push(plain(theme, format!("Please check your usage on {url}")));
+        lines.push(plain(
+            theme,
+            localized_template(
+                locale,
+                "status.usage.redirect",
+                "Please check your usage on {url}",
+                &[("url", url)],
+            ),
+        ));
     } else if let Some(bal) = balance {
-        lines.extend(allowance_lines(state, bal, theme));
+        lines.extend(allowance_lines(state, bal, theme, locale));
     } else if let Some(error) = &state.billing_error {
-        lines.push(muted_line(theme, format!("Couldn't load usage: {error}")));
+        lines.push(muted_line(
+            theme,
+            localized_template(
+                locale,
+                "usage.modal.limit.load_failed",
+                "Couldn't load usage: {error}",
+                &[("error", error)],
+            ),
+        ));
     } else if state.billing_loading {
-        lines.push(muted_line(theme, "Loading usage\u{2026}"));
+        lines.push(muted_line(
+            theme,
+            locale
+                .named_text("usage.modal.limit.loading", "Loading usage\u{2026}")
+                .into_owned(),
+        ));
     } else {
-        lines.push(muted_line(theme, "No billing data available."));
+        lines.push(muted_line(
+            theme,
+            locale
+                .named_text("status.billing.no_data", "No billing data available.")
+                .into_owned(),
+        ));
     }
 
     if let Some(usage_text) = &state.session_usage_text {
@@ -911,7 +991,15 @@ fn usage_limit_lines(
         if !lines.is_empty() {
             lines.push(Line::default());
         }
-        lines.push(muted_line(theme, "Loading session usage\u{2026}"));
+        lines.push(muted_line(
+            theme,
+            locale
+                .named_text(
+                    "usage.modal.session_usage.loading",
+                    "Loading session usage\u{2026}",
+                )
+                .into_owned(),
+        ));
     }
     lines
 }
@@ -920,13 +1008,14 @@ fn allowance_lines(
     state: &UsageInfoModalState,
     bal: &CreditBalance,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     // "Weekly limit", "Monthly limit", or "Usage", plus the plan name
     let header = match &state.ctx.subscription_tier {
-        Some(tier) => format!("{} ({tier})", bal.usage_label()),
-        None => bal.usage_label().to_string(),
+        Some(tier) => format!("{} ({tier})", bal.usage_label_with_locale(Some(locale))),
+        None => bal.usage_label_with_locale(Some(locale)).into_owned(),
     };
     lines.push(Line::styled(header, header_style(theme)));
     lines.push(Line::default());
@@ -951,15 +1040,30 @@ fn allowance_lines(
     ]));
 
     if let Some(reset) = &bal.period_end_display {
-        lines.push(muted_line(theme, format!("Resets: {reset}")));
+        let reset = localized_reset_display(reset, Some(locale));
+        lines.push(muted_line(
+            theme,
+            localized_template(
+                locale,
+                "status.billing.next_reset",
+                "Resets: {time}",
+                &[("time", &reset)],
+            ),
+        ));
     }
 
     // Prepaid credits (stored as negative cents, an accounting convention)
     if let Some(prepaid) = bal.prepaid_balance_cents.map(i64::abs).filter(|c| *c > 0) {
         lines.push(Line::default());
+        let amount = format!("${:.2}", prepaid as f64 / 100.0);
         lines.push(plain(
             theme,
-            format!("Credits: ${:.2}", prepaid as f64 / 100.0),
+            localized_template(
+                locale,
+                "status.billing.credits",
+                "Credits: {amount}",
+                &[("amount", &amount)],
+            ),
         ));
     }
 
@@ -968,33 +1072,138 @@ fn allowance_lines(
         let used = bal.on_demand_used_cents.unwrap_or(0).abs() as f64 / 100.0;
         let cap = bal.on_demand_cap_cents.unwrap_or(0).abs() as f64 / 100.0;
         lines.push(Line::default());
-        lines.push(Line::styled("Pay as you go: Enabled", header_style(theme)));
+        lines.push(Line::styled(
+            locale
+                .named_text("usage.modal.limit.payg_enabled", "Pay as you go: Enabled")
+                .into_owned(),
+            header_style(theme),
+        ));
+        let used = format!("${used:.2}");
+        let cap = format!("${cap:.2}");
         lines.push(muted_line(
             theme,
-            format!("Usage: ${used:.2} / ${cap:.2} per month"),
+            localized_template(
+                locale,
+                "usage.modal.limit.payg_usage",
+                "Usage: {used} / {cap} per month",
+                &[("used", &used), ("cap", &cap)],
+            ),
         ));
     }
     lines
 }
 
-fn session_info_content(state: &UsageInfoModalState, theme: &Theme) -> TabContent {
+/// Model/runtime details rendered as one compact `Label: value` block; every
+/// other field gets a spaced label-over-value group.
+fn is_compact_session_field(label: &str) -> bool {
+    matches!(
+        label,
+        "Model" | "Model Hash" | "API Backend" | "Sandbox" | "Turn" | "Context"
+    )
+}
+
+fn localized_session_field(locale: &crate::locale::LocaleContext, label: &str) -> String {
+    let (id, english) = match label {
+        "Title" => ("usage.modal.session.field.title", "Title"),
+        "Shell version" => ("usage.modal.session.field.shell_version", "Shell version"),
+        "Session ID" => ("usage.modal.session.field.session_id", "Session ID"),
+        "Conversation ID" => (
+            "usage.modal.session.field.conversation_id",
+            "Conversation ID",
+        ),
+        "Working directory" => ("usage.modal.session.field.cwd", "Working directory"),
+        "Model" => ("usage.modal.session.field.model", "Model"),
+        "Model Hash" => ("usage.modal.session.field.model_hash", "Model Hash"),
+        "API Backend" => ("usage.modal.session.field.api_backend", "API Backend"),
+        "Sandbox" => ("usage.modal.session.field.sandbox", "Sandbox"),
+        "Turn" => ("usage.modal.session.field.turn", "Turn"),
+        "Context" => ("usage.modal.session.field.context", "Context"),
+        "Auth method" => ("usage.modal.session.field.auth_method", "Auth method"),
+        _ => return label.to_string(),
+    };
+    locale.named_text(id, english).into_owned()
+}
+
+/// Localize the canonical `format_session_info` text for minimal-mode
+/// scrollback. The full modal keeps the canonical labels internally so its
+/// grouping and click-to-copy logic remain stable, then localizes at render.
+pub(crate) fn localize_session_info_text(
+    text: &str,
+    locale: &crate::locale::LocaleContext,
+) -> String {
+    text.lines()
+        .map(|row| {
+            let trimmed = row.trim_start();
+            let indent = &row[..row.len() - trimmed.len()];
+            if trimmed.starts_with("Run `grok-zh login`") {
+                return format!(
+                    "{indent}{}",
+                    locale.named_static_text(
+                        "usage.modal.session.login_upsell",
+                        "Run `grok-zh login` to use your SuperGrok subscription instead.",
+                    )
+                );
+            }
+            let Some((label, value)) = trimmed.split_once(": ") else {
+                return row.to_string();
+            };
+            format!(
+                "{indent}{}: {value}",
+                localized_session_field(locale, label)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn session_info_content(
+    state: &UsageInfoModalState,
+    theme: &Theme,
+    locale: &crate::locale::LocaleContext,
+) -> TabContent {
     if let Some(error) = &state.session_error {
         return TabContent::from_lines(vec![muted_line(
             theme,
-            format!("Couldn't load session info: {error}"),
+            localized_template(
+                locale,
+                "session.info.load_failed",
+                "Couldn't load session info: {error}",
+                &[("error", error)],
+            ),
         )]);
     }
     let Some(fields) = state.session_fields.as_ref().filter(|f| !f.is_empty()) else {
         if state.ctx.session_id.is_none() {
-            return TabContent::from_lines(vec![muted_line(theme, "No active session.")]);
+            return TabContent::from_lines(vec![muted_line(
+                theme,
+                locale
+                    .named_text("usage.modal.no_active_session", "No active session.")
+                    .into_owned(),
+            )]);
         }
-        return TabContent::from_lines(vec![muted_line(theme, "Loading session info\u{2026}")]);
+        return TabContent::from_lines(vec![muted_line(
+            theme,
+            locale
+                .named_text(
+                    "usage.modal.session.loading",
+                    "Loading session info\u{2026}",
+                )
+                .into_owned(),
+        )]);
     };
 
     let mut lines = vec![Line::from(vec![
-        Span::styled("Session info", header_style(theme)),
         Span::styled(
-            "   click or drag to copy",
+            locale
+                .named_text("palette.session_info", "Session info")
+                .into_owned(),
+            header_style(theme),
+        ),
+        Span::styled(
+            format!(
+                "   {}",
+                locale.named_static_text("usage.modal.session.copy_hint", "click or drag to copy",)
+            ),
             Style::default().fg(theme.gray_dim),
         ),
     ])];
@@ -1002,6 +1211,7 @@ fn session_info_content(state: &UsageInfoModalState, theme: &Theme) -> TabConten
     let mut prev_compact = false;
     for field in fields {
         let compact = field.compact;
+        let display_label = localized_session_field(locale, field.label);
         if !(compact && prev_compact) {
             lines.push(Line::default());
         }
@@ -1014,7 +1224,7 @@ fn session_info_content(state: &UsageInfoModalState, theme: &Theme) -> TabConten
                 theme.muted()
             };
             lines.push(Line::from(vec![
-                Span::styled(format!("{}: ", field.label), label_style),
+                Span::styled(format!("{display_label}: "), label_style),
                 Span::styled(field.value.clone(), copy_value_style(theme, hovered)),
             ]));
             copy_targets.push(CopyTarget {
@@ -1023,7 +1233,7 @@ fn session_info_content(state: &UsageInfoModalState, theme: &Theme) -> TabConten
             });
         } else {
             lines.push(Line::from(Span::styled(
-                format!("{}:", field.label),
+                format!("{display_label}:"),
                 theme.muted(),
             )));
             let value_idx = lines.len();
@@ -1056,7 +1266,15 @@ fn copy_value_style(theme: &Theme, hovered: bool) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::locale::{LocaleContext, LocaleSource, ResolvedLocale, UiLocale};
     use crossterm::event::{KeyEventKind, KeyEventState, KeyModifiers};
+
+    fn zh_locale() -> LocaleContext {
+        LocaleContext::new(ResolvedLocale {
+            locale: UiLocale::ZhCn,
+            source: LocaleSource::Cli,
+        })
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent {
@@ -1133,7 +1351,7 @@ mod tests {
             is_unified_billing_user: None,
         };
         let theme = Theme::current();
-        let lines = usage_limit_lines(&state, Some(&bal), &theme);
+        let lines = usage_limit_lines(&state, Some(&bal), &theme, &LocaleContext::default());
         let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
         assert_eq!(text[0], "Weekly limit (SuperGrok)");
         assert!(text[2].ends_with("50%"), "bar row: {:?}", text[2]);
@@ -1154,20 +1372,20 @@ mod tests {
         let theme = Theme::current();
         let mut state = state_with_session();
         state.billing_loading = true;
-        let lines = usage_limit_lines(&state, None, &theme);
+        let lines = usage_limit_lines(&state, None, &theme, &LocaleContext::default());
         assert!(lines[0].to_string().contains("Loading usage"));
 
         state.ctx.billing_redirect_url = Some("https://x.example/usage".to_string());
-        let lines = usage_limit_lines(&state, None, &theme);
+        let lines = usage_limit_lines(&state, None, &theme, &LocaleContext::default());
         assert!(lines[0].to_string().contains("https://x.example/usage"));
 
         state.ctx.usage_visible = false;
-        let lines = usage_limit_lines(&state, None, &theme);
+        let lines = usage_limit_lines(&state, None, &theme, &LocaleContext::default());
         assert!(lines[0].to_string().contains("managed by your team"));
 
         // Gateway chat sessions show no billing at all
         state.ctx.chat_kind = true;
-        let lines = usage_limit_lines(&state, None, &theme);
+        let lines = usage_limit_lines(&state, None, &theme, &LocaleContext::default());
         assert!(lines[0].to_string().contains("Loading session usage"));
     }
 
@@ -1178,7 +1396,15 @@ mod tests {
         let mut state = state_with_session();
         state.session_usage_text = Some("Session usage: no model calls yet.".to_string());
         let theme = Theme::current();
-        render_usage_modal(&mut buf, area, &mut state, None, false, &theme);
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
+        );
         let text: String = (0..area.height)
             .map(|y| {
                 (0..area.width)
@@ -1218,7 +1444,15 @@ mod tests {
             Some("Session ID: sid-123\nModel Hash: fp-abc\nTurn: 3")
         );
         let theme = Theme::current();
-        render_usage_modal(&mut buf, area, &mut state, None, false, &theme);
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
+        );
         let text: String = (0..area.height)
             .map(|y| {
                 (0..area.width)
@@ -1256,18 +1490,26 @@ mod tests {
         let mut state = state_with_session();
         state.set_tab(UsageInfoTab::SessionInfo);
         state.session_fields = Some(vec![
+            field("Title", "t", false),
             field("Session ID", "sid-123", false),
             field("Model Hash", "fp-abc", true),
         ]);
-        render_usage_modal(&mut buf, area, &mut state, None, false, &Theme::current());
-        let values: Vec<&str> = state.copy_hits.iter().map(|h| h.value.as_str()).collect();
-        assert_eq!(values, ["sid-123", "Model Hash: fp-abc"]);
+        let theme = Theme::current();
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
+        );
         let hit = state
             .copy_hits
             .iter()
-            .find(|h| h.value == "Model Hash: fp-abc")
-            .expect("hash hit")
-            .clone();
+            .find(|hit| hit.value == "Model Hash: fp-abc")
+            .cloned()
+            .expect("model hash row visible");
         assert_eq!(
             handle_usage_modal_mouse(
                 &mut state,
@@ -1296,7 +1538,15 @@ mod tests {
         state.set_tab(UsageInfoTab::SessionInfo);
         state.session_fields = Some(vec![field("Model Hash", "fp-abc", true)]);
         let theme = Theme::current();
-        render_usage_modal(&mut buf, area, &mut state, None, false, &theme);
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
+        );
 
         let line_idx = state
             .plain_lines
@@ -1324,7 +1574,15 @@ mod tests {
             UsageModalOutcome::Changed
         );
 
-        render_usage_modal(&mut buf, area, &mut state, None, false, &theme);
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
+        );
         let cell = &buf[(x0, y)];
         if theme.text_primary != ratatui::style::Color::Reset
             && theme.bg_base != ratatui::style::Color::Reset
@@ -1348,7 +1606,15 @@ mod tests {
         let mut state = state_with_session();
         state.set_tab(UsageInfoTab::SessionInfo);
         state.session_fields = Some(vec![field("Title", "t", false)]);
-        render_usage_modal(&mut buf, area, &mut state, None, false, &Theme::current());
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &Theme::current(),
+            &LocaleContext::default(),
+        );
 
         let blank = state
             .plain_lines
@@ -1392,7 +1658,16 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let mut state = state_with_session();
         state.set_tab(UsageInfoTab::SessionInfo);
-        render_usage_modal(&mut buf, area, &mut state, None, false, &Theme::current());
+        let theme = Theme::current();
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
+        );
         let rect = state.content_rect;
         assert_eq!(
             handle_usage_modal_mouse(
@@ -1404,7 +1679,15 @@ mod tests {
             UsageModalOutcome::Changed
         );
         state.session_fields = Some(vec![field("Title", "t", false)]);
-        render_usage_modal(&mut buf, area, &mut state, None, false, &Theme::current());
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
+        );
         assert_eq!(
             handle_usage_modal_mouse(
                 &mut state,
@@ -1414,135 +1697,18 @@ mod tests {
             ),
             UsageModalOutcome::Unchanged
         );
-    }
-
-    #[test]
-    fn bare_moved_ends_stale_drag() {
-        let area = Rect::new(0, 0, 80, 24);
-        let mut buf = Buffer::empty(area);
-        let mut state = state_with_session();
-        state.set_tab(UsageInfoTab::SessionInfo);
-        state.session_fields = Some(vec![field("Model Hash", "fp-abc", true)]);
-        render_usage_modal(&mut buf, area, &mut state, None, false, &Theme::current());
-        let hit = state.copy_hits[0].clone();
-        let line = state
-            .plain_lines
-            .iter()
-            .find(|l| l.contains("fp-abc"))
-            .expect("hash line")
-            .clone();
-        let x0 = hit.rect.x + line.find("fp-abc").expect("hash") as u16;
-        handle_usage_modal_mouse(
+        // Other tabs never expose the rect.
+        state.set_tab(UsageInfoTab::UsageLimit);
+        render_usage_modal(
+            &mut buf,
+            area,
             &mut state,
-            MouseEventKind::Down(MouseButton::Left),
-            x0,
-            hit.rect.y,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
         );
-        handle_usage_modal_mouse(
-            &mut state,
-            MouseEventKind::Drag(MouseButton::Left),
-            x0 + 3,
-            hit.rect.y,
-        );
-        assert!(state.text_drag.is_some());
-        // Bare Moved means the Up was lost off-terminal; finish like Up (copy and clear)
-        let out = handle_usage_modal_mouse(&mut state, MouseEventKind::Moved, x0 + 4, hit.rect.y);
-        assert!(
-            matches!(out, UsageModalOutcome::CopyText(ref s) if s.starts_with("fp")),
-            "expected partial copy of hash, got {out:?}"
-        );
-        assert!(state.text_drag.is_none());
-        assert!(state.pending_press.is_none());
-    }
-
-    #[test]
-    fn bare_moved_keeps_pending_press_for_click() {
-        let area = Rect::new(0, 0, 80, 24);
-        let mut buf = Buffer::empty(area);
-        let mut state = state_with_session();
-        state.set_tab(UsageInfoTab::SessionInfo);
-        state.session_fields = Some(vec![field("Model Hash", "fp-abc", true)]);
-        render_usage_modal(&mut buf, area, &mut state, None, false, &Theme::current());
-        let hit = state.copy_hits[0].clone();
-        handle_usage_modal_mouse(
-            &mut state,
-            MouseEventKind::Down(MouseButton::Left),
-            hit.rect.x,
-            hit.rect.y,
-        );
-        assert!(state.pending_press.is_some());
-        // Moved must not clear pending; terminals that report held motion as Moved must still click
-        let _ = handle_usage_modal_mouse(&mut state, MouseEventKind::Moved, hit.rect.x, hit.rect.y);
-        assert!(state.pending_press.is_some());
-        assert!(state.text_drag.is_none());
-        assert_eq!(
-            handle_usage_modal_mouse(
-                &mut state,
-                MouseEventKind::Up(MouseButton::Left),
-                hit.rect.x,
-                hit.rect.y,
-            ),
-            UsageModalOutcome::CopyText("Model Hash: fp-abc".to_string())
-        );
-    }
-
-    #[test]
-    fn chrome_clicks_do_not_start_content_drag() {
-        let area = Rect::new(0, 0, 80, 24);
-        let mut buf = Buffer::empty(area);
-        let mut state = state_with_session();
-        state.set_tab(UsageInfoTab::SessionInfo);
-        state.session_fields = Some(vec![field("Session ID", "sid-123", false)]);
-        render_usage_modal(&mut buf, area, &mut state, None, false, &Theme::current());
-        let rect = state.content_rect;
-        assert!(rect.width > 0 && rect.height > 0);
-        assert_eq!(
-            handle_usage_modal_mouse(
-                &mut state,
-                MouseEventKind::Down(MouseButton::Left),
-                rect.x + rect.width / 2,
-                rect.y.saturating_sub(1),
-            ),
-            UsageModalOutcome::Unchanged,
-        );
-        assert!(state.pending_press.is_none());
-        assert!(state.text_drag.is_none());
-    }
-
-    #[test]
-    fn clear_text_drag_also_clears_hover() {
-        let mut state = state_with_session();
-        state.hovered_copy_line = Some(2);
-        state.pending_press = Some(PendingPress {
-            start_col: 1,
-            start_row: 1,
-            endpoint: TextEndpoint {
-                line_idx: 0,
-                col: 0,
-            },
-            click_value: None,
-        });
-        state.clear_text_drag();
-        assert!(state.hovered_copy_line.is_none());
-        assert!(state.pending_press.is_none());
-        assert!(state.text_drag.is_none());
-    }
-
-    #[test]
-    fn selection_cols_clamps_to_panel_width() {
-        let drag = TextDrag {
-            anchor: TextEndpoint {
-                line_idx: 0,
-                col: 0,
-            },
-            head: TextEndpoint {
-                line_idx: 1,
-                col: 3,
-            },
-        };
-        let long = "abcdefghijklmnopqrstuvwxyz";
-        assert_eq!(selection_cols(drag, 0, long, 10), Some((0, 10)));
-        assert_eq!(selection_cols(drag, 1, "abcde", 10), Some((0, 4)));
+        assert!(state.copy_hits.is_empty());
     }
 
     #[test]
@@ -1551,7 +1717,15 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let mut state = state_with_session();
         let theme = Theme::current();
-        render_usage_modal(&mut buf, area, &mut state, None, false, &theme);
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &LocaleContext::default(),
+        );
         let popup = state.window.popup_area.expect("popup rendered");
         assert_eq!(popup.height, 30);
         // Still vertically centered.
@@ -1569,7 +1743,7 @@ mod tests {
             field("Context", "1 / 2", true),
         ]);
         let theme = Theme::current();
-        let tab = session_info_content(&state, &theme);
+        let tab = session_info_content(&state, &theme, &LocaleContext::default());
         let text: Vec<String> = tab.lines.iter().map(|l| l.to_string()).collect();
         assert_eq!(
             text,
@@ -1589,5 +1763,78 @@ mod tests {
                 "Context: 1 / 2",
             ]
         );
+    }
+
+    #[test]
+    fn zh_locale_localizes_usage_modal_chrome_and_session_fields() {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        let mut state = state_with_session();
+        state.set_tab(UsageInfoTab::SessionInfo);
+        state.session_fields = Some(vec![
+            field("Title", "t", false),
+            field("Session ID", "sid-123", false),
+            field("Working directory", "/tmp", false),
+            field("Model", "Grok", true),
+        ]);
+        let theme = Theme::current();
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &theme,
+            &zh_locale(),
+        );
+        let text: String = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        // Wide CJK glyphs occupy two terminal cells; ratatui leaves the
+        // continuation cells blank, so compact those placeholders before
+        // asserting human-readable labels.
+        let compact_text = text.replace(' ', "");
+        for needle in [
+            "上下文用量",
+            "用量限制",
+            "会话信息",
+            "会话ID",
+            "工作目录",
+            "模型",
+            "全部复制",
+        ] {
+            assert!(
+                compact_text.contains(needle),
+                "missing {needle:?} in:\n{text}"
+            );
+        }
+        assert!(
+            text.contains("sid-123"),
+            "dynamic session ID changed: {text}"
+        );
+        assert!(text.contains("Grok"), "dynamic model name changed: {text}");
+    }
+
+    #[test]
+    fn zh_locale_localizes_minimal_session_info_without_changing_values() {
+        let text = localize_session_info_text(
+            "  Title: demo\n  Auth method: OAuth\n  Run `grok-zh login` to use your SuperGrok subscription instead.\n  Session ID: sid-123\n  Working directory: C:\\repo\n  Model: grok-build",
+            &zh_locale(),
+        );
+        for needle in [
+            "标题: demo",
+            "身份验证方式: OAuth",
+            "运行 `grok-zh login`",
+            "会话 ID: sid-123",
+            "工作目录: C:\\repo",
+            "模型: grok-build",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
+        }
     }
 }

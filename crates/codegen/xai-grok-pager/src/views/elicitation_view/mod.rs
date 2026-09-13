@@ -7,7 +7,10 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use render::{ElicitHit, elicitation_view_height, render_elicitation_view};
+pub use render::{
+    ElicitHit, elicitation_view_height, elicitation_view_height_with_locale,
+    render_elicitation_view, render_elicitation_view_with_locale,
+};
 pub use state::{
     ElicitResponseTx, ElicitationActionFocus, ElicitationFocus, ElicitationStage,
     ElicitationViewState, FieldValueUi, FormFieldUi, FormStage, UrlConsentStage, UrlDisplay,

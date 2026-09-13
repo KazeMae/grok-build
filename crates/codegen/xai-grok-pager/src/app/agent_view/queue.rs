@@ -330,6 +330,11 @@ impl AgentView {
     /// Send one merged-queue row now (cancel-and-send), by selection id. The shell cancels the running turn and runs this row as the next turn.
     pub(in crate::app) fn force_interject_queue_row(&mut self, id: u64) -> InputOutcome {
         if !self.can_send_now() {
+            let message = self.scrollback.locale().named_static_text(
+                "queue.no_turn_running",
+                "No turn running: prompt will send when ready",
+            );
+            self.show_toast(message);
             return InputOutcome::Changed;
         }
         let (is_server, row) = self.resolve_queue_row(id);
@@ -361,7 +366,11 @@ impl AgentView {
         }
         // Local rows: only plain prompts and raw skill rows can re-send (others would send display text, not payload)
         if self.queue_row_prompt_like(id) != Some(true) {
-            self.show_toast("Can't send this now: it runs when the current turn ends");
+            let message = self.scrollback.locale().named_static_text(
+                "queue.send_now_unavailable",
+                "Can't send this now: it runs when the current turn ends",
+            );
+            self.show_toast(message);
             return InputOutcome::Changed;
         }
         if let Some(prompt) = self.remove_local_queue_row(id) {

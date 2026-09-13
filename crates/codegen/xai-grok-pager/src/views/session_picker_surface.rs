@@ -88,6 +88,8 @@ pub(crate) struct SessionPickerRenderCtx<'a> {
     pub(crate) source_filter: crate::views::session_picker::SourceFilter,
     pub(crate) pending_delete: bool,
     pub(crate) chat_mode: bool,
+    /// Locale used only for display text; query/session identifiers stay canonical.
+    pub(crate) locale: Option<&'a crate::locale::LocaleContext>,
 }
 
 pub(crate) fn render_session_picker(

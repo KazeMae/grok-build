@@ -719,3 +719,69 @@ fn handler_answers_ext_method_instead_of_dropping() {
         serde_json::from_str(resp.0.get()).expect("typed wire reply");
     assert!(matches!(parsed, AskUserQuestionExtResponse::Cancelled));
 }
+
+#[test]
+fn compact_failure_plain_output_localizes_fixed_chrome_only() {
+    let zh = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let failed = super::reducer::Lifecycle::CompactFailed {
+        error: "api\nfailed".into(),
+    };
+    assert_eq!(
+        failed.plain_message_with_locale(&zh),
+        "自动压缩失败：api failed"
+    );
+    assert_eq!(
+        failed.plain_message_with_locale(&crate::locale::LocaleContext::default()),
+        "Auto-compact failed - api failed"
+    );
+
+    let empty = super::reducer::Lifecycle::CompactFailed { error: "  ".into() };
+    assert_eq!(empty.plain_message_with_locale(&zh), "自动压缩失败。");
+}
+
+#[test]
+fn zh_localization_memory_flush_plain_output_localizes_fixed_chrome_and_known_results() {
+    let zh = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    assert_eq!(
+        super::reducer::Lifecycle::MemoryFlushStarted.plain_message_with_locale(&zh),
+        "正在刷新记忆。"
+    );
+    assert_eq!(
+        super::reducer::Lifecycle::MemoryFlushCompleted {
+            result: "written".into(),
+            path: Some("/tmp/MEMORY.md".into()),
+        }
+        .plain_message_with_locale(&zh),
+        "记忆刷新结果：已写入；路径：/tmp/MEMORY.md"
+    );
+    assert_eq!(
+        super::reducer::Lifecycle::MemoryFlushCompleted {
+            result: "rejected: provider detail".into(),
+            path: None,
+        }
+        .plain_message_with_locale(&zh),
+        "记忆刷新结果：已拒绝：provider detail。"
+    );
+    assert_eq!(
+        super::reducer::Lifecycle::MemoryFlushCompleted {
+            result: "future opaque result".into(),
+            path: None,
+        }
+        .plain_message_with_locale(&zh),
+        "记忆刷新结果：future opaque result。"
+    );
+    assert_eq!(
+        super::reducer::Lifecycle::MemoryFlushCompleted {
+            result: "future {path} result".into(),
+            path: Some("/tmp/MEMORY.md".into()),
+        }
+        .plain_message_with_locale(&zh),
+        "记忆刷新结果：future {path} result；路径：/tmp/MEMORY.md"
+    );
+}

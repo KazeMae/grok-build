@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
+use xai_grok_shell::extensions::notification::HookAnnotationKind;
 
 use crate::app::actions::PermissionLabel;
 use crate::appearance::AppearanceConfig;
@@ -118,7 +119,12 @@ pub enum SessionEvent {
     },
     /// Hook annotation, displayed inline after a tool call.
     /// The message comes from the agent via `XaiSessionUpdate::HookAnnotation`.
-    HookAnnotation { message: String },
+    HookAnnotation {
+        message: String,
+        /// Shell-owned template provenance. `None` means an older replay or
+        /// arbitrary hook text and is always rendered verbatim.
+        kind: Option<HookAnnotationKind>,
+    },
     /// A hook's verdict on the tool call above it (deny, failure, timeout); this block draws the tool-row bullet.
     HookOutcome { message: String },
     /// The session's persisted model is no longer available after re-auth.
@@ -261,9 +267,8 @@ impl SessionEvent {
             SessionEvent::CompactCompleted { elapsed } => {
                 format!("Compaction completed in {}.", format_duration(*elapsed))
             }
-            SessionEvent::HookAnnotation { message } | SessionEvent::HookOutcome { message } => {
-                message.clone()
-            }
+            SessionEvent::HookAnnotation { message, .. }
+            | SessionEvent::HookOutcome { message } => message.clone(),
             SessionEvent::ModelUnavailable {
                 new_model_id,
                 reason,
@@ -300,6 +305,211 @@ impl SessionEvent {
                     PlanReviewOutcome::Abandoned => "abandoned",
                 };
                 format!("Plan {verdict} · plan mode off · active permission mode: {permission}")
+            }
+        }
+    }
+
+    /// Format display chrome for the selected UI locale while preserving the
+    /// structured event payload, error text, model ids, paths, and command
+    /// names exactly as received.
+    pub fn message_with_locale(&self, locale: &crate::locale::LocaleContext) -> String {
+        let text = |id: &str, english: &str| locale.named_text(id, english).into_owned();
+        match self {
+            SessionEvent::TurnCompleted {
+                elapsed: Some(elapsed),
+            } => text(
+                "scrollback.session_event.turn_completed_duration",
+                "Worked for {duration}",
+            )
+            .replace("{duration}", &format_duration(*elapsed)),
+            SessionEvent::TurnCompleted { elapsed: None } => {
+                text("scrollback.session_event.turn_completed", "Turn completed.")
+            }
+            SessionEvent::TurnCancelled { elapsed } => text(
+                "scrollback.session_event.turn_cancelled",
+                "Turn cancelled by user in {duration}.",
+            )
+            .replace("{duration}", &format_duration(*elapsed)),
+            SessionEvent::TurnBlockedByHook { elapsed } => text(
+                "scrollback.session_event.turn_blocked_by_hook",
+                "Turn blocked by a hook in {duration}.",
+            )
+            .replace("{duration}", &format_duration(*elapsed)),
+            SessionEvent::TurnHalted { elapsed } => text(
+                "scrollback.session_event.turn_halted",
+                "Agent was unable to make progress — turn ended in {duration}.",
+            )
+            .replace("{duration}", &format_duration(*elapsed)),
+            SessionEvent::TurnFailed {
+                error,
+                elapsed: Some(elapsed),
+            } => text(
+                "scrollback.session_event.turn_failed_duration",
+                "Turn failed in {duration}: {error}",
+            )
+            .replace("{duration}", &format_duration(*elapsed))
+            .replace("{error}", error),
+            SessionEvent::TurnFailed {
+                error,
+                elapsed: None,
+            } => text(
+                "scrollback.session_event.turn_failed",
+                "Turn failed: {error}",
+            )
+            .replace("{error}", error),
+            SessionEvent::CompactionStarted { percentage } => text(
+                "scrollback.session_event.compaction_started",
+                "Context {percentage}% full. Compacting…",
+            )
+            .replace("{percentage}", &percentage.to_string()),
+            SessionEvent::CompactionCompleted {
+                tokens_before,
+                tokens_after,
+                elapsed_ms,
+            } => {
+                let after = format_tokens(*tokens_after);
+                let body = match tokens_before {
+                    Some(before) if *before > 0 => text(
+                        "scrollback.session_event.compaction_completed_before_after",
+                        "Context compacted: {before} → {after} tokens",
+                    )
+                    .replace("{before}", &format_tokens(*before))
+                    .replace("{after}", &after),
+                    _ => text(
+                        "scrollback.session_event.compaction_completed_after",
+                        "Context compacted → {after} tokens",
+                    )
+                    .replace("{after}", &after),
+                };
+                if let Some(ms) = elapsed_ms {
+                    text(
+                        "scrollback.session_event.duration_suffix",
+                        "{body} ({duration})",
+                    )
+                    .replace("{body}", &body)
+                    .replace("{duration}", &format!("{:.1}s", *ms as f64 / 1000.0))
+                } else {
+                    body
+                }
+            }
+            SessionEvent::CompactionFailed { error } => {
+                if error.trim().is_empty() {
+                    text(
+                        "scrollback.session_event.compaction_failed_empty",
+                        "Compaction failed.",
+                    )
+                } else {
+                    text(
+                        "scrollback.session_event.compaction_failed",
+                        "Compaction failed - {error}",
+                    )
+                    .replace("{error}", error)
+                }
+            }
+            SessionEvent::CompactionCancelled => text(
+                "scrollback.session_event.compaction_cancelled",
+                "Compaction cancelled.",
+            ),
+            SessionEvent::RetryFailed { error, error_type } => {
+                if error_type.as_deref() == Some("encrypted_content_mismatch") {
+                    text(
+                        "scrollback.session_event.history_incompatible",
+                        "This session's conversation history is incompatible with the current model. Please start a new session.",
+                    )
+                } else {
+                    text(
+                        "scrollback.session_event.retry_failed",
+                        "Retry failed: {error}",
+                    )
+                    .replace("{error}", error)
+                }
+            }
+            SessionEvent::RequestFailed {
+                headline, detail, ..
+            } => crate::app::error_display::banner_message(headline, detail),
+            SessionEvent::ReAuthRequired => text(
+                "scrollback.session_event.reauth_required",
+                "Authentication required — your session has expired or your credentials were rejected. Run /login to re-authenticate, then resend your message.",
+            ),
+            SessionEvent::ContextTooLarge => text(
+                "scrollback.session_event.context_too_large",
+                "This conversation is too large for the model's context window. Use /new to start a new session.",
+            ),
+            SessionEvent::DiskFull => text(
+                "scrollback.session_event.disk_full",
+                xai_grok_shell::extensions::notification::DISK_FULL_USER_MESSAGE,
+            ),
+            SessionEvent::CompactStarted => text(
+                "scrollback.session_event.compact_started",
+                "Compacting conversation…",
+            ),
+            SessionEvent::CompactCompleted { elapsed } => text(
+                "scrollback.session_event.compact_completed",
+                "Compaction completed in {duration}.",
+            )
+            .replace("{duration}", &format_duration(*elapsed)),
+            SessionEvent::HookAnnotation { message, kind } => {
+                localized_hook_annotation(locale, *kind, message)
+            }
+            SessionEvent::HookOutcome { message } => message.clone(),
+            SessionEvent::ModelUnavailable {
+                new_model_id,
+                reason,
+                ..
+            } => {
+                let reason = localized_model_unavailable_reason(locale, reason);
+                if new_model_id.is_empty() {
+                    reason
+                } else {
+                    replace_placeholders_once(
+                        &text(
+                            "scrollback.session_event.model_switched",
+                            "{reason} Switched to \"{model}\".",
+                        ),
+                        &[("{reason}", &reason), ("{model}", new_model_id)],
+                    )
+                }
+            }
+            SessionEvent::MemorySaved { path, trigger } => text(
+                "scrollback.session_event.memory_saved",
+                "Memory saved ({trigger}) → {path}  ·  /memory to view",
+            )
+            .replace("{trigger}", trigger)
+            .replace("{path}", &crate::util::abbreviate_path(path)),
+            SessionEvent::GoalCompleted { elapsed } => text(
+                "scrollback.session_event.goal_completed",
+                "Goal complete — {duration} end-to-end.",
+            )
+            .replace("{duration}", &format_duration(*elapsed)),
+            SessionEvent::Recap { summary, auto: _ } => {
+                text("scrollback.session_event.recap", "Recap — {summary}")
+                    .replace("{summary}", summary)
+            }
+            SessionEvent::PlanModeEnteredByAgent { permission } => text(
+                "scrollback.session_event.plan_mode_entered",
+                "Agent entered plan mode · active permission mode: {permission} · file edits outside session plan.md blocked until plan mode exits",
+            )
+            .replace("{permission}", &permission.to_string()),
+            SessionEvent::PlanReviewClosed {
+                outcome,
+                permission,
+            } => {
+                let verdict = match outcome {
+                    PlanReviewOutcome::Approved => locale.named_text(
+                        "scrollback.session_event.plan_verdict.approved",
+                        "approved",
+                    ),
+                    PlanReviewOutcome::Abandoned => locale.named_text(
+                        "scrollback.session_event.plan_verdict.abandoned",
+                        "abandoned",
+                    ),
+                };
+                text(
+                    "scrollback.session_event.plan_review_closed",
+                    "Plan {verdict} · plan mode off · active permission mode: {permission}",
+                )
+                .replace("{verdict}", verdict.as_ref())
+                .replace("{permission}", &permission.to_string())
             }
         }
     }
@@ -342,6 +552,223 @@ impl SessionEvent {
     }
 }
 
+pub(crate) fn localized_model_unavailable_reason(
+    locale: &crate::locale::LocaleContext,
+    reason: &str,
+) -> String {
+    let text = |id: &str, english: &str| locale.named_text(id, english).into_owned();
+    const ORG_DENIAL: &str =
+        "This model isn't allowed by your organization's policy. Contact your administrator.";
+    const USER_DENIAL: &str = "This model isn't allowed by your allowed_models setting.";
+    const PREVIOUS_UNAVAILABLE: &str =
+        "Your previous model is no longer available. Please start a new session.";
+    const PREVIOUS_NO_COMPATIBLE: &str = "Your previous model is no longer available and could not be switched to a compatible model. Please start a new session.";
+
+    if let Some((id, english)) = match reason {
+        ORG_DENIAL => Some((
+            "scrollback.session_event.model_unavailable.denied_org",
+            ORG_DENIAL,
+        )),
+        USER_DENIAL => Some((
+            "scrollback.session_event.model_unavailable.denied_user",
+            USER_DENIAL,
+        )),
+        PREVIOUS_UNAVAILABLE => Some((
+            "scrollback.session_event.model_unavailable.previous_new_session",
+            PREVIOUS_UNAVAILABLE,
+        )),
+        PREVIOUS_NO_COMPATIBLE => Some((
+            "scrollback.session_event.model_unavailable.previous_no_compatible",
+            PREVIOUS_NO_COMPATIBLE,
+        )),
+        "The organization model policy is invalid. Contact your administrator." => Some((
+            "scrollback.session_event.model_unavailable.policy_invalid",
+            "The organization model policy is invalid. Contact your administrator.",
+        )),
+        "None of your models are allowed by your organization's policy. Contact your administrator." => {
+            Some((
+                "scrollback.session_event.model_unavailable.none_allowed_org",
+                "None of your models are allowed by your organization's policy. Contact your administrator.",
+            ))
+        }
+        "None of your models are allowed by allowed_models. Broaden it or remove it from your config, then restart." => {
+            Some((
+                "scrollback.session_event.model_unavailable.none_allowed_user",
+                "None of your models are allowed by allowed_models. Broaden it or remove it from your config, then restart.",
+            ))
+        }
+        _ => None,
+    } {
+        return text(id, english);
+    }
+
+    if let Some((requested, rest)) = reason
+        .strip_prefix('"')
+        .and_then(|rest| rest.split_once("\": "))
+        && !requested.is_empty()
+    {
+        for (denial, id, english) in [
+            (
+                ORG_DENIAL,
+                "scrollback.session_event.model_unavailable.allowlist_org",
+                "\"{requested}\": This model isn't allowed by your organization's policy. Contact your administrator. This session is using \"{current}\".",
+            ),
+            (
+                USER_DENIAL,
+                "scrollback.session_event.model_unavailable.allowlist_user",
+                "\"{requested}\": This model isn't allowed by your allowed_models setting. This session is using \"{current}\".",
+            ),
+        ] {
+            if let Some(current) = rest
+                .strip_prefix(denial)
+                .and_then(|rest| rest.strip_prefix(" This session is using \""))
+                .and_then(|rest| rest.strip_suffix("\"."))
+                .filter(|current| !current.is_empty())
+            {
+                return replace_placeholders_once(
+                    &text(id, english),
+                    &[("{requested}", requested), ("{current}", current)],
+                );
+            }
+        }
+    }
+
+    if let Some((requested, current)) = reason
+        .strip_prefix('"')
+        .and_then(|rest| {
+            rest.split_once(
+                "\" isn't allowed by your allowed_models setting, so this session is using \"",
+            )
+        })
+        .and_then(|(requested, rest)| rest.strip_suffix("\".").map(|current| (requested, current)))
+        .filter(|(requested, current)| !requested.is_empty() && !current.is_empty())
+    {
+        return replace_placeholders_once(
+            &text(
+                "scrollback.session_event.model_unavailable.allowlist_user",
+                "\"{requested}\": This model isn't allowed by your allowed_models setting. This session is using \"{current}\".",
+            ),
+            &[("{requested}", requested), ("{current}", current)],
+        );
+    }
+
+    for (suffix, id, english) in [
+        (
+            "\" is no longer available for your account.",
+            "scrollback.session_event.model_unavailable.account",
+            "Model \"{model}\" is no longer available for your account.",
+        ),
+        (
+            "\" is no longer available. Please start a new session.",
+            "scrollback.session_event.model_unavailable.new_session",
+            "Model \"{model}\" is no longer available. Please start a new session.",
+        ),
+    ] {
+        if let Some(model) = reason
+            .strip_prefix("Model \"")
+            .and_then(|rest| rest.strip_suffix(suffix))
+            .filter(|model| !model.is_empty())
+        {
+            return text(id, english).replace("{model}", model);
+        }
+    }
+
+    reason.to_owned()
+}
+
+fn localized_hook_annotation(
+    locale: &crate::locale::LocaleContext,
+    kind: Option<HookAnnotationKind>,
+    message: &str,
+) -> String {
+    let text = |id: &str, english: &str| locale.named_text(id, english).into_owned();
+
+    match kind {
+        Some(HookAnnotationKind::PromptBlockRequestedNotEnforced) => message
+            .strip_prefix("⚠ Prompt block requested by ")
+            .and_then(|rest| rest.split_once(" (not enforced for this origin): "))
+            .map(|(hook, reason)| {
+                replace_placeholders_once(
+                    &text(
+                        "scrollback.hook_annotation.block_requested_not_enforced",
+                        "⚠ Prompt block requested by {hook} (not enforced for this origin): {reason}",
+                    ),
+                    &[("{hook}", hook), ("{reason}", reason)],
+                )
+            }),
+        Some(HookAnnotationKind::PromptBlocked) => message
+            .strip_prefix("⚠ Prompt blocked by ")
+            .and_then(|rest| rest.split_once(": "))
+            .map(|(hook, reason)| {
+                replace_placeholders_once(
+                    &text(
+                        "scrollback.hook_annotation.prompt_blocked",
+                        "⚠ Prompt blocked by {hook}: {reason}",
+                    ),
+                    &[("{hook}", hook), ("{reason}", reason)],
+                )
+            }),
+        Some(HookAnnotationKind::QueuedPromptsHeld) => message
+            .strip_prefix("⚠ ")
+            .and_then(|rest| {
+                rest.strip_suffix(
+                    " queued prompt(s) on hold after the block. Edit or remove them, or send a prompt to resume.",
+                )
+            })
+            .filter(|count| count.chars().all(|ch| ch.is_ascii_digit()))
+            .map(|count| {
+                text(
+                    "scrollback.hook_annotation.queued_prompts_held",
+                    "⚠ {count} queued prompt(s) on hold after the block. Edit or remove them, or send a prompt to resume.",
+                )
+                .replace("{count}", count)
+            }),
+        Some(HookAnnotationKind::InterjectionsJoined) => message
+            .strip_prefix("⚠ ")
+            .and_then(|rest| {
+                rest.strip_suffix(
+                    " interjection(s) joined the held queue. Send a prompt to resume.",
+                )
+            })
+            .filter(|count| count.chars().all(|ch| ch.is_ascii_digit()))
+            .map(|count| {
+                text(
+                    "scrollback.hook_annotation.interjections_joined",
+                    "⚠ {count} interjection(s) joined the held queue. Send a prompt to resume.",
+                )
+                .replace("{count}", count)
+            }),
+        Some(HookAnnotationKind::Unknown)
+        | Some(HookAnnotationKind::Note)
+        | Some(HookAnnotationKind::ToolOutcome)
+        | None => None,
+    }
+    .unwrap_or_else(|| message.to_owned())
+}
+
+fn replace_placeholders_once(template: &str, replacements: &[(&str, &str)]) -> String {
+    let mut output = String::with_capacity(template.len());
+    let mut remaining = template;
+    loop {
+        let Some((index, placeholder, value)) = replacements
+            .iter()
+            .filter_map(|(placeholder, value)| {
+                remaining
+                    .find(placeholder)
+                    .map(|index| (index, *placeholder, *value))
+            })
+            .min_by_key(|(index, _, _)| *index)
+        else {
+            output.push_str(remaining);
+            break;
+        };
+        output.push_str(&remaining[..index]);
+        output.push_str(value);
+        remaining = &remaining[index + placeholder.len()..];
+    }
+    output
+}
+
 /// Format a token count with "k" suffix for thousands.
 fn format_tokens(tokens: u64) -> String {
     if tokens >= 1000 {
@@ -356,11 +783,20 @@ fn format_tokens(tokens: u64) -> String {
 #[derive(Debug, Clone)]
 pub struct SessionEventBlock {
     pub event: SessionEvent,
+    /// Render-time locale; structured event data remains canonical.
+    locale: crate::locale::LocaleContext,
 }
 
 impl SessionEventBlock {
     pub fn new(event: SessionEvent) -> Self {
-        Self { event }
+        Self {
+            event,
+            locale: crate::locale::LocaleContext::default(),
+        }
+    }
+
+    pub(crate) fn set_locale(&mut self, locale: crate::locale::LocaleContext) {
+        self.locale = locale;
     }
 
     /// A recap with real body content, i.e. not the empty loading spinner or a stray empty recap.
@@ -387,9 +823,13 @@ impl SessionEventBlock {
             theme.primary()
         };
         let header_style = header_text_style.add_modifier(Modifier::BOLD);
+        let recap_label = self
+            .locale
+            .named_text("scrollback.session_event.recap_label", "Recap")
+            .into_owned();
         // Non-selectable chrome (same as Thinking / tool label prefixes).
         let header_line =
-            || BlockLine::separator(Line::from(Span::styled("Recap".to_string(), header_style)));
+            || BlockLine::separator(Line::from(Span::styled(recap_label.clone(), header_style)));
 
         // Loading: header only; the animated gray sidebar is the feedback.
         if ctx.is_running {
@@ -400,7 +840,7 @@ impl SessionEventBlock {
 
         match ctx.mode {
             DisplayMode::Collapsed => {
-                let mut spans = vec![Span::styled("Recap".to_string(), header_style)];
+                let mut spans = vec![Span::styled(recap_label.clone(), header_style)];
                 let preview = summary.lines().next().unwrap_or(summary).trim();
                 if !preview.is_empty() {
                     spans.push(Span::styled(format!("  {preview}"), theme.muted()));
@@ -464,7 +904,7 @@ impl BlockContent for SessionEventBlock {
             theme.muted()
         };
 
-        let text = self.event.message();
+        let text = self.event.message_with_locale(&self.locale);
         let wrapped = if text.contains('\n') {
             let input_lines = text
                 .split('\n')
@@ -565,6 +1005,13 @@ impl BlockContent for SessionEventBlock {
 mod tests {
     use super::*;
 
+    fn zh_locale() -> crate::locale::LocaleContext {
+        crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        })
+    }
+
     #[test]
     fn turn_completed_message() {
         let event = SessionEvent::TurnCompleted {
@@ -574,11 +1021,106 @@ mod tests {
     }
 
     #[test]
+    fn localization_regression_session_event_localizes_chrome_only() {
+        let event = SessionEvent::TurnCompleted {
+            elapsed: Some(Duration::from_millis(3_200)),
+        };
+        assert_eq!(event.message(), "Worked for 3.2s");
+        assert_eq!(event.message_with_locale(&zh_locale()), "工作用时 3.2s");
+
+        let compaction = SessionEvent::CompactionCompleted {
+            tokens_before: Some(20_000),
+            tokens_after: 8_000,
+            elapsed_ms: Some(1_500),
+        };
+        assert_eq!(
+            compaction.message_with_locale(&zh_locale()),
+            "上下文已压缩：20.0k → 8.0k Token（1.5s）"
+        );
+
+        let mut block = SessionEventBlock::new(event);
+        block.set_locale(zh_locale());
+        assert_eq!(plain(&block.output(&ctx()).lines[0]), "工作用时 3.2s");
+    }
+
+    #[test]
+    fn hook_annotations_localize_known_shell_templates_and_preserve_opaque_values() {
+        let blocked = SessionEvent::HookAnnotation {
+            message: "⚠ Prompt blocked by global/guard: provider reason".into(),
+            kind: Some(HookAnnotationKind::PromptBlocked),
+        };
+        assert_eq!(
+            blocked.message_with_locale(&zh_locale()),
+            "⚠ 提示被 global/guard 阻止：provider reason"
+        );
+
+        let held = SessionEvent::HookAnnotation {
+            message: "⚠ 2 queued prompt(s) on hold after the block. Edit or remove them, or send a prompt to resume.".into(),
+            kind: Some(HookAnnotationKind::QueuedPromptsHeld),
+        };
+        assert_eq!(
+            held.message_with_locale(&zh_locale()),
+            "⚠ 阻止后有 2 条排队提示处于保留状态。请编辑或移除它们，或发送提示以恢复。"
+        );
+
+        let requested = SessionEvent::HookAnnotation {
+            message: "⚠ Prompt block requested by a user hook (not enforced for this origin): reason: {hook}".into(),
+            kind: Some(HookAnnotationKind::PromptBlockRequestedNotEnforced),
+        };
+        assert_eq!(
+            requested.message_with_locale(&zh_locale()),
+            "⚠ a user hook 请求阻止提示（未对此来源强制执行）：reason: {hook}"
+        );
+
+        let interjections = SessionEvent::HookAnnotation {
+            message: "⚠ 3 interjection(s) joined the held queue. Send a prompt to resume.".into(),
+            kind: Some(HookAnnotationKind::InterjectionsJoined),
+        };
+        assert_eq!(
+            interjections.message_with_locale(&zh_locale()),
+            "⚠ 3 条插入消息已加入保留队列。请发送提示以恢复。"
+        );
+
+        let arbitrary = SessionEvent::HookAnnotation {
+            message: "heads up from a custom hook".into(),
+            kind: None,
+        };
+        assert_eq!(
+            arbitrary.message_with_locale(&zh_locale()),
+            "heads up from a custom hook"
+        );
+        let spoofed = SessionEvent::HookAnnotation {
+            message: "⚠ Prompt blocked by custom/hook: dynamic text".into(),
+            kind: None,
+        };
+        assert_eq!(
+            spoofed.message_with_locale(&zh_locale()),
+            "⚠ Prompt blocked by custom/hook: dynamic text"
+        );
+        assert_eq!(
+            blocked.message(),
+            "⚠ Prompt blocked by global/guard: provider reason"
+        );
+    }
+
+    #[test]
     fn turn_cancelled_message() {
         let event = SessionEvent::TurnCancelled {
             elapsed: Duration::from_secs(10),
         };
         assert_eq!(event.message(), "Turn cancelled by user in 10s.");
+    }
+
+    #[test]
+    fn hook_blocked_turn_is_distinct_and_localized() {
+        let event = SessionEvent::TurnBlockedByHook {
+            elapsed: Duration::from_secs(10),
+        };
+        assert_eq!(event.message(), "Turn blocked by a hook in 10s.");
+        assert_eq!(
+            event.message_with_locale(&zh_locale()),
+            "钩子在 10s 后阻止了回合。"
+        );
     }
 
     #[test]
@@ -642,6 +1184,111 @@ mod tests {
         assert_eq!(
             event.message(),
             "Your previous model is no longer available. Please start a new session."
+        );
+    }
+
+    #[test]
+    fn zh_localization_model_unavailable_known_templates_preserve_model_ids() {
+        let org = SessionEvent::ModelUnavailable {
+            previous_model_id: "custom-preview".into(),
+            new_model_id: "grok-4.6".into(),
+            reason: "\"custom-preview\": This model isn't allowed by your organization's policy. Contact your administrator. This session is using \"grok-4.6\".".into(),
+        };
+        assert_eq!(
+            org.message_with_locale(&zh_locale()),
+            "“custom-preview”：组织策略不允许使用此模型。请联系管理员。当前会话正使用“grok-4.6”。 已切换到“grok-4.6”。"
+        );
+
+        let account = SessionEvent::ModelUnavailable {
+            previous_model_id: "grok-enterprise".into(),
+            new_model_id: String::new(),
+            reason: "Model \"grok-enterprise\" is no longer available for your account.".into(),
+        };
+        assert_eq!(
+            account.message_with_locale(&zh_locale()),
+            "你的账户已无法使用模型“grok-enterprise”。"
+        );
+
+        let legacy = SessionEvent::ModelUnavailable {
+            previous_model_id: "preview".into(),
+            new_model_id: "grok-4.6".into(),
+            reason: "\"preview\" isn't allowed by your allowed_models setting, so this session is using \"grok-4.6\".".into(),
+        };
+        assert!(
+            legacy
+                .message_with_locale(&zh_locale())
+                .starts_with("“preview”：此模型不在 allowed_models 设置的允许范围内。")
+        );
+
+        let blocked = SessionEvent::ModelUnavailable {
+            previous_model_id: String::new(),
+            new_model_id: String::new(),
+            reason: "Your previous model is no longer available and could not be switched to a compatible model. Please start a new session.".into(),
+        };
+        assert_eq!(
+            blocked.message_with_locale(&zh_locale()),
+            "你之前使用的模型已不可用，且无法切换到兼容模型。请启动新会话。"
+        );
+    }
+
+    #[test]
+    fn zh_localization_model_unavailable_unknown_reason_is_not_rewritten() {
+        let reason = "Provider said: Model \"x\" is unavailable?!";
+        let event = SessionEvent::ModelUnavailable {
+            previous_model_id: "x".into(),
+            new_model_id: String::new(),
+            reason: reason.into(),
+        };
+        assert_eq!(event.message_with_locale(&zh_locale()), reason);
+    }
+
+    #[test]
+    fn zh_localization_model_unavailable_exact_policy_failures() {
+        for (reason, expected) in [
+            (
+                "The organization model policy is invalid. Contact your administrator.",
+                "组织模型策略无效。请联系管理员。",
+            ),
+            (
+                "None of your models are allowed by your organization's policy. Contact your administrator.",
+                "组织策略未允许你的任何模型。请联系管理员。",
+            ),
+            (
+                "None of your models are allowed by allowed_models. Broaden it or remove it from your config, then restart.",
+                "allowed_models 未允许任何模型。请扩大匹配范围或从配置中移除该项，然后重启。",
+            ),
+        ] {
+            let event = SessionEvent::ModelUnavailable {
+                previous_model_id: String::new(),
+                new_model_id: String::new(),
+                reason: reason.into(),
+            };
+            assert_eq!(event.message_with_locale(&zh_locale()), expected);
+        }
+    }
+
+    #[test]
+    fn zh_localization_model_unavailable_policy_near_miss_is_not_rewritten() {
+        let reason = "None of your models are allowed by allowed_models. Broaden it or remove it from your config, then restart!";
+        let event = SessionEvent::ModelUnavailable {
+            previous_model_id: String::new(),
+            new_model_id: String::new(),
+            reason: reason.into(),
+        };
+        assert_eq!(event.message_with_locale(&zh_locale()), reason);
+    }
+
+    #[test]
+    fn zh_localization_model_unavailable_unknown_reason_placeholders_are_not_rewritten() {
+        let reason = "Provider returned the literal token {model}.";
+        let event = SessionEvent::ModelUnavailable {
+            previous_model_id: "x".into(),
+            new_model_id: "grok-4.6".into(),
+            reason: reason.into(),
+        };
+        assert_eq!(
+            event.message_with_locale(&zh_locale()),
+            "Provider returned the literal token {model}. 已切换到“grok-4.6”。"
         );
     }
 
@@ -830,6 +1477,7 @@ mod tests {
             appearance: crate::appearance::AppearanceConfig::default(),
             is_selected: false,
             cwd: None,
+            locale: Default::default(),
         }
     }
 
@@ -936,6 +1584,7 @@ mod tests {
         });
         let note = SessionEventBlock::new(SessionEvent::HookAnnotation {
             message: "`web_fetch` blocked by global/qa: no".into(),
+            kind: None,
         });
         assert!(outcome.has_bullet(&ctx()));
         assert!(!note.has_bullet(&ctx()));

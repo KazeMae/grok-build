@@ -385,22 +385,57 @@ impl PromptInputMode {
         }
     }
     pub fn placeholder_override(self, multiline: bool) -> Option<&'static str> {
+        self.placeholder_override_with_locale(multiline, None)
+    }
+
+    pub fn placeholder_override_with_locale(
+        self,
+        multiline: bool,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Option<&'static str> {
         match self {
             PromptInputMode::Normal | PromptInputMode::Bash => None,
             PromptInputMode::Remember => {
                 if multiline {
-                    Some("Save a memory note... (Enter for newline, Shift+Enter to save)")
+                    Some(locale.map_or(
+                        "Save a memory note... (Enter for newline, Shift+Enter to save)",
+                        |locale| {
+                            locale.named_static_text(
+                                "prompt.placeholder.remember_multiline",
+                                "Save a memory note... (Enter for newline, Shift+Enter to save)",
+                            )
+                        },
+                    ))
                 } else {
-                    Some("Save a memory note... (Shift+Enter for multiline)")
+                    Some(locale.map_or(
+                        "Save a memory note... (Shift+Enter for multiline)",
+                        |locale| {
+                            locale.named_static_text(
+                                "prompt.placeholder.remember_single",
+                                "Save a memory note... (Shift+Enter for multiline)",
+                            )
+                        },
+                    ))
                 }
             }
         }
     }
     pub fn prompt_info_override(self) -> Option<&'static str> {
+        self.prompt_info_override_with_locale(None)
+    }
+
+    pub fn prompt_info_override_with_locale(
+        self,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Option<&'static str> {
         match self {
             PromptInputMode::Normal => None,
-            PromptInputMode::Bash => Some("Run shell command"),
-            PromptInputMode::Remember => Some("Save memory note"),
+            PromptInputMode::Bash => Some(locale.map_or("Run shell command", |locale| {
+                locale.named_static_text("prompt.info.bash", "Run shell command")
+            })),
+            PromptInputMode::Remember => Some(locale.map_or("Save memory note", |locale| {
+                locale.named_static_text("prompt.info.remember", "Save memory note")
+            })),
         }
     }
     pub fn send_action(self, text: String) -> Action {
@@ -1378,6 +1413,10 @@ pub struct AgentView {
     /// Cancel turn / demote to bg shortcuts are disabled
     /// Shortcuts bar shows subagent-specific hints
     pub is_subagent_view: bool,
+    /// Whether shell/plugin hook annotations may be rendered in this view.
+    /// Kept recursive so child live updates and transcript replay honor the
+    /// same disable-plugins appearance setting as the root view.
+    pub(crate) hook_annotations_visible: bool,
     /// Hit area for the [✗] close button in the subagent frame title bar.
     pub hit_subagent_frame_close: HitArea,
     /// Whether the `/share` slash command is available (mirrors
@@ -1562,6 +1601,13 @@ fn translate_local_submit(
         return InputOutcome::Changed;
     }
     let Some(QuestionSelection::Single(Some(idx))) = qv.selections.first() else {
+        if let LocalQuestionKind::FeedbackTrace { report, images } = kind {
+            return InputOutcome::Action(Action::SendFeedback {
+                text: report,
+                images,
+                trace: Some(crate::app::actions::FeedbackTraceChoice::NoUpload),
+            });
+        }
         return InputOutcome::Changed;
     };
     match kind {
@@ -1655,6 +1701,37 @@ fn translate_local_submit(
                 confirmed: *idx == 0,
             })
         }
+        LocalQuestionKind::Feedback => {
+            unreachable!(
+                "feedback report submits through submit_feedback_pane, which returns first"
+            )
+        }
+        LocalQuestionKind::FeedbackTrace { report, images } => {
+            use crate::app::actions::FeedbackTraceChoice;
+            use crate::views::question_view::{
+                FEEDBACK_TRACE_OPTION_NEVER_ASK, FEEDBACK_TRACE_OPTION_OPT_IN,
+                FEEDBACK_TRACE_OPTION_OPT_OUT,
+            };
+            let id = qv
+                .questions
+                .first()
+                .and_then(|q| q.options.get(*idx))
+                .and_then(|o| o.id.as_deref());
+            let trace = match id {
+                Some(FEEDBACK_TRACE_OPTION_OPT_IN) => FeedbackTraceChoice::AlwaysUpload,
+                Some(FEEDBACK_TRACE_OPTION_NEVER_ASK) => FeedbackTraceChoice::NeverAsk,
+                Some(FEEDBACK_TRACE_OPTION_OPT_OUT) => FeedbackTraceChoice::NoUpload,
+                other => {
+                    debug_assert!(false, "trace-consent option without a known id: {other:?}");
+                    FeedbackTraceChoice::NoUpload
+                }
+            };
+            InputOutcome::Action(Action::SendFeedback {
+                text: report,
+                images,
+                trace: Some(trace),
+            })
+        }
     }
 }
 /// Convert an [`OverlayAction`] to an [`InputOutcome`].
@@ -1682,6 +1759,35 @@ pub(crate) fn render_dropdown_chrome(
     compact: bool,
     below: bool,
     theme: &Theme,
+) -> Option<DropdownChrome> {
+    render_dropdown_chrome_with_locale(
+        buf,
+        item_count,
+        item_rows,
+        inline_prompt_area,
+        layout_prompt,
+        area,
+        layout_cfg,
+        compact,
+        below,
+        theme,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_dropdown_chrome_with_locale(
+    buf: &mut Buffer,
+    item_count: usize,
+    item_rows: u16,
+    inline_prompt_area: Option<Rect>,
+    layout_prompt: Rect,
+    area: Rect,
+    layout_cfg: &crate::appearance::LayoutConfig,
+    compact: bool,
+    below: bool,
+    theme: &Theme,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> Option<DropdownChrome> {
     let mut panel_height = item_rows + 2;
     let (top_border_y, bottom_border_y) = if below {
@@ -1736,11 +1842,17 @@ pub(crate) fn render_dropdown_chrome(
         let divider_style = Style::default().fg(theme.gray_dim).bg(reset);
         let divider = Line::styled("\u{2500}".repeat(panel_width as usize), divider_style);
         buf.set_line_safe(panel_x, top_border_y, &divider, panel_width);
-        let footer = "\u{2191}/\u{2193} navigate \u{00b7} enter confirm \u{00b7} esc cancel";
-        let footer_line = Line::styled(
-            footer.to_string(),
-            Style::default().fg(theme.gray_dim).bg(reset),
-        );
+        let footer = if let Some(locale) = locale {
+            format!(
+                "{} \u{00b7} {} \u{00b7} {}",
+                locale.named_text("picker.shortcut.nav", "\u{2191}/\u{2193} navigate"),
+                locale.named_text("picker.shortcut.select", "enter confirm"),
+                locale.named_text("picker.shortcut.close", "esc cancel"),
+            )
+        } else {
+            "\u{2191}/\u{2193} navigate \u{00b7} enter confirm \u{00b7} esc cancel".to_string()
+        };
+        let footer_line = Line::styled(footer, Style::default().fg(theme.gray_dim).bg(reset));
         buf.set_line_safe(
             panel_x + 1,
             bottom_border_y,
@@ -2378,7 +2490,7 @@ pub(crate) mod test_fixtures {
             models: ModelState::default(),
             state: AgentState::TurnRunning,
             tracker: crate::acp::tracker::AcpUpdateTracker::new(),
-            cwd: std::path::PathBuf::from("/tmp"),
+            cwd: std::env::temp_dir(),
             is_worktree: false,
             forked_from: None,
             pending_prompts: std::collections::VecDeque::new(),
@@ -2443,7 +2555,7 @@ pub(crate) mod test_fixtures {
                 models: ModelState::default(),
                 state: AgentState::Idle,
                 tracker: crate::acp::tracker::AcpUpdateTracker::new(),
-                cwd: std::path::PathBuf::from("/tmp"),
+                cwd: std::env::temp_dir(),
                 is_worktree: false,
                 forked_from: None,
                 pending_prompts: std::collections::VecDeque::new(),

@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Widget};
+use unicode_width::UnicodeWidthStr;
 
 use crate::prompt_images::VideoViewerState;
 use crate::render::safe_buf::SafeBuf;
@@ -20,6 +21,7 @@ pub fn render_video_overlay(
     bg: Color,
     text_fg: Color,
     border_fg: Color,
+    video_label: &str,
 ) -> Option<Rect> {
     if area.height < 8 || area.width < 20 {
         return None;
@@ -55,7 +57,7 @@ pub fn render_video_overlay(
             name, viewer.video_width, viewer.video_height
         ),
         None => format!(
-            " Video ({}\u{00d7}{}) ",
+            " {video_label} ({}\u{00d7}{}) ",
             viewer.video_width, viewer.video_height
         ),
     };
@@ -63,7 +65,7 @@ pub fn render_video_overlay(
         .fg(text_fg)
         .bg(bg)
         .add_modifier(Modifier::BOLD);
-    let tw = title.len() as u16;
+    let tw = UnicodeWidthStr::width(title.as_str()) as u16;
     let tx = popup_rect.x + (popup_rect.width.saturating_sub(tw)) / 2;
     buf.set_span_safe(tx, popup_rect.y, &Span::styled(&title, title_style), tw);
 

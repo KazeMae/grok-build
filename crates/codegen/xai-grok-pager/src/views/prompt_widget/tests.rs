@@ -1199,7 +1199,7 @@
         pw.handle_paste("line1\nline2\nline3\nline4");
         pw.textarea.set_cursor(0);
         let hint: String = pw
-            .paste_preview_hint(&Theme::current())
+            .paste_preview_hint(&Theme::current(), None)
             .spans
             .iter()
             .map(|s| s.content.as_ref())
@@ -1214,7 +1214,7 @@
         let mut pw = PromptWidget::new();
         pw.handle_paste("line1\nline2\nline3\nline4");
         let hint: String = pw
-            .paste_preview_hint(&Theme::current())
+            .paste_preview_hint(&Theme::current(), None)
             .spans
             .iter()
             .map(|s| s.content.as_ref())
@@ -3882,6 +3882,29 @@
         let style = render("yolo");
         assert_eq!(style.fg, Some(Theme::current().gray), "RGB keeps gray fg");
         assert!(!style.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn zh_localization_default_placeholder_uses_ui_locale() {
+        let mut pw = PromptWidget::new();
+        let mut style = ghost_test_style();
+        style.focused = false;
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        let area = Rect::new(0, 0, 40, 1);
+        let mut buf = Buffer::empty(area);
+
+        pw.draw_with_locale(&mut buf, area, None, &style, None, None, Some(&locale));
+
+        let rendered = buf_text_at(&buf, 0, area.width, 0);
+        // Ratatui stores the trailing cell of each double-width CJK glyph as
+        // a blank symbol. Remove only that cell padding before checking the
+        // exact no-space placeholder chosen for the Chinese UI.
+        let rendered_without_cell_padding = rendered.replace(' ', "");
+        assert_eq!(rendered_without_cell_padding, "告诉我你想做些什么…");
+        assert!(!rendered.contains("Build anything"));
     }
 
     #[test]

@@ -9,6 +9,7 @@ use crate::app::subagent::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -55,6 +56,7 @@ use cli::{apply_agent_flag, parse_cli_agents, parse_comma_list, parse_permission
 
 #[derive(Debug, Clone)]
 pub struct HeadlessOptions {
+    pub locale: std::sync::Arc<crate::locale::LocaleContext>,
     pub session_id: Option<String>,
     pub resume: Option<String>,
     /// Resume was pinned pre-sandbox; materialization must not re-run title selection.
@@ -100,6 +102,7 @@ pub struct HeadlessOptions {
 
 struct HeadlessEmitter {
     format: OutputFormat,
+    locale: Arc<crate::locale::LocaleContext>,
     parse_structured_output: bool,
     text_buffer: String,
     thought_buffer: String,
@@ -119,8 +122,21 @@ struct HeadlessEmitter {
 
 impl HeadlessEmitter {
     fn new(format: OutputFormat, parse_structured_output: bool) -> Self {
+        Self::new_with_locale(
+            format,
+            parse_structured_output,
+            Arc::new(crate::locale::LocaleContext::default()),
+        )
+    }
+
+    fn new_with_locale(
+        format: OutputFormat,
+        parse_structured_output: bool,
+        locale: Arc<crate::locale::LocaleContext>,
+    ) -> Self {
         Self {
             format,
+            locale,
             parse_structured_output,
             text_buffer: String::new(),
             thought_buffer: String::new(),
@@ -207,7 +223,9 @@ impl HeadlessEmitter {
     /// Render an `x.ai/*` lifecycle notification for the active format.
     fn on_lifecycle(&mut self, event: Lifecycle) {
         match self.format {
-            OutputFormat::Plain => eprint_line(&event.plain_message()),
+            OutputFormat::Plain => {
+                eprint_line(&event.plain_message_with_locale(&self.locale));
+            }
             OutputFormat::Json => {}
             OutputFormat::StreamingJson | OutputFormat::StreamingMessagesJson => {
                 self.reduce_and_emit(StreamEvent::Lifecycle(event));
@@ -461,14 +479,14 @@ fn auto_respond_to_permissions(
 /// "Not signed in" error message, tailored to the session type.
 fn auth_required_message(interactive: bool) -> String {
     if interactive {
-        "Not signed in. Run `grok login` to authenticate \
-         (or `grok login --device-code` if no browser is available)."
+        "Not signed in. Run `grok-zh login` to authenticate \
+         (or `grok-zh login --device-code` if no browser is available)."
             .to_string()
     } else {
         "Not signed in. To authenticate without a browser, run:\n  \
-         grok login --device-code\n\n\
+         grok-zh login --device-code\n\n\
          Alternatively, set the XAI_API_KEY environment variable \
-         or run `grok login` on a machine with a browser."
+         or run `grok-zh login` on a machine with a browser."
             .to_string()
     }
 }
@@ -807,7 +825,7 @@ async fn apply_headless_model_and_effort(
     .map_err(|e| {
         if let Some(name) = model_name {
             anyhow::anyhow!(
-                "Couldn't set model '{}': {}. Run 'grok models' to see available models.",
+                "Couldn't set model '{}': {}. Run 'grok-zh models' to see available models.",
                 name,
                 e
             )
@@ -859,7 +877,11 @@ pub async fn run_single_turn(
         Some(ref p) => dunce::canonicalize(p)?,
     };
 
-    let mut emitter = HeadlessEmitter::new(options.output_format, options.json_schema.is_some());
+    let mut emitter = HeadlessEmitter::new_with_locale(
+        options.output_format,
+        options.json_schema.is_some(),
+        options.locale.clone(),
+    );
 
     if options.include_partial_messages
         && options.output_format != OutputFormat::StreamingMessagesJson
@@ -957,7 +979,11 @@ pub async fn run_single_turn(
             anyhow::bail!("{msg}");
         }
     };
-    let _agent_guard = AgentShutdownGuard::new(cancel.clone(), Some(spawned.thread_handle));
+    let _agent_guard = AgentShutdownGuard::new_with_locale(
+        cancel.clone(),
+        Some(spawned.thread_handle),
+        options.locale.as_ref(),
+    );
     let (acp_tx, mut acp_rx) = (spawned.channel.tx, spawned.channel.rx);
     crate::unified_log::init(acp_tx.clone());
     crate::unified_log::info(
@@ -1034,7 +1060,7 @@ pub async fn run_single_turn(
     })?;
 
     let cwd_str = cwd.to_string_lossy().to_string();
-    let materialized = session_startup::materialize_startup_for_cwd(
+    let materialized = session_startup::materialize_startup_for_cwd_with_locale(
         headless_materialize_ctx(
             options.resume_title_pinned,
             options.restore_code,
@@ -1042,6 +1068,7 @@ pub async fn run_single_turn(
         ),
         intent,
         &cwd_str,
+        options.locale.as_ref(),
     )
     .await
     .inspect_err(|_| {
@@ -1553,8 +1580,17 @@ async fn run_headless_memory_flush(
     yolo: bool,
 ) -> Result<()> {
     let params = serde_json::json!({ "session_id": session_id.0.to_string() });
-    let raw = serde_json::value::to_raw_value(&params)
-        .map_err(|e| anyhow::anyhow!("serialize memory flush params: {e}"))?;
+    let raw = serde_json::value::to_raw_value(&params).map_err(|e| {
+        anyhow::anyhow!(
+            emitter
+                .locale
+                .named_text(
+                    "headless.memory_flush.error.serialize_params",
+                    "serialize memory flush params: {error}",
+                )
+                .replace("{error}", &e.to_string())
+        )
+    })?;
     let request = acp::ExtRequest::new("x.ai/memory/flush", raw.into());
     let mut flush_fut = Box::pin(acp_send(request, acp_tx));
     let t0 = Instant::now();
@@ -1566,7 +1602,15 @@ async fn run_headless_memory_flush(
             biased;
             msg = acp_rx.recv() => {
                 let Some(msg) = msg else {
-                    anyhow::bail!("connection closed while waiting for memory flush");
+                    anyhow::bail!(
+                        emitter
+                            .locale
+                            .named_text(
+                                "headless.memory_flush.error.connection_closed",
+                                "connection closed while waiting for memory flush",
+                            )
+                            .into_owned()
+                    );
                 };
                 handle_headless_acp_message(
                     msg.boxed(),
@@ -1590,13 +1634,31 @@ async fn run_headless_memory_flush(
         &mut pending_bg,
         &mut background_lifecycle,
     );
-    let response = response.map_err(|e| anyhow::anyhow!("memory flush failed: {e}"))?;
+    let response = response.map_err(|e| {
+        anyhow::anyhow!(
+            emitter
+                .locale
+                .named_text(
+                    "headless.memory_flush.error.failed",
+                    "memory flush failed: {error}",
+                )
+                .replace("{error}", &e.to_string())
+        )
+    })?;
     let flushed = serde_json::from_str::<serde_json::Value>(response.0.get())
         .ok()
         .and_then(|v| v.get("flushed")?.as_bool())
         .unwrap_or(false);
     if !flushed {
-        anyhow::bail!("memory flush skipped (already in progress or not started)");
+        anyhow::bail!(
+            emitter
+                .locale
+                .named_text(
+                    "headless.memory_flush.error.skipped",
+                    "memory flush skipped (already in progress or not started)",
+                )
+                .into_owned()
+        );
     }
     Ok(())
 }

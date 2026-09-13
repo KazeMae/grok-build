@@ -1,5 +1,11 @@
 # Getting Started
 
+> **Community build notice:** This is the unofficial Simplified Chinese
+> distribution. Its command is `grok-zh`; it intentionally shares `~/.grok`
+> and `GROK_HOME` with the official executable so sessions, credentials, and
+> configuration remain identical. The official xAI installer does not install
+> or update the `grok-zh` executable.
+
 Grok Build is a terminal-based AI coding assistant from SpaceXAI. It runs as a TUI (Terminal User Interface) that understands your codebase, executes shell commands, edits files, searches the web, and manages tasks.
 
 You can use it interactively as a full-screen TUI, run it headlessly for scripting and CI/CD, or integrate it into editors via the Agent Client Protocol (ACP).
@@ -8,43 +14,29 @@ You can use it interactively as a full-screen TUI, run it headlessly for scripti
 
 ## Installation
 
-Install the latest stable release (macOS, Linux, or Windows via Git Bash):
+Community packages are produced by this repository's Releases and documented
+preview build pipeline. The upstream `install.sh`,
+`install.ps1`, and `@xai-official/grok` package are intentionally not valid
+installers for this distribution.
 
-```bash
-curl -fsSL https://x.ai/cli/install.sh | bash
-```
-
-Install a specific version:
-
-```bash
-curl -fsSL https://x.ai/cli/install.sh | bash -s 0.1.42
-```
-
-On **Windows (PowerShell)**, use the native PowerShell installer:
-
-```powershell
-irm https://x.ai/cli/install.ps1 | iex
-```
-
-Install a specific version:
-
-```powershell
-$env:GROK_VERSION="0.1.42"; irm https://x.ai/cli/install.ps1 | iex
-```
-
-The PowerShell installer automatically adds `%USERPROFILE%\.grok\bin` to your User PATH. Alternatively, install via [Git for Windows](https://gitforwindows.org/) (Git Bash) or MSYS2 using the bash script above. WSL users get the Linux binary automatically.
+Every `release-v*` archive, including `release-v1.0.12-rc.1`, has one top-level
+directory named after the archive without its `.zip` or `.tar.gz` suffix. Enter
+that directory before running the bundled checksum verification and installer.
+The plain `v1.0.8` bridge is Windows-only and keeps the legacy flat ZIP layout.
 
 Verify the installation:
 
 ```bash
-grok --version
+grok-zh --version
 ```
 
-Update to the latest version at any time:
-
-```bash
-grok update
-```
+Updater-enabled builds accept only the exact platform archive and checksum
+sidecar metadata from immutable Releases in this repository. They verify the
+GitHub SHA-256, safe archive layout, and the package's inner `SHA256SUMS.txt`,
+and never fall back to official xAI release channels. Background downloads are
+off by default: startup checks metadata and shows a notice, while `Ctrl+U`
+authorizes that one download and install. Existing raw-asset Windows builds
+require one manual ZIP installation to cross the ZIP-only bridge.
 
 To fetch a repository through Grove (NFS on macOS, FUSE on Linux) after
 `[clone] enabled = true` in Grove config:
@@ -66,16 +58,16 @@ and [Configuration reference](26-config-reference.md).
 Start Grok by running:
 
 ```bash
-grok
+grok-zh
 ```
 
-On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
+On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions and are shared by `grok` and `grok-zh`. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
 
 If you prefer API key authentication (e.g., for CI/CD or environments without a browser), set the `XAI_API_KEY` environment variable instead:
 
 ```bash
 export XAI_API_KEY="xai-..."
-grok
+grok-zh
 ```
 
 See [Authentication](02-authentication.md) for the full set of auth options including OIDC, external auth providers, and device code flow.
@@ -115,7 +107,7 @@ The `@` operator opens a fuzzy file picker. By default it respects `.gitignore` 
 By default, Grok asks for permission before executing shell commands or editing files. You can approve individually or toggle always-approve mode:
 
 - Press `Ctrl+O` to toggle always-approve mode
-- Use the `--yolo` flag at launch: `grok --yolo`
+- Use the `--yolo` flag at launch: `grok-zh --yolo`
 - Type `/always-approve` in the prompt to toggle the mode
 
 ---
@@ -124,11 +116,11 @@ By default, Grok asks for permission before executing shell commands or editing 
 
 ### Sessions
 
-Every conversation is a **session**. Sessions are automatically saved to `~/.grok/sessions/` and can be resumed later. Each session tracks the full conversation history, tool calls, file edits, and task state.
+Every conversation is a **session**. Sessions are automatically saved to `~/.grok/sessions/`, shared by `grok` and `grok-zh`, and can be resumed later. Each session tracks the full conversation history, tool calls, file edits, and task state.
 
 - Start a new session: `Ctrl+N` or `/new`
 - Resume a previous session: `/resume` in the TUI, or `--resume <ID>` from the CLI
-- Continue the most recent session: `grok -c`
+- Continue the most recent session: `grok-zh -c`
 
 ### Scrollback
 
@@ -178,44 +170,44 @@ See [Slash Commands](04-slash-commands.md) for the complete reference.
 
 ```bash
 # Launch the interactive TUI and submit an initial prompt as the first turn
-grok "fix the failing auth test and run it"
+grok-zh "fix the failing auth test and run it"
 
 # Initial prompt in a new git worktree. Use --worktree=<name> (with `=`) so the
-# prompt isn't swallowed as the worktree name — `grok -w "refactor module X"`
+# prompt isn't swallowed as the worktree name — `grok-zh -w "refactor module X"`
 # would treat "refactor module X" as the worktree label, not the prompt.
-grok --worktree=feat "refactor module X"
+grok-zh --worktree=feat "refactor module X"
 
 # Base the worktree on a specific branch (e.g. main) instead of the current HEAD:
-grok -w --ref main "implement feature from main"
+grok-zh -w --ref main "implement feature from main"
 
 
 # Start in a specific project directory
-grok --cwd ~/projects/my-app
+grok-zh --cwd ~/projects/my-app
 
 # Add project-specific rules
-grok --rules "Always use TypeScript. Prefer functional components."
+grok-zh --rules "Always use TypeScript. Prefer functional components."
 
 # Auto-approve all tool executions
-grok --yolo
+grok-zh --yolo
 
 # Use a specific model
-grok -m grok-4.6
+grok-zh -m grok-build
 
 # Resume a previous session
-grok --resume <session-id>
+grok-zh --resume <session-id>
 
 # Continue the most recent session
-grok -c
+grok-zh -c
 
-# Experimental scrollback-native render mode. Sticky: plain `grok` reopens in
+# Experimental scrollback-native render mode. Sticky: plain `grok-zh` reopens in
 # the mode last chosen via --minimal/--fullscreen (or /minimal//fullscreen).
-grok --minimal
+grok-zh --minimal
 
 # Back to the standard fullscreen TUI (and make it sticky again)
-grok --fullscreen
+grok-zh --fullscreen
 
 # Headless mode (for scripts)
-grok -p "Explain this codebase"
+grok-zh -p "Explain this codebase"
 ```
 
 ---
@@ -225,7 +217,7 @@ grok -p "Explain this codebase"
 Run Grok non-interactively for scripting, CI/CD, and automation:
 
 ```bash
-grok -p "Your prompt here"
+grok-zh -p "Your prompt here"
 ```
 
 Output formats:
@@ -239,7 +231,7 @@ Output formats:
 Example CI/CD usage:
 
 ```bash
-grok -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
+grok-zh -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
 ```
 
 ---

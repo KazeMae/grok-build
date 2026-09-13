@@ -97,6 +97,9 @@ pub struct BlockContext {
     pub is_selected: bool,
     /// Session/worktree cwd (`AgentSession.cwd`); with `None`, paths are never made relative.
     pub cwd: Option<PathBuf>,
+    /// Display locale for fixed scrollback chrome. Dynamic tool payloads,
+    /// paths, commands, protocol data, and server-provided text stay opaque.
+    pub locale: crate::locale::LocaleContext,
 }
 
 impl BlockContext {

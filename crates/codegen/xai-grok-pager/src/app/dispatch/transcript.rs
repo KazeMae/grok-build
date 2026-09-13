@@ -9,6 +9,36 @@ use crate::scrollback::blocks::ToolCallBlock;
 use agent_client_protocol as acp;
 use xai_grok_telemetry::session_ctx::log_event;
 
+fn localized_template(
+    locale: &crate::locale::LocaleContext,
+    id: &str,
+    english: &str,
+    replacements: &[(&str, &str)],
+) -> String {
+    let mut message = locale.named_text(id, english).into_owned();
+    for (placeholder, value) in replacements {
+        message = message.replace(placeholder, value);
+    }
+    message
+}
+
+fn localized_clipboard_stats(locale: &crate::locale::LocaleContext, text: &str) -> String {
+    let chars = text.len().to_string();
+    let lines = text.lines().count();
+    let lines_text = lines.to_string();
+    let (id, english) = if lines == 1 {
+        ("transcript.stats.one", " ({chars} chars, {lines} line)")
+    } else {
+        ("transcript.stats.many", " ({chars} chars, {lines} lines)")
+    };
+    localized_template(
+        locale,
+        id,
+        english,
+        &[("{chars}", &chars), ("{lines}", &lines_text)],
+    )
+}
+
 /// Copy the selected block's content to the system clipboard.
 ///
 /// Respects the block's raw/pretty mode for markdown content.
@@ -58,6 +88,7 @@ pub(super) fn dispatch_copy_assistant_message(
     // Session-wide so a later fullscreen child (or the parent after a child) stays quiet.
     app.export_copy_slash_used = true;
     with_active_agent(app, |agent| {
+        let locale = agent.scrollback.locale().clone();
         agent.note_export_copy_slash_used();
         // Collect agent messages in reverse order (most recent first).
         let mut agent_messages: Vec<String> = Vec::new();
@@ -70,47 +101,69 @@ pub(super) fn dispatch_copy_assistant_message(
         }
 
         if agent_messages.is_empty() {
+            let message = locale.named_text(
+                "transcript.copy.no_assistant_messages",
+                "No assistant messages to copy",
+            );
             agent
                 .scrollback
-                .push_block(RenderBlock::system("No assistant messages to copy"));
+                .push_block(RenderBlock::system(message.into_owned()));
             return;
         }
 
         if n > agent_messages.len() {
-            agent.scrollback.push_block(RenderBlock::system(format!(
-                "Only {} assistant {} available to copy",
-                agent_messages.len(),
-                if agent_messages.len() == 1 {
-                    "message"
-                } else {
-                    "messages"
-                }
-            )));
+            let count = agent_messages.len().to_string();
+            let (id, english) = if agent_messages.len() == 1 {
+                (
+                    "transcript.copy.only_one",
+                    "Only {count} assistant message available to copy",
+                )
+            } else {
+                (
+                    "transcript.copy.only_many",
+                    "Only {count} assistant messages available to copy",
+                )
+            };
+            let message = localized_template(&locale, id, english, &[("{count}", &count)]);
+            agent.scrollback.push_block(RenderBlock::system(message));
             return;
         }
 
         let text = &agent_messages[n - 1];
         if text.is_empty() {
+            let message = locale.named_text(
+                "transcript.copy.assistant_empty",
+                "Assistant message is empty",
+            );
             agent
                 .scrollback
-                .push_block(RenderBlock::system("Assistant message is empty"));
+                .push_block(RenderBlock::system(message.into_owned()));
             return;
         }
 
-        let stats = crate::clipboard::clipboard_stats_suffix(text);
+        let stats = localized_clipboard_stats(&locale, text);
 
         if let Some(p) = file_path {
             match crate::clipboard::write_text_to_copy_file(text, &p) {
                 Ok(path) => {
-                    agent.scrollback.push_block(RenderBlock::system(format!(
-                        "Copied to {}{stats}",
-                        path.display()
-                    )));
+                    let path = path.display().to_string();
+                    let message = localized_template(
+                        &locale,
+                        "transcript.copy.copied_to_file",
+                        "Copied to {path}{stats}",
+                        &[("{path}", &path), ("{stats}", &stats)],
+                    );
+                    agent.scrollback.push_block(RenderBlock::system(message));
                 }
                 Err(e) => {
-                    agent
-                        .scrollback
-                        .push_block(RenderBlock::system(format!("Failed to write file: {e}")));
+                    let error = e.to_string();
+                    let message = localized_template(
+                        &locale,
+                        "transcript.write_file_failed",
+                        "Failed to write file: {error}",
+                        &[("{error}", &error)],
+                    );
+                    agent.scrollback.push_block(RenderBlock::system(message));
                 }
             }
             return;
@@ -120,27 +173,46 @@ pub(super) fn dispatch_copy_assistant_message(
         match &delivery {
             crate::clipboard::CopyDelivery::Clipboard { file, .. } => {
                 let block_msg = match file {
-                    Some(path) => format!(
-                        "Copied to clipboard (also saved to {}){stats}",
-                        crate::clipboard::display_copy_path(path)
+                    Some(path) => {
+                        let path = crate::clipboard::display_copy_path(path);
+                        localized_template(
+                            &locale,
+                            "transcript.copy.clipboard_with_backup",
+                            "Copied to clipboard (also saved to {path}){stats}",
+                            &[("{path}", &path), ("{stats}", &stats)],
+                        )
+                    }
+                    None => localized_template(
+                        &locale,
+                        "transcript.copy.clipboard",
+                        "Copied to clipboard{stats}",
+                        &[("{stats}", &stats)],
                     ),
-                    None => format!("Copied to clipboard{stats}"),
                 };
                 agent.scrollback.push_block(RenderBlock::system(block_msg));
             }
             crate::clipboard::CopyDelivery::File { path } => {
-                agent.scrollback.push_block(RenderBlock::system(format!(
-                    "Clipboard unreachable: wrote {}{stats}",
-                    crate::clipboard::display_copy_path(path)
-                )));
+                let path = crate::clipboard::display_copy_path(path);
+                let message = localized_template(
+                    &locale,
+                    "transcript.copy.clipboard_unreachable",
+                    "Clipboard unreachable: wrote {path}{stats}",
+                    &[("{path}", &path), ("{stats}", &stats)],
+                );
+                agent.scrollback.push_block(RenderBlock::system(message));
             }
             crate::clipboard::CopyDelivery::Failed { .. } => {
-                agent
-                    .scrollback
-                    .push_block(RenderBlock::system(format!("Copy failed{stats}")));
+                let message = localized_template(
+                    &locale,
+                    "transcript.copy.failed",
+                    "Copy failed{stats}",
+                    &[("{stats}", &stats)],
+                );
+                agent.scrollback.push_block(RenderBlock::system(message));
             }
         }
-        agent.show_toast_ticks(delivery.toast_message().as_ref(), delivery.toast_ticks());
+        let message = crate::clipboard_toast::localized_copy_toast(&locale, &delivery);
+        agent.show_toast_ticks(&message, delivery.toast_ticks());
     });
 }
 
@@ -153,6 +225,7 @@ pub(super) fn dispatch_export_conversation(
 ) {
     app.export_copy_slash_used = true;
     with_active_agent(app, |agent| {
+        let locale = agent.scrollback.locale().clone();
         agent.note_export_copy_slash_used();
         let blocks: Vec<_> = (0..agent.scrollback.len())
             .filter_map(|i| agent.scrollback.entry(i).map(|e| &e.block))
@@ -161,9 +234,13 @@ pub(super) fn dispatch_export_conversation(
         let md = crate::scrollback::export::render_blocks_to_markdown(blocks);
 
         if md.is_empty() {
+            let message = locale.named_text(
+                "transcript.export.no_content",
+                "No conversation content to export",
+            );
             agent
                 .scrollback
-                .push_block(RenderBlock::system("No conversation content to export"));
+                .push_block(RenderBlock::system(message.into_owned()));
             return;
         }
 
@@ -174,47 +251,81 @@ pub(super) fn dispatch_export_conversation(
             if let Some(parent) = expanded.parent()
                 && let Err(e) = std::fs::create_dir_all(parent)
             {
-                agent.scrollback.push_block(RenderBlock::system(format!(
-                    "Failed to create directory: {e}"
-                )));
+                let error = e.to_string();
+                let message = localized_template(
+                    &locale,
+                    "transcript.create_directory_failed",
+                    "Failed to create directory: {error}",
+                    &[("{error}", &error)],
+                );
+                agent.scrollback.push_block(RenderBlock::system(message));
                 return;
             }
             match std::fs::write(&expanded, &md) {
                 Ok(()) => {
-                    agent.scrollback.push_block(RenderBlock::system(format!(
-                        "Conversation exported to {}",
-                        expanded.display()
-                    )));
+                    let path = expanded.display().to_string();
+                    let message = localized_template(
+                        &locale,
+                        "transcript.export.to_file",
+                        "Conversation exported to {path}",
+                        &[("{path}", &path)],
+                    );
+                    agent.scrollback.push_block(RenderBlock::system(message));
                 }
                 Err(e) => {
-                    // Do not re-emit a user-supplied path in the error message (it may contain secrets or PII)
-                    // The generic failure is sufficient
-                    agent
-                        .scrollback
-                        .push_block(RenderBlock::system(format!("Failed to write file: {}", e)));
+                    // Do not blindly re-emit a user-supplied path in the error message
+                    // (it may contain secrets or PII); the generic failure is sufficient.
+                    let error = e.to_string();
+                    let message = localized_template(
+                        &locale,
+                        "transcript.write_file_failed",
+                        "Failed to write file: {error}",
+                        &[("{error}", &error)],
+                    );
+                    agent.scrollback.push_block(RenderBlock::system(message));
                 }
             }
         } else {
-            // Clipboard path: a stats block (like assistant copy) and a route-aware toast (like block-content copy and selection)
-            // The scrollback line reflects where the copy actually landed, the same pattern as /copy N
-            // It never claims clipboard success when the delivery fell back to the backup file
-            let stats = crate::clipboard::clipboard_stats_suffix(&md);
+            // Clipboard path: stats block (like assistant copy) + route-aware toast
+            // (like block content copy / selection). Good UX for a potentially large transcript.
+            // The scrollback line reflects where the copy actually landed —
+            // same pattern as /copy N — instead of claiming clipboard success
+            // when the delivery fell back to the backup file.
+            let stats = localized_clipboard_stats(&locale, &md);
             let delivery = agent.copy_to_clipboard(&md);
             let block_msg = match &delivery {
                 crate::clipboard::CopyDelivery::Clipboard { file, .. } => match file {
-                    Some(path) => format!(
-                        "Conversation copied to clipboard (also saved to {}){stats}",
-                        crate::clipboard::display_copy_path(path)
+                    Some(path) => {
+                        let path = crate::clipboard::display_copy_path(path);
+                        localized_template(
+                            &locale,
+                            "transcript.export.clipboard_with_backup",
+                            "Conversation copied to clipboard (also saved to {path}){stats}",
+                            &[("{path}", &path), ("{stats}", &stats)],
+                        )
+                    }
+                    None => localized_template(
+                        &locale,
+                        "transcript.export.clipboard",
+                        "Conversation copied to clipboard{stats}",
+                        &[("{stats}", &stats)],
                     ),
-                    None => format!("Conversation copied to clipboard{stats}"),
                 },
-                crate::clipboard::CopyDelivery::File { path } => format!(
-                    "Clipboard unreachable: conversation written to {}{stats}",
-                    crate::clipboard::display_copy_path(path)
-                ),
-                crate::clipboard::CopyDelivery::Failed { .. } => {
-                    format!("Conversation copy failed{stats}")
+                crate::clipboard::CopyDelivery::File { path } => {
+                    let path = crate::clipboard::display_copy_path(path);
+                    localized_template(
+                        &locale,
+                        "transcript.export.clipboard_unreachable",
+                        "Clipboard unreachable: conversation written to {path}{stats}",
+                        &[("{path}", &path), ("{stats}", &stats)],
+                    )
                 }
+                crate::clipboard::CopyDelivery::Failed { .. } => localized_template(
+                    &locale,
+                    "transcript.export.copy_failed",
+                    "Conversation copy failed{stats}",
+                    &[("{stats}", &stats)],
+                ),
             };
             agent.scrollback.push_block(RenderBlock::system(block_msg));
         }
@@ -243,9 +354,13 @@ pub(crate) fn dispatch_open_transcript_pager(app: &mut AppView) {
 
     let Some(content) = md else {
         with_active_agent(app, |agent| {
-            agent.scrollback.push_block(RenderBlock::system(
+            let message = agent.scrollback.locale().named_text(
+                "transcript.view.no_content",
                 "No conversation transcript to view yet",
-            ));
+            );
+            agent
+                .scrollback
+                .push_block(RenderBlock::system(message.into_owned()));
         });
         return;
     };
@@ -258,9 +373,14 @@ pub(crate) fn dispatch_open_transcript_pager(app: &mut AppView) {
         }
         Err(e) => {
             with_active_agent(app, |agent| {
-                agent.scrollback.push_block(RenderBlock::system(format!(
-                    "Failed to write transcript: {e}"
-                )));
+                let error = e.to_string();
+                let message = localized_template(
+                    agent.scrollback.locale(),
+                    "transcript.view.write_failed",
+                    "Failed to write transcript: {error}",
+                    &[("{error}", &error)],
+                );
+                agent.scrollback.push_block(RenderBlock::system(message));
             });
         }
     }
@@ -454,7 +574,13 @@ fn config_agents_slash_name(tab: Option<crate::views::agents_modal::AgentsTab>) 
 
 /// Toast shown when a modal that needs a session is opened off the agent view.
 fn toast_session_only_slash(app: &mut AppView, name: &str) {
-    let msg = format!("/{name} only works in a session. Open an agent first.");
+    let msg = app
+        .locale
+        .named_text(
+            "dashboard.toast.session_only.open_agent",
+            "/{name} only works in a session. Open an agent first.",
+        )
+        .replace("{name}", name);
     match app.active_view {
         ActiveView::AgentDashboard => {
             if let Some(d) = app.dashboard.as_mut() {
@@ -593,6 +719,7 @@ pub(super) fn dispatch_copy_block_meta(app: &mut AppView) {
 /// Dump the input flight recorder to a JSON file for debugging.
 /// See the `input_log.rs` module docs for how long this stays and how to remove it.
 pub(super) fn dispatch_dump_input_log(app: &mut AppView) -> Vec<Effect> {
+    let locale = app.locale.clone();
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -601,7 +728,9 @@ pub(super) fn dispatch_dump_input_log(app: &mut AppView) -> Vec<Effect> {
     };
 
     if agent.input_log.entry_count() == 0 {
-        agent.show_toast("No input events recorded yet.");
+        agent.show_toast(
+            locale.named_static_text("input_log.empty", "No input events recorded yet."),
+        );
         return vec![];
     }
 
@@ -630,7 +759,13 @@ pub(super) fn dispatch_dump_input_log(app: &mut AppView) -> Vec<Effect> {
     let json = match serde_json::to_string_pretty(&dump) {
         Ok(j) => j,
         Err(e) => {
-            agent.show_toast(&format!("Failed to serialize input log: {e}"));
+            let message = locale
+                .named_text(
+                    "input_log.serialize_failed",
+                    "Failed to serialize input log: {error}",
+                )
+                .replace("{error}", &e.to_string());
+            agent.show_toast(&message);
             return vec![];
         }
     };
@@ -644,9 +779,11 @@ pub(super) fn dispatch_dump_input_log(app: &mut AppView) -> Vec<Effect> {
     match std::fs::write(&path, json) {
         Ok(()) => {
             let display_path = path.display();
-            agent.show_toast(&format!(
-                "Input log ({entry_count} events) → {display_path}"
-            ));
+            let message = locale
+                .named_text("input_log.saved", "Input log ({count} events) → {path}")
+                .replace("{count}", &entry_count.to_string())
+                .replace("{path}", &display_path.to_string());
+            agent.show_toast(&message);
             crate::unified_log::info(
                 &format!("input debug dump: {entry_count} events, {time_span_ms}ms span"),
                 session_id.as_deref(),
@@ -654,7 +791,13 @@ pub(super) fn dispatch_dump_input_log(app: &mut AppView) -> Vec<Effect> {
             );
         }
         Err(e) => {
-            agent.show_toast(&format!("Failed to write input log: {e}"));
+            let message = locale
+                .named_text(
+                    "input_log.write_failed",
+                    "Failed to write input log: {error}",
+                )
+                .replace("{error}", &e.to_string());
+            agent.show_toast(&message);
         }
     }
     vec![]

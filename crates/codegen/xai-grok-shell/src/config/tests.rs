@@ -4260,3 +4260,126 @@ fn plugin_config_writes_keep_the_caller_local_set_live() {
     );
     holder.join().unwrap();
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn required_bwrap_messages_localize_only_fixed_chrome() {
+    let locale = xai_grok_locale::LocaleContext::new(xai_grok_locale::ResolvedLocale {
+        locale: xai_grok_locale::UiLocale::ZhCn,
+        source: xai_grok_locale::LocaleSource::Cli,
+    });
+    assert_eq!(
+        localized_sandbox_message(
+            &locale,
+            "cli.sandbox.bwrap_exec_failed",
+            "bwrap exec failed: {error}. Install bubblewrap with `apt install -y bubblewrap`.",
+            Some(("error", "provider {cause}")),
+        ),
+        "bwrap 执行失败：provider {cause}。请使用 `apt install -y bubblewrap` 安装 bubblewrap。"
+    );
+    assert_eq!(
+        localized_sandbox_message(
+            &locale,
+            "cli.sandbox.bwrap_plan_unavailable",
+            "the required bwrap plan could not be prepared; see the error above for the specific cause.",
+            None,
+        ),
+        "无法准备所需的 bwrap 方案；具体原因请查看上方错误。"
+    );
+    assert_eq!(
+        localized_sandbox_message(
+            &locale,
+            "cli.sandbox.bwrap_optional_fallback",
+            "WARNING: bwrap exec failed: {error}. Falling back to Landlock sandbox. Install bubblewrap: apt install -y bubblewrap",
+            Some(("error", "dynamic failure")),
+        ),
+        "警告：bwrap 执行失败：dynamic failure。正在回退到 Landlock 沙箱。请安装 bubblewrap：apt install -y bubblewrap"
+    );
+    assert_eq!(
+        localized_sandbox_message(
+            &locale,
+            "cli.sandbox.hook_write_deny_unverified",
+            "error: sandbox reports bwrap but required hook write-deny mounts are missing or writable ({error}); refusing to start (possible __GROK_INSIDE_BWRAP spoof)",
+            Some(("error", "probe details")),
+        ),
+        "错误：沙箱报告正在使用 bwrap，但所需的 Hook 禁止写入挂载缺失或仍可写（probe details）；已拒绝启动（可能伪造了 __GROK_INSIDE_BWRAP）"
+    );
+    assert_eq!(
+        localized_sandbox_message(
+            &locale,
+            "cli.sandbox.profile_protections_missing",
+            "error: could not apply the '{profile}' sandbox profile; see the warning above for the cause. Refusing to start with its protections missing.",
+            Some(("profile", "workspace-write")),
+        ),
+        "错误：无法应用“workspace-write”沙箱配置；具体原因请查看上方警告。因其保护措施缺失，已拒绝启动。"
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn bwrap_planning_diagnostics_localize_and_preserve_dynamic_details() {
+    use xai_grok_sandbox::BwrapDiagnostic;
+
+    let locale = xai_grok_locale::LocaleContext::new(xai_grok_locale::ResolvedLocale {
+        locale: xai_grok_locale::UiLocale::ZhCn,
+        source: xai_grok_locale::LocaleSource::Cli,
+    });
+    let cases = [
+        (
+            BwrapDiagnostic::CurrentExecutable {
+                error: "os {detail}".into(),
+            },
+            "错误：无法解析用于 bwrap 重新执行的当前可执行文件：os {detail}",
+        ),
+        (
+            BwrapDiagnostic::HookPlanMaterialization {
+                error: "bind failed".into(),
+            },
+            "错误：Hook 禁止写入方案实例化失败：bind failed",
+        ),
+        (
+            BwrapDiagnostic::ReadDenyPlaceholder {
+                path: "/secret/{raw}".into(),
+            },
+            "错误：无法为禁止读取路径 /secret/{raw} 创建 bwrap 占位项；为避免沙箱保护不完整，已拒绝启动",
+        ),
+        (
+            BwrapDiagnostic::SentinelPrepare {
+                error: "permission denied".into(),
+            },
+            "错误：无法准备 bwrap 容器隔离哨兵：permission denied",
+        ),
+        (
+            BwrapDiagnostic::RuntimeSocketHandoff {
+                error: "too large".into(),
+            },
+            "错误：运行时套接字禁止访问信息编码失败：too large",
+        ),
+        (
+            BwrapDiagnostic::ProfileResolve {
+                error: "bad profile".into(),
+            },
+            "错误：沙箱配置解析失败：bad profile",
+        ),
+        (
+            BwrapDiagnostic::HookPlanPrepare {
+                error: "bad hook".into(),
+            },
+            "错误：Hook 禁止写入方案准备失败：bad hook",
+        ),
+        (
+            BwrapDiagnostic::HookPlanMissing,
+            "错误：需要 Hook 禁止写入保护，但未能准备相应方案",
+        ),
+        (
+            BwrapDiagnostic::DenyGlobExpand {
+                error: "too many matches".into(),
+            },
+            "错误：无法在 Linux 上强制执行沙箱禁止访问通配规则：too many matches",
+        ),
+    ];
+
+    for (diagnostic, expected) in cases {
+        assert_eq!(localized_bwrap_diagnostic(&locale, &diagnostic), expected);
+    }
+}

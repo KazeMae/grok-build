@@ -125,6 +125,7 @@ fn enqueue_permission(
         ),
         #[cfg(not(feature = "local-workspace"))]
         false,
+        Some(agent.scrollback.locale()),
     );
 
     let perm_id = agent.next_perm_req_id;
@@ -192,6 +193,7 @@ pub(super) fn build_permission_display(
     req: &acp::RequestPermissionRequest,
     bash_highlights: Option<&BashCommandHighlights>,
     session_local_workspace: bool,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> (String, Vec<String>, Option<String>) {
     let is_bash = bash_highlights.is_some();
 
@@ -268,7 +270,7 @@ pub(super) fn build_permission_display(
     };
 
     let title = qualify_permission_title_for_local_workspace(title, session_local_workspace);
-    let description = permission_description_lines(req, ask.as_ref());
+    let description = permission_description_lines(req, ask.as_ref(), locale);
     let bash_cmd = if is_execute { raw_command } else { None };
     (title, description, bash_cmd)
 }
@@ -292,6 +294,7 @@ fn qualify_permission_title_for_local_workspace(
 fn permission_description_lines(
     req: &acp::RequestPermissionRequest,
     hook_ask: Option<&xai_grok_workspace::permission::HookAsk>,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> Vec<String> {
     let mut lines = mcp_args_lines(req);
     if is_edit_permission(req)
@@ -300,9 +303,60 @@ fn permission_description_lines(
         lines.insert(0, desc);
     }
     if let Some(ask) = hook_ask {
-        lines.insert(0, ask.ask_line());
+        lines.insert(0, localized_hook_ask_line(ask, locale));
     }
     lines
+}
+
+pub(super) fn localized_hook_ask_line(
+    ask: &xai_grok_workspace::permission::HookAsk,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
+    let Some(locale) = locale else {
+        return ask.ask_line();
+    };
+    let hook_name = &ask.hook_name;
+    let reason = ask.reason.as_deref().unwrap_or_default();
+    let reason = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    if reason.is_empty() {
+        let template = locale.named_text(
+            "permission.hook_ask.confirmation",
+            "hook '{hook_name}' asks for confirmation",
+        );
+        render_hook_ask_template(&template, hook_name, &reason)
+    } else {
+        let template = locale.named_text(
+            "permission.hook_ask.reason",
+            "hook '{hook_name}' asks: {reason}",
+        );
+        render_hook_ask_template(&template, hook_name, &reason)
+    }
+}
+
+fn render_hook_ask_template(template: &str, hook_name: &str, reason: &str) -> String {
+    const HOOK_NAME: &str = "{hook_name}";
+    const REASON: &str = "{reason}";
+    let mut rendered = String::with_capacity(template.len() + hook_name.len() + reason.len());
+    let mut rest = template;
+    loop {
+        let next = match (rest.find(HOOK_NAME), rest.find(REASON)) {
+            (Some(hook_pos), Some(reason_pos)) if hook_pos <= reason_pos => {
+                Some((hook_pos, HOOK_NAME, hook_name))
+            }
+            (Some(_), Some(reason_pos)) => Some((reason_pos, REASON, reason)),
+            (Some(hook_pos), None) => Some((hook_pos, HOOK_NAME, hook_name)),
+            (None, Some(reason_pos)) => Some((reason_pos, REASON, reason)),
+            (None, None) => None,
+        };
+        let Some((pos, placeholder, value)) = next else {
+            rendered.push_str(rest);
+            break;
+        };
+        rendered.push_str(&rest[..pos]);
+        rendered.push_str(value);
+        rest = &rest[pos + placeholder.len()..];
+    }
+    rendered
 }
 
 fn hook_ask(

@@ -173,12 +173,14 @@ impl ExecuteToolCallBlock {
 
     /// Prefix spans for a soft-wrapped command header (`$ ` or `Run [(user) ]`).
     ///
-    /// Returns `(prefix_spans, hang_width)`; hang is the display width of the first-row prefix so continuations indent under the command body.
-    fn command_header_prefix(
+    /// Returns `(prefix_spans, hang_width)` — hang is the display width of the
+    /// first-row prefix so continuations indent under the command body.
+    fn command_header_prefix_with_locale(
         &self,
         theme: &Theme,
         header_style: ExecuteHeaderStyle,
         muted_command: bool,
+        locale: &crate::locale::LocaleContext,
     ) -> (Vec<Span<'static>>, usize) {
         use unicode_width::UnicodeWidthStr;
         match header_style {
@@ -195,11 +197,17 @@ impl ExecuteToolCallBlock {
                 } else {
                     theme.primary().add_modifier(Modifier::BOLD)
                 };
-                let mut spans = vec![Span::styled("Run ".to_string(), label_style)];
-                let mut hang = UnicodeWidthStr::width("Run ");
+                let run_label = locale
+                    .named_text("scrollback.tool.execute.run", "Run ")
+                    .into_owned();
+                let mut spans = vec![Span::styled(run_label.clone(), label_style)];
+                let mut hang = UnicodeWidthStr::width(run_label.as_str());
                 if self.bash_mode {
-                    spans.push(Span::styled("(user) ".to_string(), theme.muted()));
-                    hang += UnicodeWidthStr::width("(user) ");
+                    let user_label = locale
+                        .named_text("scrollback.tool.execute.user", "(user) ")
+                        .into_owned();
+                    hang += UnicodeWidthStr::width(user_label.as_str());
+                    spans.push(Span::styled(user_label, theme.muted()));
                 }
                 (spans, hang)
             }
@@ -208,8 +216,9 @@ impl ExecuteToolCallBlock {
 
     /// Multi-line command header using permission-panel soft-wrap (operators and quotes).
     ///
-    /// Used for both Shell (`$ command`) and Label (`Run [(user) ]command`) so physical newlines / `\` continuations match the permission overlay.
-    fn push_command_soft_wrap(
+    /// Used for both Shell (`$ command`) and Label (`Run [(user) ]command`) so
+    /// physical newlines / `\` continuations match the permission overlay.
+    fn push_command_soft_wrap_with_locale(
         &self,
         lines: &mut Vec<BlockLine>,
         theme: &Theme,
@@ -217,6 +226,7 @@ impl ExecuteToolCallBlock {
         muted_command: bool,
         width: usize,
         extra_indent: usize,
+        locale: &crate::locale::LocaleContext,
     ) {
         let command = self.command_display();
         let command = if command.trim().is_empty() {
@@ -225,7 +235,7 @@ impl ExecuteToolCallBlock {
             command
         };
         let (prefix_spans, prefix_w) =
-            self.command_header_prefix(theme, header_style, muted_command);
+            self.command_header_prefix_with_locale(theme, header_style, muted_command, locale);
         let prefix_span_count = prefix_spans.len();
         let hang = extra_indent.saturating_add(prefix_w);
         let cmd_width = width.saturating_sub(hang).max(1);
@@ -275,23 +285,35 @@ impl ExecuteToolCallBlock {
 
     /// Primary title line for Label style: `Run [(user) ]<description|command>`.
     ///
-    /// When `title` is empty (eager placeholder before `raw_input.command` arrives), renders `Run …` so we never flash an internal tool id.
-    fn label_title_line(
+    /// When `title` is empty (eager placeholder before `raw_input.command`
+    /// arrives), renders `Run …` so we never flash an internal tool id.
+    fn label_title_line_with_locale(
         &self,
         theme: &Theme,
         muted_command: bool,
         title: &str,
         highlight_as_command: bool,
+        locale: &crate::locale::LocaleContext,
     ) -> Line<'static> {
         let label_style = if muted_command {
             theme.muted().add_modifier(Modifier::BOLD)
         } else {
             theme.primary().add_modifier(Modifier::BOLD)
         };
-        let mut spans = vec![Span::styled("Run ", label_style)];
+        let mut spans = vec![Span::styled(
+            locale
+                .named_text("scrollback.tool.execute.run", "Run ")
+                .into_owned(),
+            label_style,
+        )];
         if self.bash_mode {
             // Same style as session event messages (e.g. "Worked for 2.3s")
-            spans.push(Span::styled("(user) ", theme.muted()));
+            spans.push(Span::styled(
+                locale
+                    .named_text("scrollback.tool.execute.user", "(user) ")
+                    .into_owned(),
+                theme.muted(),
+            ));
         }
         // Single ratatui Line: never pass raw newlines (callers that need multi-line command display use `push_command_soft_wrap`)
         let title_owned;
@@ -323,6 +345,23 @@ impl ExecuteToolCallBlock {
         muted_command: bool,
         include_command: bool,
     ) -> Vec<(Line<'static>, usize)> {
+        self.header_lines_with_locale(
+            theme,
+            header_style,
+            muted_command,
+            include_command,
+            &crate::locale::LocaleContext::default(),
+        )
+    }
+
+    fn header_lines_with_locale(
+        &self,
+        theme: &Theme,
+        header_style: ExecuteHeaderStyle,
+        muted_command: bool,
+        include_command: bool,
+        locale: &crate::locale::LocaleContext,
+    ) -> Vec<(Line<'static>, usize)> {
         let strip_run = matches!(header_style, ExecuteHeaderStyle::Label);
         match self.description_display(strip_run) {
             Some(desc) => {
@@ -330,7 +369,13 @@ impl ExecuteToolCallBlock {
                     ExecuteHeaderStyle::Label => {
                         let prefix_spans = if self.bash_mode { 2 } else { 1 };
                         (
-                            self.label_title_line(theme, muted_command, &desc, false),
+                            self.label_title_line_with_locale(
+                                theme,
+                                muted_command,
+                                &desc,
+                                false,
+                                locale,
+                            ),
                             prefix_spans,
                         )
                     }
@@ -358,7 +403,7 @@ impl ExecuteToolCallBlock {
                     ExecuteHeaderStyle::Shell => self.shell_command_line(theme, muted_command),
                     ExecuteHeaderStyle::Label => {
                         let flat = self.command_display().replace('\n', " ");
-                        self.label_title_line(theme, muted_command, &flat, true)
+                        self.label_title_line_with_locale(theme, muted_command, &flat, true, locale)
                     }
                 };
                 let prefix_spans = match header_style {
@@ -391,22 +436,50 @@ impl ExecuteToolCallBlock {
         truncate_to_width: bool,
         include_command: bool,
     ) {
+        self.push_header_lines_with_locale(
+            lines,
+            theme,
+            header_style,
+            muted_command,
+            width,
+            extra_indent,
+            truncate_to_width,
+            include_command,
+            &crate::locale::LocaleContext::default(),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_header_lines_with_locale(
+        &self,
+        lines: &mut Vec<BlockLine>,
+        theme: &Theme,
+        header_style: ExecuteHeaderStyle,
+        muted_command: bool,
+        width: usize,
+        extra_indent: usize,
+        truncate_to_width: bool,
+        include_command: bool,
+        locale: &crate::locale::LocaleContext,
+    ) {
         let strip_run = matches!(header_style, ExecuteHeaderStyle::Label);
         // Expanded/truncated: command-as-title soft-wrap (Shell and Label)
         if !truncate_to_width && include_command && self.description_display(strip_run).is_none() {
-            self.push_command_soft_wrap(
+            self.push_command_soft_wrap_with_locale(
                 lines,
                 theme,
                 header_style,
                 muted_command,
                 width,
                 extra_indent,
+                locale,
             );
             return;
         }
         // Description title (word-wrap) then soft-wrapped `$ command` (both styles).
         if !truncate_to_width && include_command && self.description_display(strip_run).is_some() {
-            let headers = self.header_lines(theme, header_style, muted_command, false);
+            let headers =
+                self.header_lines_with_locale(theme, header_style, muted_command, false, locale);
             for (line, prefix_spans) in headers {
                 let wrapped =
                     crate::render::wrapping::wrap_header_hanging(line, width, extra_indent);
@@ -423,18 +496,25 @@ impl ExecuteToolCallBlock {
                 }
             }
             // Secondary command line is always shell-style (`$ …`).
-            self.push_command_soft_wrap(
+            self.push_command_soft_wrap_with_locale(
                 lines,
                 theme,
                 ExecuteHeaderStyle::Shell,
                 muted_command,
                 width,
                 extra_indent,
+                locale,
             );
             return;
         }
 
-        let headers = self.header_lines(theme, header_style, muted_command, include_command);
+        let headers = self.header_lines_with_locale(
+            theme,
+            header_style,
+            muted_command,
+            include_command,
+            locale,
+        );
         for (line, prefix_spans) in headers {
             if truncate_to_width {
                 let line = crate::render::line_utils::truncate_line(line, width);
@@ -476,9 +556,10 @@ impl ExecuteToolCallBlock {
         header_style: ExecuteHeaderStyle,
         extra_indent: usize,
         result_pad: usize,
+        locale: &crate::locale::LocaleContext,
     ) -> BlockOutput {
         let mut lines: Vec<BlockLine> = Vec::new();
-        self.push_header_lines(
+        self.push_header_lines_with_locale(
             &mut lines,
             theme,
             header_style,
@@ -487,6 +568,7 @@ impl ExecuteToolCallBlock {
             extra_indent,
             false,
             true, // include $ command when expanded/truncated
+            locale,
         );
 
         if self.output.is_none()
@@ -547,12 +629,16 @@ impl ExecuteToolCallBlock {
                         ));
                     }
                     let hidden = total - threshold;
+                    let hidden_count = hidden.to_string();
+                    let hidden_label = locale
+                        .named_text(
+                            "scrollback.tool.execute.hidden_lines",
+                            "\u{2026} +{count} lines",
+                        )
+                        .replace("{count}", &hidden_count);
                     lines.push(apply_pad(
-                        BlockLine::separator(Line::from(Span::styled(
-                            format!("\u{2026} +{hidden} lines"),
-                            theme.muted(),
-                        )))
-                        .with_panel_background(theme.bg_dark),
+                        BlockLine::separator(Line::from(Span::styled(hidden_label, theme.muted())))
+                            .with_panel_background(theme.bg_dark),
                     ));
                     // Last M lines: range base + 1 (distinct from first chunk)
                     for (wrapped_line, joiner) in
@@ -634,8 +720,9 @@ impl BlockContent for ExecuteToolCallBlock {
             DisplayMode::Collapsed => {
                 let muted = ctx.mute_when_collapsed(config.muted_command_collapsed);
                 let mut lines = Vec::new();
-                // Collapsed: description title only (no `$ command`) for density; without description, still show the single-line command header
-                self.push_header_lines(
+                // Collapsed: description title only (no `$ command`) for density;
+                // without description, still show the single-line command header.
+                self.push_header_lines_with_locale(
                     &mut lines,
                     &theme,
                     header_style,
@@ -644,6 +731,7 @@ impl BlockContent for ExecuteToolCallBlock {
                     0,
                     true,
                     false, // hide command when description is the title
+                    &ctx.locale,
                 );
                 BlockOutput { lines }
             }
@@ -654,6 +742,7 @@ impl BlockContent for ExecuteToolCallBlock {
                 header_style,
                 0,
                 result_pad,
+                &ctx.locale,
             ),
             DisplayMode::Expanded => self.render_with_truncation(
                 &theme,
@@ -662,6 +751,7 @@ impl BlockContent for ExecuteToolCallBlock {
                 header_style,
                 0,
                 result_pad,
+                &ctx.locale,
             ),
         }
     }
@@ -741,7 +831,7 @@ impl BlockContent for ExecuteToolCallBlock {
         // `header_lines` flattens `\n` to spaces, which smashes multi-line commands into one run-on row in the block viewer
         // The viewer draws no bullet, so `ctx.width` (not `content_width()`) is the row width
         let mut header_rows = Vec::new();
-        self.push_header_lines(
+        self.push_header_lines_with_locale(
             &mut header_rows,
             &theme,
             header_style,
@@ -750,6 +840,7 @@ impl BlockContent for ExecuteToolCallBlock {
             /*extra_indent*/ 0,
             /*truncate_to_width*/ false,
             /*include_command*/ true,
+            &ctx.locale,
         );
         let mut lines: Vec<Line<'static>> =
             header_rows.into_iter().map(|row| row.content).collect();

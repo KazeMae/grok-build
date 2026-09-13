@@ -152,11 +152,48 @@
             ),
         ] {
             let req = hook_ask_permission_req(raw_input, acp_title, options);
-            let (title, description, command) = build_permission_display(&req, None, false);
+            let (title, description, command) = build_permission_display(&req, None, false, None);
             assert_eq!(title, expected_title);
             assert_eq!(command.as_deref(), expected_command);
             assert_eq!(description.first().map(String::as_str), Some(ask_line));
         }
+    }
+
+    #[test]
+    fn hook_ask_description_localizes_fixed_shell_and_preserves_dynamic_values() {
+        let req = hook_ask_permission_req(
+            serde_json::json!({"target_file": "/tmp/x.rs"}),
+            "Read `/tmp/x.rs`",
+            vec![],
+        );
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+
+        let (_, description, _) = build_permission_display(&req, None, false, Some(&locale));
+
+        assert_eq!(
+            description.first().map(String::as_str),
+            Some("钩子“guard”请求确认：confirm this")
+        );
+    }
+
+    #[test]
+    fn hook_ask_localization_does_not_replace_placeholder_text_inside_dynamic_values() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        let ask = xai_grok_workspace::permission::HookAsk {
+            hook_name: "guard-{reason}".to_owned(),
+            reason: Some("why {hook_name}".to_owned()),
+        };
+
+        assert_eq!(
+            localized_hook_ask_line(&ask, Some(&locale)),
+            "钩子“guard-{reason}”请求确认：why {hook_name}"
+        );
     }
 
     #[test]

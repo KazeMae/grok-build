@@ -95,8 +95,8 @@ const EVICT_WAIT_TIMEOUT: Duration = Duration::from_secs(8);
 /// How long the SAME live grok flock-holder may stay unconnectable before
 /// `connect_or_spawn` treats it as a "zombie leader" and evicts it.
 const ZOMBIE_EVICT_DEADLINE: Duration = Duration::from_secs(30);
-/// Whether `leader_version` is a strictly-older parseable semver than `baseline`.
-/// Unparseable versions (e.g. dev `"unknown"`) return `false`, so they are left alone.
+/// Whether `leader_version` is a strictly older parseable release than `baseline`.
+/// Unparseable versions (e.g. dev `"unknown"`) return `false` — leave them alone.
 pub fn leader_is_older_than(leader_version: &str, baseline: &str) -> bool {
     match (
         semver::Version::parse(leader_version),
@@ -1562,16 +1562,12 @@ fn resolve_exe_for_spawn() -> Result<std::path::PathBuf, ConnectionError> {
 fn resolve_binary_with_home(grok_home: &Path) -> Result<std::path::PathBuf, ConnectionError> {
     resolve_binary_impl(grok_home, std::env::current_exe().ok())
 }
-/// Binary file name for the managed grok install (`grok` / `grok.exe`).
-fn managed_grok_bin_name() -> &'static str {
-    if cfg!(windows) { "grok.exe" } else { "grok" }
-}
 /// Core leader-binary resolution with the current-exe path injected, for testability.
 fn resolve_binary_impl(
     grok_home: &Path,
     current_exe: Option<std::path::PathBuf>,
 ) -> Result<std::path::PathBuf, ConnectionError> {
-    let managed_bin = grok_home.join("bin").join(managed_grok_bin_name());
+    let managed_bin = xai_grok_config::grok_application_in(grok_home);
     if let Some(ref exe) = current_exe
         && path_is_under(exe, grok_home)
         && managed_bin.exists()
@@ -1951,6 +1947,9 @@ mod tests {
         assert!(!leader_is_older_than("0.2.0", "0.2.0"));
         assert!(!leader_is_older_than("unknown", "0.2.0"));
         assert!(!leader_is_older_than("0.1.0", "not-a-version"));
+        assert!(leader_is_older_than("1.0.0", "1.0.1"));
+        assert!(leader_is_older_than("1.0.1", "1.0.2"));
+        assert!(!leader_is_older_than("1.0.2", "1.0.1"));
     }
     /// Evicted only when strictly older than the client (anti-thrash).
     #[test]
@@ -2062,25 +2061,34 @@ mod tests {
     /// Fake versions are derived RELATIVE to the runtime `CLIENT_LEADER_VERSION` (cargo builds see the crate version, bazel fastbuild sees the unstamped `0.0.0`), with each expectation following structurally from how the case was constructed, never from re-running the comparison under test.
     #[tokio::test]
     async fn should_evict_conn_decides_from_live_fake_registrations() {
-        let client: semver::Version = CLIENT_LEADER_VERSION
-            .parse()
-            .expect("CLIENT_LEADER_VERSION parses as semver");
-        let newer = format!("{}.{}.{}", client.major, client.minor, client.patch + 1);
-        let older = if client.patch > 0 {
+        let client = semver::Version::parse(CLIENT_LEADER_VERSION)
+            .expect("CLIENT_LEADER_VERSION parses as a release version");
+        let client_semver = &client;
+        let newer = format!(
+            "{}.{}.{}",
+            client_semver.major,
+            client_semver.minor,
+            client_semver.patch + 1
+        );
+        let older = if client_semver.patch > 0 {
             Some(format!(
                 "{}.{}.{}",
-                client.major,
-                client.minor,
-                client.patch - 1
+                client_semver.major,
+                client_semver.minor,
+                client_semver.patch - 1
             ))
-        } else if client.minor > 0 {
-            Some(format!("{}.{}.0", client.major, client.minor - 1))
-        } else if client.major > 0 {
-            Some(format!("{}.0.0", client.major - 1))
-        } else if client.pre.is_empty() {
+        } else if client_semver.minor > 0 {
+            Some(format!(
+                "{}.{}.0",
+                client_semver.major,
+                client_semver.minor - 1
+            ))
+        } else if client_semver.major > 0 {
+            Some(format!("{}.0.0", client_semver.major - 1))
+        } else if client_semver.pre.is_empty() {
             Some(format!(
                 "{}.{}.{}-0",
-                client.major, client.minor, client.patch
+                client_semver.major, client_semver.minor, client_semver.patch
             ))
         } else {
             None
@@ -2496,7 +2504,11 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         std::fs::create_dir_all(&bin_dir).unwrap();
-        std::fs::write(bin_dir.join("grok"), "fake-binary").unwrap();
+        std::fs::write(
+            xai_grok_config::grok_application_in(temp.path()),
+            "fake-binary",
+        )
+        .unwrap();
         let result = resolve_binary_with_home(temp.path()).unwrap();
         let current = std::env::current_exe().unwrap();
         assert_eq!(result, current);
@@ -2515,7 +2527,11 @@ mod tests {
         std::fs::create_dir_all(&bin_dir).unwrap();
         let target_v2 = bin_dir.join("grok-v2");
         std::fs::write(&target_v2, "new-binary").unwrap();
-        std::os::unix::fs::symlink(&target_v2, bin_dir.join("grok")).unwrap();
+        std::os::unix::fs::symlink(
+            &target_v2,
+            xai_grok_config::grok_application_in(temp.path()),
+        )
+        .unwrap();
         let result = resolve_binary_with_home(temp.path()).unwrap();
         let current = std::env::current_exe().unwrap();
         assert_eq!(result, current);
@@ -2528,7 +2544,7 @@ mod tests {
         std::fs::create_dir_all(&bin_dir).unwrap();
         let new_target = bin_dir.join("grok-v2");
         std::fs::write(&new_target, "new-binary").unwrap();
-        let managed = bin_dir.join("grok");
+        let managed = xai_grok_config::grok_application_in(temp.path());
         std::os::unix::fs::symlink(&new_target, &managed).unwrap();
         let stale_target = bin_dir.join("grok-v1");
         std::fs::write(&stale_target, "old-binary").unwrap();
@@ -2540,7 +2556,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         std::fs::create_dir_all(&bin_dir).unwrap();
-        std::fs::write(bin_dir.join(managed_grok_bin_name()), "managed").unwrap();
+        std::fs::write(xai_grok_config::grok_application_in(temp.path()), "managed").unwrap();
         let dev_exe = std::env::current_exe().unwrap();
         let result = resolve_binary_impl(temp.path(), Some(dev_exe.clone())).unwrap();
         assert_eq!(result, dev_exe);
@@ -2550,7 +2566,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         std::fs::create_dir_all(&bin_dir).unwrap();
-        let managed = bin_dir.join(managed_grok_bin_name());
+        let managed = xai_grok_config::grok_application_in(temp.path());
         std::fs::write(&managed, "managed").unwrap();
         let result = resolve_binary_impl(temp.path(), None).unwrap();
         assert_eq!(result, managed);

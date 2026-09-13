@@ -9,6 +9,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthChar;
 
 use xai_grok_pager::app::app_view::{AuthState, TrustState};
 use xai_grok_pager::theme::Theme;
@@ -94,14 +95,21 @@ pub(super) fn auth_hint_rows(hint: &MinimalAuthHint, width: u16) -> u16 {
     }
 }
 
-/// How many rows `text` needs when painted char-by-char at `width` (no wrap-inserted spaces); same layout as [`render_url`].
+/// How many rows `text` needs when painted at `width` terminal cells (no
+/// wrap-inserted spaces) — same layout as [`render_url`].
 fn wrapped_char_rows(text: &str, width: u16) -> u16 {
-    let width = width.max(1) as usize;
-    let chars = text.chars().filter(|c| !c.is_control()).count();
-    if chars == 0 {
-        return 1;
+    let width = width.max(1);
+    let mut rows = 1u16;
+    let mut col = 0u16;
+    for ch in text.chars().filter(|ch| !ch.is_control()) {
+        let char_width = (ch.width().unwrap_or(0) as u16).max(1).min(width);
+        if col == width || (col > 0 && col.saturating_add(char_width) > width) {
+            rows = rows.saturating_add(1);
+            col = 0;
+        }
+        col = col.saturating_add(char_width);
     }
-    chars.div_ceil(width) as u16
+    rows
 }
 
 /// Parse the device-flow `user_code` from a verification URL (`None` if absent or malformed).
@@ -150,7 +158,8 @@ fn render_url(
         if ch.is_control() {
             continue;
         }
-        if col >= width {
+        let char_width = (ch.width().unwrap_or(0) as u16).max(1).min(width);
+        if col == width || (col > 0 && col.saturating_add(char_width) > width) {
             col = 0;
             y = y.saturating_add(1);
         }
@@ -159,16 +168,22 @@ fn render_url(
         }
         let x = area.x + col;
         if x < max_x && y < max_y {
-            buf[(x, y)].set_char(ch).set_style(style);
+            buf.set_span(x, y, &Span::styled(ch.to_string(), style), char_width);
         }
-        col += 1;
+        col = col.saturating_add(char_width);
     }
     y.saturating_add(1)
 }
 
-/// Render the sign-in / trust flow (or transient status) in the live region when no agent exists yet.
-/// Top-aligned in `area`; clips to its height.
-pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &MinimalAuthHint) {
+/// Render the sign-in / trust flow (or transient status) in the live region when
+/// no agent exists yet. Top-aligned in `area`; clips to its height.
+pub(super) fn render_auth(
+    buf: &mut Buffer,
+    area: Rect,
+    theme: &Theme,
+    hint: &MinimalAuthHint,
+    locale: &xai_grok_pager::locale::LocaleContext,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -187,7 +202,10 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 area,
                 y,
                 bottom,
-                Line::from(Span::styled("Sign in to Grok", bold)),
+                Line::from(Span::styled(
+                    locale.text(xai_grok_pager::locale::TextKey::AuthSignIn),
+                    bold,
+                )),
             );
             y = put_line(buf, area, y, bottom, Line::default());
             match url {
@@ -198,7 +216,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                         y,
                         bottom,
                         Line::from(Span::styled(
-                            "Open this URL in your browser to approve:",
+                            locale.text(xai_grok_pager::locale::TextKey::AuthOpenUrl),
                             gray,
                         )),
                     );
@@ -218,7 +236,11 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                             y,
                             bottom,
                             Line::from(vec![
-                                Span::styled("Code: ", gray),
+                                Span::styled(
+                                    locale
+                                        .text(xai_grok_pager::locale::TextKey::AuthDeviceCodeLabel),
+                                    gray,
+                                ),
                                 Span::styled(code.clone(), bold),
                             ]),
                         );
@@ -229,7 +251,10 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                         area,
                         y,
                         bottom,
-                        Line::from(Span::styled("Waiting for approval\u{2026}", gray)),
+                        Line::from(Span::styled(
+                            locale.text(xai_grok_pager::locale::TextKey::AuthWaitApproval),
+                            gray,
+                        )),
                     );
                 }
                 None => {
@@ -239,7 +264,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                         y,
                         bottom,
                         Line::from(Span::styled(
-                            "Opening your browser to sign in\u{2026}",
+                            locale.text(xai_grok_pager::locale::TextKey::AuthOpeningBrowser),
                             gray,
                         )),
                     );
@@ -256,7 +281,10 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 area,
                 y,
                 bottom,
-                Line::from(Span::styled("Sign-in failed", warn)),
+                Line::from(Span::styled(
+                    locale.text(xai_grok_pager::locale::TextKey::AuthSignInFailed),
+                    warn,
+                )),
             );
             y = put_line(buf, area, y, bottom, Line::default());
             let _ = put_line(
@@ -275,7 +303,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 y,
                 bottom,
                 Line::from(Span::styled(
-                    "Do you trust the contents of this directory?",
+                    locale.text(xai_grok_pager::locale::TextKey::TrustQuestion),
                     bold,
                 )),
             );
@@ -294,7 +322,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 y,
                 bottom,
                 Line::from(Span::styled(
-                    "Grok Build may run or modify contents in this directory,",
+                    locale.text(xai_grok_pager::locale::TextKey::TrustWarning1),
                     gray,
                 )),
             );
@@ -303,7 +331,10 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 area,
                 y,
                 bottom,
-                Line::from(Span::styled("posing security risks.", gray)),
+                Line::from(Span::styled(
+                    locale.text(xai_grok_pager::locale::TextKey::TrustWarning2),
+                    gray,
+                )),
             );
             y = put_line(buf, area, y, bottom, Line::default());
             y = put_line(
@@ -313,7 +344,13 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 bottom,
                 Line::from(vec![
                     Span::styled("y", bold),
-                    Span::styled("  Yes, proceed", gray),
+                    Span::styled(
+                        format!(
+                            "  {}",
+                            locale.text(xai_grok_pager::locale::TextKey::TrustYesProceed)
+                        ),
+                        gray,
+                    ),
                 ]),
             );
             y = put_line(
@@ -323,7 +360,13 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 bottom,
                 Line::from(vec![
                     Span::styled("n", bold),
-                    Span::styled("  No, quit", gray),
+                    Span::styled(
+                        format!(
+                            "  {}",
+                            locale.text(xai_grok_pager::locale::TextKey::TrustNoQuit)
+                        ),
+                        gray,
+                    ),
                 ]),
             );
             y = put_line(buf, area, y, bottom, Line::default());
@@ -333,7 +376,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 y,
                 bottom,
                 Line::from(Span::styled(
-                    "Enter or y to trust \u{00b7} n or Esc to quit",
+                    locale.text(xai_grok_pager::locale::TextKey::TrustFooter),
                     gray,
                 )),
             );
@@ -345,7 +388,7 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 y,
                 bottom,
                 Line::from(Span::styled(
-                    "Signing in\u{2026} starting your session.",
+                    locale.text(xai_grok_pager::locale::TextKey::AuthStartingSession),
                     gray,
                 )),
             );
@@ -356,6 +399,9 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static TEST_LOCALE: std::sync::LazyLock<xai_grok_pager::locale::LocaleContext> =
+        std::sync::LazyLock::new(xai_grok_pager::locale::LocaleContext::default);
 
     #[test]
     fn device_user_code_parses_verification_url() {
@@ -464,7 +510,7 @@ mod tests {
             url: Some("https://accounts.x.ai/device?user_code=ABCD-EFGH".into()),
             code: Some("ABCD-EFGH".into()),
         };
-        render_auth(&mut buf, area, &theme, &hint);
+        render_auth(&mut buf, area, &theme, &hint, &TEST_LOCALE);
         let text = buffer_text(&buf, area);
         assert!(text.contains("Sign in to Grok"), "header: {text:?}");
         assert!(text.contains("accounts.x.ai/device"), "url: {text:?}");
@@ -483,7 +529,7 @@ mod tests {
         let hint = MinimalAuthHint::TrustFolder {
             workspace: PathBuf::from("/home/agent/project"),
         };
-        render_auth(&mut buf, area, &theme, &hint);
+        render_auth(&mut buf, area, &theme, &hint, &TEST_LOCALE);
         let text = buffer_text(&buf, area);
         assert!(
             text.contains("Do you trust the contents of this directory?"),
@@ -508,6 +554,13 @@ mod tests {
         let rows = auth_hint_rows(&hint, 40);
         // The 200-char path wraps to 5 rows at width 40, so the total sits well above the fixed rows
         assert!(rows >= 12, "expected room for wrapped path, got {rows}");
+    }
+
+    #[test]
+    fn wrapped_rows_use_terminal_cell_width_for_cjk() {
+        assert_eq!(wrapped_char_rows("a中a", 2), 3);
+        assert_eq!(wrapped_char_rows("中文", 4), 1);
+        assert_eq!(wrapped_char_rows("中文", 2), 2);
     }
 
     fn buffer_text(buf: &Buffer, area: Rect) -> String {

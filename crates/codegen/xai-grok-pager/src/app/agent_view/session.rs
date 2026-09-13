@@ -366,6 +366,7 @@ impl AgentView {
             subagent_views: HashMap::new(),
             active_subagent: None,
             is_subagent_view: false,
+            hook_annotations_visible: true,
             hit_subagent_frame_close: Default::default(),
             sharing_enabled: false,
             memory_mode: None,
@@ -427,9 +428,46 @@ impl AgentView {
         mut child_view: Box<AgentView>,
     ) {
         child_view.mark_as_subagent_view();
+        let locale = self.scrollback.locale().clone();
+        child_view.set_locale_recursive(&locale);
+        child_view.set_hook_annotations_visible_recursive(self.hook_annotations_visible);
         self.subagent_views.insert(child_sid, child_view);
     }
-    /// Called at every turn-termination site; clears the wall anchor so a turn that reuses a prompt id cannot report the prior attempt's wall span.
+
+    /// Keep fixed scrollback chrome in this view and every nested subagent on
+    /// the app locale. Dynamic prompts, paths, commands, and tool payloads are
+    /// deliberately unaffected by `ScrollbackState::set_locale`.
+    pub(crate) fn set_locale_recursive(&mut self, locale: &crate::locale::LocaleContext) {
+        self.scrollback.set_locale(locale);
+        for child in self.subagent_views.values_mut() {
+            child.set_locale_recursive(locale);
+        }
+    }
+
+    /// Apply plugin UI visibility to this view and every nested child.
+    pub(crate) fn set_plugins_visible_recursive(&mut self, visible: bool) {
+        self.prompt
+            .slash_controller
+            .registry_mut()
+            .set_plugins_visible(visible);
+        self.set_hook_annotations_visible_recursive(visible);
+    }
+
+    fn set_hook_annotations_visible_recursive(&mut self, visible: bool) {
+        self.hook_annotations_visible = visible;
+        for child in self.subagent_views.values_mut() {
+            child.set_hook_annotations_visible_recursive(visible);
+        }
+    }
+    /// Clear the turn-timing fields and stamp `last_active_at` to "now".
+    ///
+    /// Call this from every site that ends a turn (success, failure,
+    /// cancellation, reconnect cleanup). Centralised so the fields cannot
+    /// drift apart at the ~10 termination call sites across `dispatch.rs`
+    /// and `event_loop.rs`. The wall anchor is cleared so a later turn that
+    /// reuses a prompt id (stash-and-resubmit after `/login`) can never
+    /// wall-max against a previous attempt's anchor in
+    /// [`honest_turn_elapsed`].
     pub(crate) fn mark_turn_finished(&mut self, end: TurnEnd) {
         let now = Instant::now();
         self.turn_started_at = None;
@@ -598,6 +636,10 @@ impl AgentView {
     /// Open a reconnect reload window: stash the current transcript/tracker and point the live fields at fresh state for the `session/load` replay.
     /// The transcript is NOT cleared; it stays recoverable until [`finish_session_reload`](Self::finish_session_reload) decides the outcome.
     pub(crate) fn begin_session_reload(&mut self, generation: u64) {
+        self.begin_session_reload_with_message(generation, "Reloading session after reconnect...");
+    }
+
+    pub(crate) fn begin_session_reload_with_message(&mut self, generation: u64, message: &str) {
         self.dismiss_jump_picker();
         if let Some(prev) = self.session_reload.take() {
             tracing::warn!(
@@ -633,9 +675,10 @@ impl AgentView {
             saw_todo_update: false,
             replayed_expiry_notices: Vec::new(),
         });
-        self.loading_placeholder_id = Some(self.scrollback.push_block(
-            crate::scrollback::block::RenderBlock::system("Reloading session after reconnect..."),
-        ));
+        self.loading_placeholder_id = Some(
+            self.scrollback
+                .push_block(crate::scrollback::block::RenderBlock::system(message)),
+        );
         self.scrollback.begin_batch();
         self.begin_replay_window();
     }
@@ -1112,6 +1155,7 @@ impl AgentView {
     /// Display subject for a foreground-subagent wait; `None` when no running child has a description.
     fn subagent_wait_subject(&self) -> Option<String> {
         use crate::acp::tracker::{MAX_ACTIVITY_SUBJECT_CHARS, clamp_activity_subject};
+        let locale = self.scrollback.locale();
         let mut running: Vec<_> = self.running_foreground_subagents().collect();
         running.sort_by_key(|info| info.attempt.started_at);
         let description = running.iter().find_map(|info| {
@@ -1121,8 +1165,10 @@ impl AgentView {
         })?;
         if running.len() > 1 {
             let n = running.len();
+            let subagents =
+                locale.named_static_text("turn.waiting.subagent.subject_multiple", "subagents: ");
             return Some(budgeted_subject(
-                &format!("{n} subagents: "),
+                &format!("{n} {subagents}"),
                 &description,
                 &format!(" +{}", n - 1),
             ));
@@ -1134,25 +1180,36 @@ impl AgentView {
             .filter(|label| !label.is_empty());
         match activity {
             Some(activity) => {
-                const PREFIX: &str = "Subagent (";
-                const SUFFIX_HEAD: &str = "): ";
-                const SUBAGENT_AFFIX_CHARS: usize = PREFIX.len() + SUFFIX_HEAD.len();
+                let prefix = locale.named_static_text(
+                    "turn.waiting.subagent.subject_activity_prefix",
+                    "Subagent (",
+                );
+                let suffix_head = locale
+                    .named_static_text("turn.waiting.subagent.subject_activity_separator", "): ");
+                let subagent_affix_chars = prefix.chars().count() + suffix_head.chars().count();
                 const ACTIVITY_FLOOR: usize = 8;
-                let desc_claim = description
-                    .chars()
-                    .count()
-                    .min(MAX_ACTIVITY_SUBJECT_CHARS - SUBAGENT_AFFIX_CHARS - ACTIVITY_FLOOR);
+                let desc_claim = description.chars().count().min(
+                    MAX_ACTIVITY_SUBJECT_CHARS
+                        .saturating_sub(subagent_affix_chars + ACTIVITY_FLOOR),
+                );
                 let activity: String = activity
                     .chars()
-                    .take(MAX_ACTIVITY_SUBJECT_CHARS - SUBAGENT_AFFIX_CHARS - desc_claim)
+                    .take(
+                        MAX_ACTIVITY_SUBJECT_CHARS
+                            .saturating_sub(subagent_affix_chars + desc_claim),
+                    )
                     .collect();
                 Some(budgeted_subject(
-                    PREFIX,
+                    prefix,
                     &description,
-                    &format!("{SUFFIX_HEAD}{activity}"),
+                    &format!("{suffix_head}{activity}"),
                 ))
             }
-            None => Some(budgeted_subject("Subagent: ", &description, "")),
+            None => Some(budgeted_subject(
+                locale.named_static_text("turn.waiting.subagent.subject_prefix", "Subagent: "),
+                &description,
+                "",
+            )),
         }
     }
     /// Update context state with a full snapshot from live callers.
@@ -1542,6 +1599,15 @@ mod resolve_turn_activity_tests {
     use super::*;
     use crate::acp::tracker::{TurnActivity, WaitingReason};
     use crate::app::agent::AgentState;
+    use crate::locale::{LocaleContext, LocaleSource, ResolvedLocale, UiLocale};
+
+    fn zh_locale() -> LocaleContext {
+        LocaleContext::new(ResolvedLocale {
+            locale: UiLocale::ZhCn,
+            source: LocaleSource::Cli,
+        })
+    }
+
     fn running_view() -> AgentView {
         let mut view = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
         view.session.state = AgentState::TurnRunning;
@@ -1620,6 +1686,38 @@ mod resolve_turn_activity_tests {
             panic!("expected waiting activity");
         };
         assert_eq!(reason.label(), "Subagent (fix flaky test): Writing subag…");
+    }
+
+    #[test]
+    fn zh_localization_subagent_wait_translates_only_fixed_affixes() {
+        let mut view = running_view();
+        view.set_locale_recursive(&zh_locale());
+        let mut info = running_child("Test subagent toolchain");
+        info.activity_label = Some("思考中…".into());
+        view.subagent_sessions.insert("child-1".into(), info);
+        let Some(TurnActivity::Waiting(reason)) = view.resolve_turn_activity() else {
+            panic!("expected waiting activity");
+        };
+        assert_eq!(
+            reason.label(),
+            "子智能体（Test subagent toolchain）：思考中…"
+        );
+
+        view.subagent_sessions.clear();
+        view.subagent_sessions
+            .insert("child-1".into(), running_child("scan src/"));
+        let Some(TurnActivity::Waiting(reason)) = view.resolve_turn_activity() else {
+            panic!("expected waiting activity");
+        };
+        assert_eq!(reason.label(), "子智能体：scan src/…");
+
+        let mut earlier = running_child("audit dashboard");
+        earlier.started_at = std::time::Instant::now() - std::time::Duration::from_secs(5);
+        view.subagent_sessions.insert("child-0".into(), earlier);
+        let Some(TurnActivity::Waiting(reason)) = view.resolve_turn_activity() else {
+            panic!("expected waiting activity");
+        };
+        assert_eq!(reason.label(), "2 个子智能体：audit dashboard +1…");
     }
     #[test]
     fn subagent_wait_long_description_keeps_activity_visible() {
@@ -2417,6 +2515,67 @@ mod reconnect_workflow_maps_tests {
                 .find(|r| r.run_id == "wf-keep")
                 .map(|r| r.status.as_str()),
             Some("complete")
+        );
+    }
+}
+
+#[cfg(test)]
+mod recursive_locale_tests {
+    use super::super::test_fixtures::make_agent;
+    use crate::locale::{LocaleContext, LocaleSource, ResolvedLocale, UiLocale};
+    use crate::scrollback::RenderBlock;
+
+    fn zh_locale() -> LocaleContext {
+        LocaleContext::new(ResolvedLocale {
+            locale: UiLocale::ZhCn,
+            source: LocaleSource::Cli,
+        })
+    }
+
+    #[test]
+    fn zh_localization_locale_propagates_to_existing_nested_subagent_views() {
+        let mut parent = make_agent();
+        let mut child = make_agent();
+        child
+            .scrollback
+            .push_block(RenderBlock::agent_message("child entry"));
+        let mut grandchild = make_agent();
+        grandchild
+            .scrollback
+            .push_block(RenderBlock::agent_message("grandchild entry"));
+        child
+            .subagent_views
+            .insert("grandchild".into(), Box::new(grandchild));
+        parent
+            .subagent_views
+            .insert("child".into(), Box::new(child));
+
+        parent.set_locale_recursive(&zh_locale());
+
+        let child = &parent.subagent_views["child"];
+        let grandchild = &child.subagent_views["grandchild"];
+        assert_eq!(parent.scrollback.locale().locale(), UiLocale::ZhCn);
+        assert_eq!(child.scrollback.locale().locale(), UiLocale::ZhCn);
+        assert_eq!(grandchild.scrollback.locale().locale(), UiLocale::ZhCn);
+        assert_eq!(
+            child.scrollback.entry(0).unwrap().locale().locale(),
+            UiLocale::ZhCn
+        );
+        assert_eq!(
+            grandchild.scrollback.entry(0).unwrap().locale().locale(),
+            UiLocale::ZhCn
+        );
+    }
+
+    #[test]
+    fn zh_localization_inserted_subagent_inherits_parent_locale_immediately() {
+        let mut parent = make_agent();
+        parent.set_locale_recursive(&zh_locale());
+        parent.insert_subagent_view("child".into(), Box::new(make_agent()));
+
+        assert_eq!(
+            parent.subagent_views["child"].scrollback.locale().locale(),
+            UiLocale::ZhCn
         );
     }
 }

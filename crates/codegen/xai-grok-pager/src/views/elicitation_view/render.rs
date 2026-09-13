@@ -42,10 +42,29 @@ enum BodyRow {
     Option { field: usize, option: usize },
 }
 
-fn url_rows(rows: &mut Vec<BodyRow>, display: &UrlDisplay, content_w: usize, theme: &Theme) {
+fn localized_elicitation_text(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &str,
+) -> String {
+    locale
+        .map(|locale| locale.named_text(id, english).into_owned())
+        .unwrap_or_else(|| english.to_owned())
+}
+
+fn url_rows(
+    rows: &mut Vec<BodyRow>,
+    display: &UrlDisplay,
+    content_w: usize,
+    theme: &Theme,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     if let Some(host) = &display.host {
         rows.push(BodyRow::Text(Line::from(vec![
-            Span::styled("Host: ", Style::default().fg(theme.gray)),
+            Span::styled(
+                localized_elicitation_text(locale, "mcp.elicitation.host", "Host: "),
+                Style::default().fg(theme.gray),
+            ),
             Span::styled(
                 host.clone(),
                 Style::default()
@@ -55,7 +74,11 @@ fn url_rows(rows: &mut Vec<BodyRow>, display: &UrlDisplay, content_w: usize, the
         ])));
         if display.punycode_host {
             rows.push(BodyRow::Text(Line::from(vec![Span::styled(
-                "Punycode host: check it is the site you expect".to_string(),
+                localized_elicitation_text(
+                    locale,
+                    "mcp.elicitation.punycode_warning",
+                    "Punycode host: check it is the site you expect",
+                ),
                 Style::default().fg(theme.accent_error),
             )])));
         }
@@ -85,17 +108,22 @@ fn build_body_rows(
     state: &ElicitationViewState,
     content_w: usize,
     theme: &Theme,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> (Vec<BodyRow>, Option<usize>) {
     let mut rows = Vec::new();
     let mut cursor_row = None;
     match &state.stage {
         ElicitationStage::UrlConsent(consent) => {
-            url_rows(&mut rows, &consent.display, content_w, theme);
+            url_rows(&mut rows, &consent.display, content_w, theme, locale);
         }
         ElicitationStage::UrlWaiting(waiting) => {
-            url_rows(&mut rows, &waiting.display, content_w, theme);
+            url_rows(&mut rows, &waiting.display, content_w, theme, locale);
             rows.push(BodyRow::Text(Line::from(vec![Span::styled(
-                "Waiting for the server to confirm…".to_string(),
+                localized_elicitation_text(
+                    locale,
+                    "mcp.elicitation.waiting",
+                    "Waiting for the server to confirm…",
+                ),
                 Style::default().fg(theme.gray),
             )])));
         }
@@ -138,18 +166,42 @@ fn build_body_rows(
     (rows, cursor_row)
 }
 
-fn actions(state: &ElicitationViewState) -> Vec<(ElicitHit, char, &'static str)> {
+fn actions(
+    state: &ElicitationViewState,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> Vec<(ElicitHit, char, String)> {
     match &state.stage {
         ElicitationStage::Form(_) => vec![
-            (ElicitHit::Accept, 'y', "Accept"),
-            (ElicitHit::Decline, 'd', "Decline"),
+            (
+                ElicitHit::Accept,
+                'y',
+                localized_elicitation_text(locale, "mcp.elicitation.action.accept", "Accept"),
+            ),
+            (
+                ElicitHit::Decline,
+                'd',
+                localized_elicitation_text(locale, "mcp.elicitation.action.decline", "Decline"),
+            ),
         ],
         ElicitationStage::UrlConsent(_) => vec![
-            (ElicitHit::Accept, 'y', "Open URL"),
-            (ElicitHit::Decline, 'd', "Decline"),
+            (
+                ElicitHit::Accept,
+                'y',
+                localized_elicitation_text(locale, "mcp.elicitation.action.open_url", "Open URL"),
+            ),
+            (
+                ElicitHit::Decline,
+                'd',
+                localized_elicitation_text(locale, "mcp.elicitation.action.decline", "Decline"),
+            ),
         ],
-        // The response is already sent: the only local action left is dismissing the waiting chrome ('o' reopens via the shortcut bar)
-        ElicitationStage::UrlWaiting(_) => vec![(ElicitHit::Accept, 'y', "Done")],
+        // The response is already sent: the only local action left is
+        // dismissing the waiting chrome ('o' reopens via the shortcut bar).
+        ElicitationStage::UrlWaiting(_) => vec![(
+            ElicitHit::Accept,
+            'y',
+            localized_elicitation_text(locale, "mcp.elicitation.action.done", "Done"),
+        )],
     }
 }
 
@@ -158,13 +210,25 @@ pub fn elicitation_view_height(
     screen_h: u16,
     content_w: usize,
 ) -> u16 {
+    elicitation_view_height_with_locale(state, screen_h, content_w, None)
+}
+
+pub fn elicitation_view_height_with_locale(
+    state: &ElicitationViewState,
+    screen_h: u16,
+    content_w: usize,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> u16 {
     let w = content_w.max(1);
     let theme = Theme::default();
-    let title_h = wrap_count(&state.title(), w);
+    let title_h = wrap_count(&state.title_with_locale(locale), w);
     let msg_h = wrap_count(&state.message, w).min(MAX_MESSAGE_LINES);
-    let banner_h = u16::from(state.banner_error().is_some());
-    let body_total = build_body_rows(state, w, &theme).0.len() as u16;
-    let actions_h = actions(state).len() as u16;
+    let banner_h = state
+        .localized_banner_error(locale)
+        .map(|error| wrap_count(&error, w).min(2))
+        .unwrap_or(0);
+    let body_total = build_body_rows(state, w, &theme, locale).0.len() as u16;
+    let actions_h = actions(state, locale).len() as u16;
     let chrome = 1 + title_h + 1 + msg_h + banner_h + 1 + 1 + actions_h + 1;
     let raw = chrome + body_total;
     // Preferred cap is a third of the screen, but never so small that the pinned action rows squeeze the body out entirely
@@ -185,7 +249,19 @@ pub fn render_elicitation_view(
     state: &mut ElicitationViewState,
     theme: &Theme,
     focused: bool,
+    hits: Option<&mut Vec<(ElicitHit, Rect)>>,
+) {
+    render_elicitation_view_with_locale(buf, area, state, theme, focused, hits, None);
+}
+
+pub fn render_elicitation_view_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut ElicitationViewState,
+    theme: &Theme,
+    focused: bool,
     mut hits: Option<&mut Vec<(ElicitHit, Rect)>>,
+    locale: Option<&crate::locale::LocaleContext>,
 ) {
     if area.height == 0 || area.width == 0 {
         return;
@@ -211,7 +287,7 @@ pub fn render_elicitation_view(
         y,
         content_width,
         bottom,
-        &state.title(),
+        &state.title_with_locale(locale),
         Style::default()
             .fg(theme.text_primary)
             .add_modifier(Modifier::BOLD),
@@ -228,8 +304,7 @@ pub fn render_elicitation_view(
         Style::default().fg(theme.gray),
         MAX_MESSAGE_LINES,
     );
-    if let Some(err) = state.banner_error() {
-        let err = err.to_string();
+    if let Some(err) = state.localized_banner_error(locale) {
         y = write_wrapped(
             buf,
             content_x,
@@ -245,13 +320,13 @@ pub fn render_elicitation_view(
     y = y.saturating_add(1);
 
     // Pin the action rows at the bottom; the body scrolls in between.
-    let action_rows = actions(state);
+    let action_rows = actions(state, locale);
     let actions_h = action_rows.len() as u16;
     // One bottom padding row, the action rows, and a separator row above them
     let actions_y = bottom.saturating_sub(1).saturating_sub(actions_h).max(y);
     let body_h = actions_y.saturating_sub(1).saturating_sub(y) as usize;
 
-    let (rows, cursor_row) = build_body_rows(state, content_width as usize, theme);
+    let (rows, cursor_row) = build_body_rows(state, content_width as usize, theme, locale);
     let total = rows.len();
     let max_scroll = total.saturating_sub(body_h);
     state.scroll = state.scroll.min(max_scroll);
@@ -274,7 +349,14 @@ pub fn render_elicitation_view(
 
     // The "↑ more" and "↓ more" markers paint into the separator rows the layout already has
     if scroll > 0 {
-        paint_more_marker(buf, content_x, above_body_y, content_width, "↑ more", theme);
+        paint_more_marker(
+            buf,
+            content_x,
+            above_body_y,
+            content_width,
+            &localized_elicitation_text(locale, "mcp.elicitation.more_above", "↑ more"),
+            theme,
+        );
     }
     if total > scroll + body_h {
         paint_more_marker(
@@ -282,14 +364,14 @@ pub fn render_elicitation_view(
             content_x,
             actions_y.saturating_sub(1),
             content_width,
-            "↓ more",
+            &localized_elicitation_text(locale, "mcp.elicitation.more_below", "↓ more"),
             theme,
         );
     }
 
     let form = state.form();
     let value_col = form
-        .map(|f| form_value_column(&f.fields, content_width as usize))
+        .map(|f| form_value_column_with_locale(&f.fields, content_width as usize, locale))
         .unwrap_or(0);
     for (offset, row) in rows.iter().skip(scroll).take(body_h).enumerate() {
         let row_y = y + offset as u16;
@@ -307,7 +389,7 @@ pub fn render_elicitation_view(
                     content_x,
                     row_y,
                     content_width,
-                    field_row(state, *i, field, is_cur, focused, theme, value_col),
+                    field_row(state, *i, field, is_cur, focused, theme, value_col, locale),
                 );
                 if let Some(ref mut hits) = hits {
                     hits.push((
@@ -327,7 +409,11 @@ pub fn render_elicitation_view(
                     content_x,
                     row_y,
                     content_width,
-                    error_row(err, is_cur && focused, theme),
+                    error_row(
+                        &super::state::localized_elicitation_error(locale, err),
+                        is_cur && focused,
+                        theme,
+                    ),
                 );
             }
             BodyRow::Option { field, option } => {
@@ -370,7 +456,7 @@ pub fn render_elicitation_view(
             content_x,
             action_y,
             content_width,
-            action_row(shortcut, label, is_cur, focused, theme),
+            action_row(shortcut, &label, is_cur, focused, theme),
         );
         if let Some(ref mut hits) = hits {
             hits.push((hit, Rect::new(content_x, action_y, content_width, 1)));
@@ -466,10 +552,23 @@ fn paint_row(buf: &mut Buffer, x: u16, y: u16, width: u16, line: Line<'_>) {
 }
 
 pub(super) fn form_value_column(fields: &[FormFieldUi], content_w: usize) -> usize {
+    form_value_column_with_locale(fields, content_w, None)
+}
+
+fn form_value_column_with_locale(
+    fields: &[FormFieldUi],
+    content_w: usize,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> usize {
+    let required = localized_elicitation_text(locale, "mcp.elicitation.required", " (required)");
     let max_left = fields
         .iter()
         .map(|f| {
-            let req = if f.spec.required { " (required)" } else { "" };
+            let req = if f.spec.required {
+                required.as_str()
+            } else {
+                ""
+            };
             2 + f.spec.title.width() + req.width()
         })
         .max()
@@ -480,7 +579,10 @@ pub(super) fn form_value_column(fields: &[FormFieldUi], content_w: usize) -> usi
         .min(content_w.saturating_sub(1))
 }
 
-fn multi_select_summary(field: &FormFieldUi) -> String {
+fn multi_select_summary(
+    field: &FormFieldUi,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
     let ElicitFieldKind::MultiSelect { options, .. } = &field.spec.kind else {
         return String::new();
     };
@@ -490,7 +592,7 @@ fn multi_select_summary(field: &FormFieldUi) -> String {
         .filter_map(|(i, o)| field.option_selected(i).then_some(o.label.as_str()))
         .collect();
     if labels.is_empty() {
-        "(none selected)".into()
+        localized_elicitation_text(locale, "mcp.elicitation.none_selected", "(none selected)")
     } else {
         labels.join(", ")
     }
@@ -505,6 +607,7 @@ fn field_row(
     focused: bool,
     theme: &Theme,
     value_col: usize,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> Line<'static> {
     use crate::render::line_utils::truncate_str;
 
@@ -537,8 +640,10 @@ fn field_row(
         ) => index
             .and_then(|i| options.get(i))
             .map(|o| o.label.clone())
-            .unwrap_or_else(|| "(select)".into()),
-        (super::state::FieldValueUi::Multi { .. }, _) => multi_select_summary(field),
+            .unwrap_or_else(|| {
+                localized_elicitation_text(locale, "mcp.elicitation.select", "(select)")
+            }),
+        (super::state::FieldValueUi::Multi { .. }, _) => multi_select_summary(field, locale),
         (super::state::FieldValueUi::Text { draft }, _) => {
             let mut draft = draft.clone();
             if is_cur && state.focus == ElicitationFocus::Editing {
@@ -546,13 +651,17 @@ fn field_row(
             }
             draft
         }
-        (_, ElicitFieldKind::Unsupported { reason }) => format!("({reason})"),
+        (_, ElicitFieldKind::Unsupported { reason }) => format!(
+            "({})",
+            super::state::localized_elicitation_error(locale, reason)
+        ),
         _ => String::new(),
     };
 
     let prefix = format!("{shortcut} ");
+    let required = localized_elicitation_text(locale, "mcp.elicitation.required", " (required)");
     let req = if field.spec.required {
-        " (required)"
+        required.as_str()
     } else {
         ""
     };

@@ -275,6 +275,8 @@ pub struct CopyResult {
     pub ticks: u8,
     /// Evidence that the write reached the destination named by the UI.
     pub delivery: ClipboardDelivery,
+    /// Semantic feedback route used to localize the toast at the UI boundary.
+    pub feedback: ClipboardFeedback,
 }
 
 /// Kind of clipboard feedback (success route, unverified send, or failure).
@@ -282,7 +284,7 @@ pub struct CopyResult {
 /// Telemetry labels come from `IntoStaticStr` (`snake_case`); user-facing copy lives in [`ClipboardFeedback::message`] (intentionally different).
 #[derive(Debug, Clone, Copy, Eq, PartialEq, strum::AsRefStr, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub(crate) enum ClipboardFeedback {
+pub enum ClipboardFeedback {
     /// Plain successful copy (native clipboard).
     Copied,
     /// Successful copy mirrored into the tmux paste buffer.
@@ -371,6 +373,7 @@ impl ClipboardFeedback {
             message_lead: self.message_lead(),
             ticks: self.ticks(),
             delivery: self.delivery(),
+            feedback: self,
         }
     }
 }
@@ -2028,7 +2031,9 @@ mod tests {
             assert_eq!(result.message, message);
             assert_eq!(result.ticks, ticks);
             assert_eq!(result.delivery, delivery);
-            // The lead must prefix the full message so the path-bearing toast never rewords the static copy
+            assert_eq!(result.feedback, feedback);
+            // The lead must prefix the full message so the path-bearing
+            // toast never rewords the static copy.
             assert!(
                 message.starts_with(result.message_lead),
                 "message_lead must prefix message for {feedback:?}"
@@ -2164,6 +2169,11 @@ mod tests {
                 ClipboardDelivery::Confirmed
             } else {
                 ClipboardDelivery::Failed
+            },
+            feedback: if success {
+                ClipboardFeedback::Copied
+            } else {
+                ClipboardFeedback::Failed
             },
         }
     }

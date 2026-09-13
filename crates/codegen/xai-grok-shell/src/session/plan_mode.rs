@@ -306,6 +306,10 @@ ${%- endif %}
 You should build your plan by writing to or editing this file. \
 Note that this is the only file you are allowed to edit.
 
+Write all natural-language plan and task-list content in the same natural language as the user's request. \
+If the user's request contains Chinese, or active instructions ask for Chinese, use concise Simplified Chinese and do not translate it into English. \
+Preserve code identifiers, tool names, commands, paths, URLs, configuration keys, protocol fields and status values, symbols, product and proper names, and task IDs; keep canonical values such as pending, in_progress, completed, and cancelled verbatim.
+
 Your turn should only end with either ${{ tools.by_kind.ask_user }} to clarify \
 requirements or ${{ tools.by_kind.exit_plan }} to present your plan to the user."
 }
@@ -322,6 +326,10 @@ pub(crate) fn plan_mode_reentry_reminder_template() -> &'static str {
 
 You are entering plan mode again after having previously exited it. \
 A plan file exists at ${{ plan_path }} from your previous planning session.
+
+Write all natural-language plan and task-list content in the same natural language as the user's request. \
+If the user's request contains Chinese, or active instructions ask for Chinese, use concise Simplified Chinese and do not translate it into English. \
+Preserve code identifiers, tool names, commands, paths, URLs, configuration keys, protocol fields and status values, symbols, product and proper names, and task IDs; keep canonical values such as pending, in_progress, completed, and cancelled verbatim.
 
 Your turn should only end with either ${{ tools.by_kind.ask_user }} to clarify requirements or ${{ tools.by_kind.exit_plan }} to present your plan to the user."
 }
@@ -616,6 +624,40 @@ mod tests {
         }
     }
     #[test]
+    fn full_reminder_with_plan_preserves_community_guidance() {
+        let r = test_renderer();
+        let text = render(
+            &r,
+            plan_mode_reminder_full_template(),
+            "/tmp/session/plan.md",
+            true,
+        );
+        assert!(text.contains("A plan file exists at /tmp/session/plan.md"));
+        assert!(text.contains("search_replace tool"));
+        assert!(text.contains("Plan mode is active"));
+        assert!(text.contains("## Plan File:"));
+        assert!(text.contains("only file you are allowed to edit"));
+        assert!(text.contains("If the user's request contains Chinese"));
+        assert!(text.contains("pending, in_progress, completed, and cancelled"));
+        assert!(!text.contains("No plan written yet"));
+    }
+    #[test]
+    fn full_reminder_without_plan() {
+        let r = test_renderer();
+        let text = render(
+            &r,
+            plan_mode_reminder_full_template(),
+            "/tmp/session/plan.md",
+            false,
+        );
+        assert!(text.contains("No plan written yet"));
+        assert!(text.contains("/tmp/session/plan.md"));
+        assert!(text.contains("search_replace tool"));
+        assert!(text.contains("Plan mode is active"));
+        assert!(text.contains("use concise Simplified Chinese"));
+        assert!(!text.contains("A plan file exists at"));
+    }
+    #[test]
     fn full_reminder_resolves_all_tool_names() {
         let r = test_renderer();
         let text = render(&r, plan_mode_reminder_full_template(), "/tmp/plan.md", true);
@@ -674,6 +716,9 @@ mod tests {
             false,
         );
         assert!(text.contains("/tmp/plan.md"));
+        assert!(text.contains("entering plan mode again"));
+        assert!(text.contains("If the user's request contains Chinese"));
+        assert!(text.contains("pending, in_progress, completed, and cancelled"));
         assert!(text.contains("exit_plan_mode"));
         assert!(text.contains("ask_user_question"));
         assert!(!text.contains("${{"));

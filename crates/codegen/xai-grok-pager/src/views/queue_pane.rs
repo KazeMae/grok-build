@@ -201,11 +201,20 @@ impl QueuedPromptEntry {
     ///
     /// The first line is truncated so the `(+N lines)` suffix stays visible.
     pub fn rebuild_styled_for_width(&mut self, available_width: u16) {
-        self.styled = Self::build_styled(
+        self.rebuild_styled_for_width_with_locale(available_width, None);
+    }
+
+    pub fn rebuild_styled_for_width_with_locale(
+        &mut self,
+        available_width: u16,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) {
+        self.styled = Self::build_styled_with_locale(
             &self.first_line,
             self.line_count,
             self.kind,
             Some(available_width as usize),
+            locale,
         );
     }
 
@@ -218,16 +227,33 @@ impl QueuedPromptEntry {
         kind: QueueEntryKind,
         max_width: Option<usize>,
     ) -> Line<'static> {
+        Self::build_styled_with_locale(first_line, line_count, kind, max_width, None)
+    }
+
+    fn build_styled_with_locale(
+        first_line: &str,
+        line_count: usize,
+        kind: QueueEntryKind,
+        max_width: Option<usize>,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Line<'static> {
         let theme = Theme::current();
         let extra_lines = line_count.saturating_sub(1);
 
-        // Build the suffix for multiline prompts: " (+N lines)" or " (+1 line)"
+        // Build the suffix for multiline prompts.
         let suffix = if extra_lines > 0 {
-            if extra_lines == 1 {
-                " (+1 line)".to_string()
-            } else {
-                format!(" (+{extra_lines} lines)")
-            }
+            let english = format!(
+                "(+{extra_lines} line{})",
+                if extra_lines == 1 { "" } else { "s" }
+            );
+            let label = locale
+                .map(|locale| {
+                    locale
+                        .named_text("status.queue.more_lines", &english)
+                        .replace("{count}", &extra_lines.to_string())
+                })
+                .unwrap_or(english);
+            format!(" {label}")
         } else {
             String::new()
         };
@@ -863,6 +889,28 @@ impl QueuePane {
         overlay_area: Option<Rect>,
         can_send_now: bool,
     ) {
+        self.render_with_locale(
+            area,
+            buf,
+            focused,
+            layout_cfg,
+            overlay_area,
+            can_send_now,
+            None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_with_locale(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        focused: bool,
+        layout_cfg: &LayoutConfig,
+        overlay_area: Option<Rect>,
+        can_send_now: bool,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) {
         // Detect a theme switch and refresh the list style. Without this it would keep the theme active at
         // construction (default GrokNight, dark) after the user switches.
         let current_theme = Theme::current_kind();
@@ -884,7 +932,7 @@ impl QueuePane {
         let prefix_width = 2 + digit_count(max_pos); // "#" + digits + " "
         let content_width = (inner.width as usize).saturating_sub(prefix_width);
         for entry in &mut self.entries {
-            entry.rebuild_styled_for_width(content_width as u16);
+            entry.rebuild_styled_for_width_with_locale(content_width as u16, locale);
         }
 
         // When the queue overflows, the ListPane reserves its scrollbar in the last column of its render area
@@ -903,6 +951,7 @@ impl QueuePane {
         ListPane::new(&self.entries)
             .focused(focused)
             .style(self.list_style)
+            .with_locale(locale)
             .render(list_area, buf, &mut self.list_state);
 
         // Hover affordance: paint the same dim row-hover bg the scrollback and dock use.
@@ -966,8 +1015,11 @@ impl QueuePane {
                 let mut right = inner.x + inner.width;
                 let fits = |right: u16, w: u16| right.checked_sub(w).filter(|&x| x >= inner.x);
 
-                let cancel_label = "[cancel]";
-                let cancel_w = cancel_label.len() as u16;
+                let cancel = locale
+                    .map(|locale| locale.named_static_text("shortcut.cancel", "cancel"))
+                    .unwrap_or("cancel");
+                let cancel_label = format!("[{cancel}]");
+                let cancel_w = cancel_label.width() as u16;
                 if entry.capabilities.can_delete()
                     && let Some(cancel_x) = fits(right, cancel_w)
                 {
@@ -977,20 +1029,26 @@ impl QueuePane {
                     } else {
                         btn_style
                     };
-                    buf.set_string_safe(cancel_x, screen_y, cancel_label, cancel_style);
+                    buf.set_string_safe(cancel_x, screen_y, &cancel_label, cancel_style);
                     self.delete_button
                         .bind(Rect::new(cancel_x, screen_y, cancel_w, 1), entry.id);
                 }
 
-                let interject_label = "[Send now]";
-                let interject_w = interject_label.len() as u16;
+                let send_now = locale
+                    .map(|locale| locale.named_static_text("shortcut.send_now", "Send now"))
+                    .unwrap_or("Send now");
+                let interject_label = format!("[{send_now}]");
+                let interject_w = interject_label.width() as u16;
                 let show_send_now = can_send_now && entry.capabilities.can_send_now();
 
                 // [edit] always paints; keyboard `e` works either way. Flush to
                 // neighbours so the queued message cannot leak through a gap.
                 // Drop [edit] if [Send now] fits alone but not with [edit].
-                let edit_label = "[edit]";
-                let edit_w = edit_label.len() as u16;
+                let edit = locale
+                    .map(|locale| locale.named_static_text("shortcut.edit", "edit"))
+                    .unwrap_or("edit");
+                let edit_label = format!("[{edit}]");
+                let edit_w = edit_label.width() as u16;
                 let send_now_fits_alone = show_send_now && fits(right, interject_w).is_some();
                 if entry.capabilities.can_edit()
                     && (!send_now_fits_alone || fits(right, interject_w + edit_w).is_some())
@@ -1002,7 +1060,7 @@ impl QueuePane {
                     } else {
                         btn_style
                     };
-                    buf.set_string_safe(edit_x, screen_y, edit_label, edit_style);
+                    buf.set_string_safe(edit_x, screen_y, &edit_label, edit_style);
                     self.edit_button
                         .bind(Rect::new(edit_x, screen_y, edit_w, 1), entry.id);
                 }
@@ -1014,7 +1072,7 @@ impl QueuePane {
                     } else {
                         btn_style
                     };
-                    buf.set_string_safe(interject_x, screen_y, interject_label, interject_style);
+                    buf.set_string_safe(interject_x, screen_y, &interject_label, interject_style);
                     self.send_now
                         .bind(Rect::new(interject_x, screen_y, interject_w, 1), entry.id);
                 }

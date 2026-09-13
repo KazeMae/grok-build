@@ -902,12 +902,13 @@ impl SessionActor {
                 }
                 (false, xai_grok_hooks::result::PromptDecision::Block { reason, hook_name }) => {
                     tracing::info!(%hook_name, %reason, "user_prompt_submit block ignored for non-user origin");
-                    self.send_hook_annotation(
-                            &format!(
-                        "\u{26a0} Prompt block requested by {} (not enforced for this origin): {reason}",
-                        xai_grok_hooks::config::hook_display_name(&hook_name)
-                    ),
-                        )
+                    self.send_hook_annotation_with_kind(
+                        crate::extensions::notification::HookAnnotationKind::PromptBlockRequestedNotEnforced,
+                        &format!(
+                            "\u{26a0} Prompt block requested by {} (not enforced for this origin): {reason}",
+                            xai_grok_hooks::config::hook_display_name(&hook_name)
+                        ),
+                    )
                         .await;
                     None
                 }
@@ -1268,10 +1269,13 @@ impl SessionActor {
                 hook_name: hook_name.clone(),
                 cause: xai_grok_telemetry::events::HookBlockCause::PromptBlocked,
             });
-            self.send_hook_annotation(&format!(
-                "\u{26a0} Prompt blocked by {}: {reason}",
-                xai_grok_hooks::config::hook_display_name(&hook_name)
-            ))
+            self.send_hook_annotation_with_kind(
+                crate::extensions::notification::HookAnnotationKind::PromptBlocked,
+                &format!(
+                    "\u{26a0} Prompt blocked by {}: {reason}",
+                    xai_grok_hooks::config::hook_display_name(&hook_name)
+                ),
+            )
             .await;
             Ok(TurnOutcome::Cancelled {
                 category: Some(crate::session::events::CancellationCategory::HookDenied),

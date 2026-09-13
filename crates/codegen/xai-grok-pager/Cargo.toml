@@ -9,7 +9,9 @@ authors = ["xAI"]
 # TTY safety — detach subprocesses from the controlling terminal
 dunce = { workspace = true }
 xai-tty-utils = { workspace = true }
-xai-grok-version = { workspace = true }
+xai-grok-version = { workspace = true, features = ["privacy"] }
+xai-grok-locale = { path = "../xai-grok-locale" }
+xai-grok-product = { path = "../xai-grok-product" }
 
 # Shared prompt-queue wire types
 xai-prompt-queue = { workspace = true }
@@ -45,6 +47,7 @@ syntect = { workspace = true }
 similar = { workspace = true }
 indexmap = { workspace = true }
 blake3 = { workspace = true }
+sha2 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 strum = { workspace = true }

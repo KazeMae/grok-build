@@ -26,6 +26,7 @@ tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url = { workspace = true }
 xai-grok-auth = { workspace = true }
+xai-grok-version = { workspace = true, features = ["privacy"] }
 xai-grok-extra-ca = { workspace = true }
 xai-grok-env = { workspace = true, optional = true }
 xai-grok-secrets = { workspace = true }

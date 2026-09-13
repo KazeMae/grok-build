@@ -22,6 +22,15 @@ use xai_grok_sampling_types::{
 use xai_grok_tools::types::compat::{
     COMPAT_CELLS, CompatConfig, CompatConfigToml, CompatRemoteKey, CompatSurface, CompatVendor,
 };
+/// ACP model metadata marker for client-owned catalog presentation.
+///
+/// This covers untouched bundled defaults and exact matches returned by the
+/// public first-party model catalog. Pager consumers use this display-only
+/// provenance to avoid translating user-configured or custom-server models
+/// that reuse a built-in id/text. Routing never reads this marker.
+pub const BUNDLED_MODEL_META_KEY: &str = "x.ai/bundledModel";
+
+/// The mode in which the agent is running.
 /// Determines behavior like relay sync enablement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentMode {
@@ -1567,6 +1576,8 @@ pub struct SessionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RepoChangesDedupConfig {
+    /// Privacy build ships with this off — whole-repo / change-archive
+    /// research packaging is not used.
     pub enabled: bool,
     /// Include inline content even when references exist.
     pub include_inline_fallback: bool,
@@ -1582,7 +1593,8 @@ impl RepoChangesDedupConfig {}
 impl Default for RepoChangesDedupConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            // Privacy build: do not package/dedup repo changes for upload.
+            enabled: false,
             include_inline_fallback: false,
             max_inline_bytes: 0,
             dedup_untracked: true,
@@ -2338,7 +2350,13 @@ impl Config {
     pub(crate) fn is_two_pass_compaction_enabled(&self) -> bool {
         self.is_feature_enabled(Feature::TwoPassCompaction)
     }
-    pub(crate) fn resolve_telemetry_mode(&self) -> Resolved<TelemetryMode> {
+    /// Resolve effective product telemetry mode (privacy build: always Disabled).
+    pub fn resolve_telemetry_mode(&self) -> Resolved<TelemetryMode> {
+        // Privacy build: product telemetry is permanently off (remote/env cannot
+        // re-enable Mixpanel / events / research metrics).
+        if xai_grok_version::research_data_collection_forbidden() {
+            return Resolved::new(TelemetryMode::Disabled, ConfigSource::Default);
+        }
         if let Some(mode) = self.requirements.telemetry.pinned() {
             return Resolved::new(mode, ConfigSource::Requirement);
         }
@@ -2363,7 +2381,13 @@ impl Config {
         }
         Resolved::new(TelemetryMode::Disabled, ConfigSource::Default)
     }
-    pub(crate) fn resolve_trace_upload(&self) -> Resolved<bool> {
+    /// Resolve whether session/repo research trace upload is enabled
+    /// (privacy build: always false).
+    pub fn resolve_trace_upload(&self) -> Resolved<bool> {
+        // Privacy build: never upload session/repo traces to GCS (or anywhere).
+        if xai_grok_version::research_data_collection_forbidden() {
+            return Resolved::new(false, ConfigSource::Default);
+        }
         let mode = self.resolve_telemetry_mode();
         let ff = if mode.value.is_disabled() {
             None
@@ -2506,6 +2530,15 @@ impl Config {
         }
     }
     pub fn feature(&self, feature: Feature) -> Resolved<bool> {
+        if xai_grok_version::research_data_collection_forbidden() && feature == Feature::Feedback {
+            // Privacy build: feedback is off unless explicitly enabled via
+            // GROK_FEEDBACK_ENABLED env; config/remote cannot enable it.
+            let env = FeatureSources::from_process_env(feature).env;
+            if let Some(v) = env {
+                return Resolved::new(v, ConfigSource::Env);
+            }
+            return Resolved::new(false, ConfigSource::Default);
+        }
         feature.resolve(self.feature_sources(feature))
     }
     pub fn feature_off_reason(&self, feature: Feature) -> Option<String> {
@@ -3288,6 +3321,9 @@ pub(crate) fn resolve_model_list(
     prefetched: Option<IndexMap<String, ModelEntry>>,
 ) -> IndexMap<String, ModelEntry> {
     let mut resolved: IndexMap<String, ModelEntry> = IndexMap::new();
+    let public_catalog_endpoints = !cfg.endpoints.has_custom_endpoint()
+        && base_url_matches(&cfg.endpoints.proxy_url(), CLI_CHAT_PROXY_BASE_URL_DEFAULT)
+        && base_url_matches(&cfg.endpoints.xai_api_base_url, XAI_API_BASE_URL_DEFAULT);
     if cfg.endpoints.has_custom_endpoint() {
         tracing::info!(
             models_base_url = ?cfg.endpoints.models_base_url,
@@ -3295,7 +3331,12 @@ pub(crate) fn resolve_model_list(
             "custom models endpoint active, skipping built-in defaults",
         );
     } else {
-        let defaults = default_model_entries(&cfg.endpoints);
+        let mut defaults = default_model_entries(&cfg.endpoints);
+        if !public_catalog_endpoints {
+            for entry in defaults.values_mut() {
+                entry.bundled_catalog_entry = false;
+            }
+        }
         tracing::debug!(count = defaults.len(), "loaded default models");
         resolved.extend(defaults);
     }
@@ -3303,6 +3344,12 @@ pub(crate) fn resolve_model_list(
         tracing::debug!(count = prefetched.len(), "loaded prefetched models");
         let default_cw = DEFAULT_CONTEXT_WINDOW;
         for (key, entry) in prefetched.iter_mut() {
+            // Cached and remote values are not trusted to carry display
+            // provenance. Recompute it from the current local endpoint config
+            // and an exact bundled-catalog identity match every time. This
+            // upgrades legacy first-party caches while clearing stale/spoofed
+            // markers after switching to a custom endpoint.
+            entry.bundled_catalog_entry = false;
             let donor = resolved.get(key);
             if let Some(donor) = donor {
                 if entry.info.context_window.get() == default_cw
@@ -3324,6 +3371,20 @@ pub(crate) fn resolve_model_list(
                 if entry.info.api_backend == ApiBackend::default() {
                     entry.info.api_backend.clone_from(&donor.info.api_backend);
                 }
+
+                let entry_route_is_public =
+                    base_url_matches(&entry.info.base_url, CLI_CHAT_PROXY_BASE_URL_DEFAULT)
+                        && entry.api_base_url.as_deref().is_none_or(|api_base_url| {
+                            base_url_matches(api_base_url, XAI_API_BASE_URL_DEFAULT)
+                        });
+                let presentation_matches = entry.info.id == donor.info.id
+                    && entry.info.model == donor.info.model
+                    && entry.info.name == donor.info.name
+                    && entry.info.description == donor.info.description;
+                entry.bundled_catalog_entry = public_catalog_endpoints
+                    && donor.bundled_catalog_entry
+                    && entry_route_is_public
+                    && presentation_matches;
             }
             if resolved.contains_key(key) {
                 tracing::debug!(model_key = %key, "prefetched model overriding default");
@@ -3449,6 +3510,11 @@ pub(crate) fn resolve_model_list(
     }
     resolved
 }
+/// Compare canonical API base URLs while tolerating only redundant trailing slashes. Host/path changes remain distinct and therefore fail closed.
+fn base_url_matches(actual: &str, expected: &str) -> bool {
+    actual.trim_end_matches('/') == expected.trim_end_matches('/')
+}
+
 /// Layer 6 of [`resolve_model_list`]: fold the global `[models].extra_headers` into every model as a base. The presence check is case-insensitive because the sampler lowers these into an `http::HeaderMap`.
 /// A global `X-Foo` must not shadow a per-model `x-foo`. A per-model `[model.<id>].extra_headers` (applied earlier) therefore wins per key.
 fn apply_global_extra_headers(resolved: &mut IndexMap<String, ModelEntry>, models: &ModelsConfig) {
@@ -3512,7 +3578,11 @@ fn apply_global_scalar_defaults(
 pub(crate) fn default_model_entries(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntry> {
     default_models(endpoints)
         .into_iter()
-        .map(|(key, entry)| (key, ModelEntry::from_config_entry(&entry)))
+        .map(|(key, entry)| {
+            let mut model = ModelEntry::from_config_entry(&entry);
+            model.bundled_catalog_entry = true;
+            (key, model)
+        })
         .collect()
 }
 /// Resolve a model against the available model map.
@@ -3842,6 +3912,9 @@ impl ConfigModelOverride {
         endpoints: &EndpointsConfig,
     ) -> ModelEntry {
         let mut entry = base.unwrap_or_else(|| ModelEntry::fallback(key, endpoints));
+        // Any explicit `[model.<id>]` entry is user-owned presentation, even
+        // when it overrides a bundled id with identical text.
+        entry.bundled_catalog_entry = false;
         if let Some(ref v) = self.model {
             entry.info.model = v.clone();
         }
@@ -4177,6 +4250,11 @@ pub struct ModelEntry {
     /// Local mTLS client identity directory selected with an explicit model-level `base_url`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mtls_cert_dir: Option<PathBuf>,
+    /// Client-owned picker presentation provenance. True only for untouched
+    /// embedded defaults or exact display matches from the configured public
+    /// first-party catalog. Routing never reads this field.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub bundled_catalog_entry: bool,
     pub api_key: Option<String>,
     pub env_key: Option<EnvKeys>,
     /// Named credential helper (`[model.<id>] auth_provider = "<name>"`), resolved against `[auth_provider.<name>]` by `resolve_model_list`.
@@ -4194,6 +4272,7 @@ impl ModelEntry {
         Self {
             info,
             mtls_cert_dir: None,
+            bundled_catalog_entry: false,
             api_key: None,
             env_key: None,
             auth_provider: None,
@@ -4207,6 +4286,7 @@ impl ModelEntry {
         Self {
             info: ModelInfo::from_config(entry),
             mtls_cert_dir: None,
+            bundled_catalog_entry: false,
             api_key: entry.api_key.clone(),
             env_key: entry.env_key.clone(),
             auth_provider: None,
@@ -4776,6 +4856,7 @@ pub(crate) fn resolve_aux_model_sampling_config(
         .or_else(|| endpoints.deployment_key.clone());
     if let Some(bearer) = xai_bearer {
         let entry = ModelEntry {
+            bundled_catalog_entry: false,
             info: ModelInfo {
                 user_selectable: false,
                 id: None,
@@ -5000,6 +5081,7 @@ fn resolve_hidden_default_web_search_sampling_config(
     endpoints: &EndpointsConfig,
 ) -> SamplerConfig {
     let entry = ModelEntry {
+        bundled_catalog_entry: false,
         info: ModelInfo {
             id: None,
             model_family: None,
@@ -5137,6 +5219,12 @@ pub(crate) fn to_acp_model_info(
                         reasoning_efforts_meta_value(&info.reasoning_efforts),
                     );
                 }
+                if model.bundled_catalog_entry {
+                    map.insert(
+                        BUNDLED_MODEL_META_KEY.to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                }
                 if map.is_empty() { None } else { Some(map) }
             };
             (
@@ -5207,6 +5295,7 @@ fn force_login_team_from_requirements() -> Option<xai_grok_login::ForceLoginTeam
         &crate::config::load_merged_requirements()?,
     )
 }
+
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;

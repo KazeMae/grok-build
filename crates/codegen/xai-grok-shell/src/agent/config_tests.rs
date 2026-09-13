@@ -1,6 +1,161 @@
 use super::*;
 use serial_test::serial;
 use xai_grok_test_support::EnvGuard;
+
+#[test]
+fn bundled_model_provenance_survives_acp_but_config_override_clears_it() {
+    let mut cfg = Config::default();
+    cfg.endpoints.cli_chat_proxy_base_url = None;
+    cfg.endpoints.xai_api_base_url = XAI_API_BASE_URL_DEFAULT.to_string();
+    cfg.endpoints.models_base_url = None;
+    cfg.endpoints.models_list_url = None;
+
+    let defaults = default_model_entries(&cfg.endpoints);
+    let bundled = defaults.get("grok-4.6").expect("bundled grok-4.6");
+    assert!(bundled.bundled_catalog_entry);
+    let bundled_acp = to_acp_model_info(&defaults);
+    let bundled_meta = bundled_acp[&acp::ModelId::new(Arc::from("grok-4.6"))]
+        .meta
+        .as_ref()
+        .expect("bundled model meta");
+    assert_eq!(bundled_meta[BUNDLED_MODEL_META_KEY], true);
+
+    let raw_config: toml::Value = toml::from_str(
+        r#"
+        [model."grok-4.6"]
+        description = "SpaceXAI's latest frontier model"
+        "#,
+    )
+    .unwrap();
+    let mut override_cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+    override_cfg.endpoints = cfg.endpoints.clone();
+    let overridden = resolve_model_list(&override_cfg, None);
+    assert!(
+        !overridden["grok-4.6"].bundled_catalog_entry,
+        "a user-owned override must not inherit bundled presentation provenance"
+    );
+    let overridden_acp = to_acp_model_info(&overridden);
+    let overridden_meta = overridden_acp[&acp::ModelId::new(Arc::from("grok-4.6"))]
+        .meta
+        .as_ref()
+        .expect("standard model meta");
+    assert!(overridden_meta.get(BUNDLED_MODEL_META_KEY).is_none());
+
+    let mut official_cached = bundled.clone();
+    official_cached.bundled_catalog_entry = false;
+    official_cached.info.base_url = CLI_CHAT_PROXY_BASE_URL_DEFAULT.to_string();
+    official_cached.api_base_url = None;
+    let official_resolved = resolve_model_list(
+        &cfg,
+        Some(IndexMap::from([(
+            "grok-4.6".to_string(),
+            official_cached.clone(),
+        )])),
+    );
+    assert!(
+        official_resolved["grok-4.6"].bundled_catalog_entry,
+        "an exact first-party remote/cache match should regain client-owned presentation provenance"
+    );
+    let official_acp = to_acp_model_info(&official_resolved);
+    let official_meta = official_acp[&acp::ModelId::new(Arc::from("grok-4.6"))]
+        .meta
+        .as_ref()
+        .expect("official model meta");
+    assert_eq!(official_meta[BUNDLED_MODEL_META_KEY], true);
+
+    let mut official_api_cached = official_cached.clone();
+    official_api_cached.api_base_url = Some(XAI_API_BASE_URL_DEFAULT.to_string());
+    let official_api_resolved = resolve_model_list(
+        &cfg,
+        Some(IndexMap::from([(
+            "grok-4.6".to_string(),
+            official_api_cached,
+        )])),
+    );
+    assert!(
+        official_api_resolved["grok-4.6"].bundled_catalog_entry,
+        "the public API-key catalog route should also retain client-owned presentation provenance"
+    );
+
+    let mut custom_cfg = cfg.clone();
+    custom_cfg.endpoints.models_list_url = Some("https://custom.example/v1/models".to_string());
+    let mut spoofed_custom = official_cached.clone();
+    spoofed_custom.bundled_catalog_entry = true;
+    let custom_resolved = resolve_model_list(
+        &custom_cfg,
+        Some(IndexMap::from([("grok-4.6".to_string(), spoofed_custom)])),
+    );
+    assert!(
+        !custom_resolved["grok-4.6"].bundled_catalog_entry,
+        "a custom endpoint must clear even a cached/spoofed provenance marker"
+    );
+
+    let mut custom_proxy_cfg = cfg.clone();
+    custom_proxy_cfg.endpoints.cli_chat_proxy_base_url =
+        Some("https://proxy.example/v1".to_string());
+    let mut custom_proxy_remote = official_cached.clone();
+    custom_proxy_remote.bundled_catalog_entry = true;
+    custom_proxy_remote.info.base_url = "https://proxy.example/v1".to_string();
+    custom_proxy_remote.api_base_url = Some(XAI_API_BASE_URL_DEFAULT.to_string());
+    let custom_proxy_resolved = resolve_model_list(
+        &custom_proxy_cfg,
+        Some(IndexMap::from([(
+            "grok-4.6".to_string(),
+            custom_proxy_remote,
+        )])),
+    );
+    assert!(
+        !custom_proxy_resolved["grok-4.6"].bundled_catalog_entry,
+        "a custom session proxy must keep model presentation dynamic"
+    );
+    assert!(
+        !resolve_model_list(&custom_proxy_cfg, None)["grok-4.6"].bundled_catalog_entry,
+        "a custom session proxy must also clear bundled fallback presentation"
+    );
+
+    let mut custom_api_cfg = cfg.clone();
+    custom_api_cfg.endpoints.xai_api_base_url = "https://api.example/v1".to_string();
+    let mut custom_api_remote = official_cached.clone();
+    custom_api_remote.bundled_catalog_entry = true;
+    custom_api_remote.api_base_url = Some("https://api.example/v1".to_string());
+    let custom_api_resolved = resolve_model_list(
+        &custom_api_cfg,
+        Some(IndexMap::from([(
+            "grok-4.6".to_string(),
+            custom_api_remote,
+        )])),
+    );
+    assert!(
+        !custom_api_resolved["grok-4.6"].bundled_catalog_entry,
+        "a custom public-API base must keep model presentation dynamic"
+    );
+    assert!(
+        !resolve_model_list(&custom_api_cfg, None)["grok-4.6"].bundled_catalog_entry,
+        "a custom public-API base must also clear bundled fallback presentation"
+    );
+
+    let mut mismatched_remote = official_cached;
+    mismatched_remote.bundled_catalog_entry = true;
+    mismatched_remote.info.description = Some("Custom description".to_string());
+    let remote_resolved = resolve_model_list(
+        &cfg,
+        Some(IndexMap::from([(
+            "grok-4.6".to_string(),
+            mismatched_remote,
+        )])),
+    );
+    assert!(
+        !remote_resolved["grok-4.6"].bundled_catalog_entry,
+        "a remote same-id model with custom presentation must remain dynamic"
+    );
+    let remote_acp = to_acp_model_info(&remote_resolved);
+    let remote_meta = remote_acp[&acp::ModelId::new(Arc::from("grok-4.6"))]
+        .meta
+        .as_ref()
+        .expect("standard remote model meta");
+    assert!(remote_meta.get(BUNDLED_MODEL_META_KEY).is_none());
+}
+
 #[test]
 fn main_cli_tools_override_preserves_profile_injection_policy() {
     let overrides = CliAgentOverrides {
@@ -1051,6 +1206,7 @@ fn test_model_entry(
     api_base_url: Option<&str>,
 ) -> ModelEntry {
     ModelEntry {
+        bundled_catalog_entry: false,
         info: ModelInfo {
             user_selectable: true,
             id: None,
@@ -3752,12 +3908,14 @@ fn model_mtls_configuration_requires_one_explicit_https_destination() {
 /// Catches the spelling, not the class: a mirror under another name still gets through.
 #[test]
 fn no_registered_feature_is_mirrored_by_a_config_field() {
-    const SRC: &str = include_str!("config.rs");
-    const AGENT: &str = include_str!("mvp_agent/mod.rs");
+    // `include_str!` preserves the working-tree line endings; on Windows the
+    // sources check out as CRLF, so normalize before anchoring on `\n}`.
+    let src = include_str!("config.rs").replace("\r\n", "\n");
+    let agent = include_str!("mvp_agent/mod.rs").replace("\r\n", "\n");
     for (src, decl) in [
-        (SRC, "pub struct Config {"),
-        (SRC, "pub struct Features {"),
-        (AGENT, "pub struct MvpAgent {"),
+        (src.as_str(), "pub struct Config {"),
+        (src.as_str(), "pub struct Features {"),
+        (agent.as_str(), "pub struct MvpAgent {"),
     ] {
         let body = src
             .split_once(decl)
@@ -3792,6 +3950,19 @@ fn requirement_pin_outranks_a_hostile_environment() {
         cfg.requirements
             .pin_feature(spec.id, pinned, crate::config::RequirementSource::Unknown);
         let r = cfg.feature(spec.id);
+        if xai_grok_version::research_data_collection_forbidden()
+            && spec.id == crate::agent::config::Feature::Feedback
+        {
+            // Privacy build: feedback ignores the requirement pin — the env
+            // tier alone decides (config.rs::feature short-circuits to env).
+            assert_eq!(
+                r.value, !pinned,
+                "{} must follow its env under the privacy build, not the pin",
+                spec.key
+            );
+            assert_eq!(r.source, ConfigSource::Env, "{}", spec.key);
+            continue;
+        }
         assert_eq!(r.value, pinned, "{} lost to {}", spec.key, spec.env);
         assert_eq!(r.source, ConfigSource::Requirement, "{}", spec.key);
     }
@@ -3805,6 +3976,24 @@ fn every_registered_key_parses_out_of_the_features_table() {
         let raw: toml::Value =
             toml::from_str(&format!("[features]\n{} = {configured}\n", spec.key)).unwrap();
         let cfg = Config::new_from_toml_cfg(&raw).unwrap();
+        if xai_grok_version::research_data_collection_forbidden()
+            && spec.id == crate::agent::config::Feature::Feedback
+        {
+            // Privacy build: the `[features]` tier cannot enable feedback;
+            // only GROK_FEEDBACK_ENABLED env can. Assert the hard-off and
+            // the env-only escape hatch.
+            let _env = EnvGuard::unset(spec.env);
+            assert!(
+                !cfg.feature(spec.id).value,
+                "{} must stay off under the privacy build",
+                spec.key
+            );
+            let _env = EnvGuard::set(spec.env, if configured { "0" } else { "1" });
+            let r = cfg.feature(spec.id);
+            assert_eq!(r.value, !configured, "{} must follow its env", spec.key);
+            assert_eq!(r.source, ConfigSource::Env, "{}", spec.key);
+            continue;
+        }
         {
             let _env = EnvGuard::unset(spec.env);
             let r = cfg.feature(spec.id);
@@ -3825,7 +4014,10 @@ fn every_registered_key_parses_out_of_the_features_table() {
 /// A quoted `remote_fetch` used to read as absent and leave the egress gate open.
 #[test]
 fn non_boolean_value_fails_the_load_for_a_key_with_no_field() {
-    let features = include_str!("config.rs")
+    // `include_str!` preserves CRLF on Windows checkouts; normalize so the
+    // `\n}` anchor matches the struct body terminator.
+    let config_src = include_str!("config.rs").replace("\r\n", "\n");
+    let features = config_src
         .split_once("pub struct Features {")
         .and_then(|(_, rest)| rest.split_once("\n}\n"))
         .map(|(body, _)| body)
@@ -4265,6 +4457,19 @@ fn resolve_trace_upload_disabled_when_telemetry_off_despite_remote_flag() {
 #[test]
 #[serial]
 fn resolve_trace_upload_explicit_config_wins_over_telemetry_off() {
+    // Privacy build: hard-off short-circuits before config/env.
+    if xai_grok_version::research_data_collection_forbidden() {
+        unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
+        unsafe { std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD") };
+        let mut cfg = Config::default();
+        cfg.features.telemetry = Some(TelemetryMode::Disabled);
+        cfg.telemetry.trace_upload = Some(true);
+        assert!(
+            !cfg.resolve_trace_upload().value,
+            "privacy hard-off must win over explicit trace_upload=true"
+        );
+        return;
+    }
     unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
     unsafe { std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD") };
     let mut cfg = Config::default();
@@ -4301,13 +4506,38 @@ fn trace_upload_decision_debug_reports_winning_source() {
     assert_eq!(d["has_remote_settings"], serde_json::json!(true));
     cfg.telemetry.trace_upload = Some(true);
     let d = cfg.trace_upload_decision_debug();
-    assert_eq!(d["trace_upload"], serde_json::json!(true));
-    assert_eq!(d["trace_upload_source"], serde_json::json!("config"));
-    assert_eq!(d["in_cfg_telemetry_trace_upload"], serde_json::json!(true));
+    if xai_grok_version::research_data_collection_forbidden() {
+        assert_eq!(
+            d["trace_upload"],
+            serde_json::json!(false),
+            "privacy hard-off must keep debug decision false"
+        );
+    } else {
+        assert_eq!(d["trace_upload"], serde_json::json!(true));
+        assert_eq!(d["trace_upload_source"], serde_json::json!("config"));
+        assert_eq!(d["in_cfg_telemetry_trace_upload"], serde_json::json!(true));
+    }
 }
 #[test]
 #[serial]
 fn resolve_trace_upload_honors_config_when_telemetry_on() {
+    // Privacy build: the hard-off short-circuit wins first. Non-privacy
+    // (upstream) semantics: explicit false config wins; when telemetry is
+    // fully enabled and trace_upload is unset, default is on.
+    if xai_grok_version::research_data_collection_forbidden() {
+        unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
+        unsafe { std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD") };
+        let mut cfg = Config::default();
+        cfg.features.telemetry = Some(TelemetryMode::Enabled);
+        cfg.telemetry.trace_upload = Some(false);
+        assert!(!cfg.resolve_trace_upload().value);
+        cfg.telemetry.trace_upload = None;
+        assert!(
+            !cfg.resolve_trace_upload().value,
+            "privacy hard-off: cannot default-on trace upload"
+        );
+        return;
+    }
     unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
     unsafe { std::env::remove_var("DISABLE_TELEMETRY") };
     unsafe { std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD") };
@@ -4320,6 +4550,77 @@ fn resolve_trace_upload_honors_config_when_telemetry_on() {
     cfg.telemetry.trace_upload = None;
     let r = cfg.resolve_trace_upload();
     assert!(r.value, "defaults on when telemetry fully enabled");
+}
+
+/// Privacy build: telemetry mode cannot be re-enabled via env, config,
+/// requirements pin, or remote settings. Drives the real resolver.
+#[test]
+#[serial]
+fn privacy_build_telemetry_mode_ignores_env_config_and_remote() {
+    assert!(
+        xai_grok_version::research_data_collection_forbidden(),
+        "this fork must lock research collection off"
+    );
+    // SAFETY: #[serial]
+    unsafe {
+        std::env::set_var("GROK_TELEMETRY_ENABLED", "1");
+    }
+    let mut cfg = Config::default();
+    cfg.features.telemetry = Some(TelemetryMode::Enabled);
+    cfg.requirements.telemetry.pin(
+        TelemetryMode::Enabled,
+        crate::config::RequirementSource::Unknown,
+    );
+    cfg.remote_settings = Some(crate::util::config::RemoteSettings {
+        telemetry_enabled: Some(true),
+        telemetry_mode: Some("enabled".into()),
+        ..Default::default()
+    });
+    let r = cfg.resolve_telemetry_mode();
+    assert!(
+        r.value.is_disabled(),
+        "privacy hard-off must win over env/config/remote: {:?}",
+        r
+    );
+    unsafe {
+        std::env::remove_var("GROK_TELEMETRY_ENABLED");
+    }
+}
+
+/// Privacy build: trace upload cannot be re-enabled via env, config,
+/// requirements pin, or remote settings. Drives the real resolver.
+#[test]
+#[serial]
+fn privacy_build_trace_upload_ignores_env_config_and_remote() {
+    assert!(xai_grok_version::research_data_collection_forbidden());
+    // SAFETY: #[serial]
+    unsafe {
+        std::env::set_var("GROK_TELEMETRY_ENABLED", "1");
+        std::env::set_var("GROK_TELEMETRY_TRACE_UPLOAD", "1");
+    }
+    let mut cfg = Config::default();
+    cfg.features.telemetry = Some(TelemetryMode::Enabled);
+    cfg.telemetry.trace_upload = Some(true);
+    cfg.requirements
+        .trace_upload
+        .pin(true, crate::config::RequirementSource::Unknown);
+    cfg.remote_settings = Some(crate::util::config::RemoteSettings {
+        telemetry_enabled: Some(true),
+        telemetry_mode: Some("enabled".into()),
+        trace_upload_enabled: Some(true),
+        ..Default::default()
+    });
+    let r = cfg.resolve_trace_upload();
+    assert!(
+        !r.value,
+        "privacy hard-off must win over env/config/remote for trace upload: {:?}",
+        r
+    );
+    assert!(!cfg.is_trace_upload_enabled());
+    unsafe {
+        std::env::remove_var("GROK_TELEMETRY_ENABLED");
+        std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD");
+    }
 }
 #[test]
 #[serial]
@@ -7398,6 +7699,7 @@ fn slug_propagation_noop_when_no_donor() {
 /// Build a minimal `ModelEntry` for testing resolve_model_list.
 fn prefetch_model_entry(slug: &str, context_window: u64, api_backend: ApiBackend) -> ModelEntry {
     ModelEntry {
+        bundled_catalog_entry: false,
         info: ModelInfo {
             user_selectable: true,
             id: None,

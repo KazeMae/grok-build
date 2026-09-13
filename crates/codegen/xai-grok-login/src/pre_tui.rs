@@ -39,6 +39,24 @@ pub async fn maybe_run_pre_tui_external_login(
     force_login: bool,
     stdin_is_tty: bool,
 ) -> anyhow::Result<PreTuiLoginOutcome> {
+    let locale = xai_grok_locale::LocaleContext::default();
+    maybe_run_pre_tui_external_login_with_locale(
+        grok_com_config,
+        proxy_base_url,
+        force_login,
+        stdin_is_tty,
+        &locale,
+    )
+    .await
+}
+
+pub async fn maybe_run_pre_tui_external_login_with_locale(
+    grok_com_config: &GrokComConfig,
+    proxy_base_url: String,
+    force_login: bool,
+    stdin_is_tty: bool,
+    locale: &xai_grok_locale::LocaleContext,
+) -> anyhow::Result<PreTuiLoginOutcome> {
     let Some(cmd) = grok_com_config.auth_provider_command.as_deref() else {
         return Ok(PreTuiLoginOutcome::Skipped);
     };
@@ -59,7 +77,7 @@ pub async fn maybe_run_pre_tui_external_login(
         proxy_base_url,
     ));
     auth_manager.configure_refresher(Some(cmd.to_owned()), None);
-    run_pre_tui_external_login_with(&auth_manager, cmd, force_login).await
+    run_pre_tui_external_login_with_locale(&auth_manager, cmd, force_login, locale).await
 }
 
 /// Runs the provider and persists the result.
@@ -69,10 +87,21 @@ pub async fn run_pre_tui_external_login_with(
     command: &str,
     force_login: bool,
 ) -> anyhow::Result<PreTuiLoginOutcome> {
+    let locale = xai_grok_locale::LocaleContext::default();
+    run_pre_tui_external_login_with_locale(auth_manager, command, force_login, &locale).await
+}
+
+async fn run_pre_tui_external_login_with_locale(
+    auth_manager: &Arc<AuthManager>,
+    command: &str,
+    force_login: bool,
+    locale: &xai_grok_locale::LocaleContext,
+) -> anyhow::Result<PreTuiLoginOutcome> {
     let over_stale_credential = force_login || auth_manager.is_expired();
     let (auth, _) =
         run_external_auth_provider(command, auth_manager, over_stale_credential, None).await?;
     report_signed_in(&auth);
+    let _ = locale;
     Ok(PreTuiLoginOutcome::SignedIn(Box::new(auth)))
 }
 

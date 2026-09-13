@@ -216,6 +216,8 @@ pub enum SettingValue {
 pub enum CodingDataSharingLock {
     Zdr,
     TeamManaged,
+    /// Privacy build: retention is locked to opt-out for every account.
+    PrivacyBuild,
 }
 
 impl CodingDataSharingLock {
@@ -223,6 +225,7 @@ impl CodingDataSharingLock {
         match self {
             Self::Zdr => "Your team has Zero Data Retention.",
             Self::TeamManaged => "Managed by your team admin.",
+            Self::PrivacyBuild => "Locked to opt-out by this privacy build.",
         }
     }
 }
@@ -256,7 +259,7 @@ pub struct PagerLocalSnapshot {
     pub plan_mode_active: bool,
     /// `[cli].show_tips` mirror; `None` means no TOML override, so the default `true` applies.
     pub show_tips: Option<bool>,
-    /// `[cli].auto_update` mirror; `None` means no TOML override, so the default `true` applies.
+    /// `[cli].auto_update` mirror. `None` uses the distribution default.
     pub auto_update: Option<bool>,
     /// Process-wide vim-mode scrollback flag.
     /// Mirrors `appearance::cache::load_vim_mode()` at snapshot time.
@@ -648,22 +651,33 @@ pub fn current_value_for(
         )),
         // max_thoughts_width: `u16` widened to `i64`.
         "max_thoughts_width" => Some(SettingValue::Int(ui.max_thoughts_width as i64)),
-        // coding_data_sharing: inverts the `_opt_out` bool.
-        "coding_data_sharing" => Some(SettingValue::Enum(if pager.coding_data_sharing_opt_out {
-            "opt-out"
-        } else {
-            "opt-in"
-        })),
+        // coding_data_sharing: inverts the `_opt_out` bool. In a privacy
+        // build the value is locked to opt-out, so never surface an
+        // opt-in canonical that no longer exists in the catalog.
+        "coding_data_sharing" => Some(SettingValue::Enum(
+            if xai_grok_version::coding_data_retention_locked_opt_out() {
+                "opt-out"
+            } else if pager.coding_data_sharing_opt_out {
+                "opt-out"
+            } else {
+                "opt-in"
+            },
+        )),
         // plan_mode: canonical via `PlanModeKind::from_bool().as_canonical()`.
         "plan_mode" => Some(SettingValue::Enum(
             crate::app::actions::PlanModeKind::from_bool(pager.plan_mode_active).as_canonical(),
         )),
-        // CLI batch: snapshot mirrors; `None` means the effective default `true`
+        // CLI batch: snapshot mirrors; `None` uses each setting's distribution default.
         "show_tips" => Some(SettingValue::Bool(pager.show_tips.unwrap_or(true))),
-        "auto_update" => Some(SettingValue::Bool(pager.auto_update.unwrap_or(true))),
-        // fork_secondary_model: the baseline value folds to the empty string
-        // The mirror persists the ModelId slug but the DynamicEnum canonicals are catalog display names, so resolve via the snapshot
-        // A stale id passes through raw
+        "auto_update" => {
+            Some(SettingValue::Bool(pager.auto_update.unwrap_or_else(
+                xai_grok_update::default_auto_update_enabled,
+            )))
+        }
+        // fork_secondary_model: baseline value folds to empty string. The
+        // mirror persists the ModelId slug but the DynamicEnum canonicals
+        // are catalog display names, so resolve via the snapshot; a stale
+        // id passes through raw.
         "fork_secondary_model" => Some(SettingValue::String({
             let baseline = xai_grok_shell::models::default_model();
             if ui.fork_secondary_model == baseline {
@@ -931,10 +945,10 @@ mod tests {
                     assert!(*default, "show_tips registry default must be true");
                 }
                 ("auto_update", SettingKind::Bool { default }) => {
-                    assert!(
+                    assert_eq!(
                         *default,
-                        "auto_update registry default must be true \
-                         (matches auto_update.rs's `.unwrap_or(true)`)"
+                        xai_grok_update::default_auto_update_enabled(),
+                        "auto_update registry default must match the selected distribution"
                     );
                 }
                 // vim_mode: Option<bool>; None reads as false

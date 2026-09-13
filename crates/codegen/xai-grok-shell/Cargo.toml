@@ -30,7 +30,8 @@ agent-client-protocol = { workspace = true }
 anyhow = { workspace = true }
 xai-grok-announcements = { workspace = true }
 xai-prompt-queue = { workspace = true }
-xai-grok-version = { workspace = true }
+xai-grok-version = { workspace = true, features = ["privacy"] }
+xai-grok-locale = { path = "../xai-grok-locale" }
 
 async-openai = { workspace = true }
 async-trait = { workspace = true }
@@ -193,7 +194,7 @@ nix = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 siphasher = { workspace = true }
-windows = { workspace = true }
+windows = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 xai-dirs = { workspace = true }

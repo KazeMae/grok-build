@@ -312,7 +312,10 @@ pub async fn run_headless(
     use crate::agent::relay::spawn_relay_connection_with_callback;
     use tokio_util::sync::CancellationToken;
     const HEADLESS_NO_SESSION: &str = "Headless mode requires a grok.com session. \
-        Run `grok login` to sign in, or use `grok agent stdio` for API-key access.";
+        Run `grok-zh login` to sign in, or use `grok-zh agent stdio` for API-key access.";
+
+    // Clean up orphaned upload queue temp files from previous sessions (best-effort).
+    // Uses DEFAULT_MAX_AGE to stay in sync with the upload queue's retry policy.
     xai_file_utils::queue::cleanup_orphaned_uploads(
         &grok_home::grok_home(),
         xai_file_utils::queue::DEFAULT_MAX_AGE,

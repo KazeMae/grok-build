@@ -232,7 +232,7 @@ impl AgentView {
         placements: Vec<crate::scrollback::render::DiagramAffordancePlacement>,
         theme: &Theme,
     ) {
-        use crate::scrollback::blocks::mermaid_content::affordance_row;
+        use crate::scrollback::blocks::mermaid_content::affordance_row_with_locale;
         use ratatui::style::Modifier;
         use unicode_width::UnicodeWidthStr;
 
@@ -244,9 +244,10 @@ impl AgentView {
             } = aff;
             // The transient `rendering…` hint shows only while an on-click render for this diagram is in flight
             let rendering = self.diagram_is_rendering(&source);
-            let row = affordance_row(rendering);
-            // A segment is drawn only if it fits wholly within the row width (which already excludes the timestamp reserve)
-            // Labels never spill past the content area and hit-rects stay inside the row
+            let row = affordance_row_with_locale(rendering, Some(self.scrollback.locale()));
+            // A segment is drawn only if it fits wholly within the row width
+            // (which already excludes the timestamp reserve), so labels never
+            // spill past the content area and hit-rects stay inside the row.
             let fits =
                 |col: u16, label: &str| col + UnicodeWidthStr::width(label) as u16 <= rect.width;
 
@@ -419,10 +420,20 @@ impl AgentView {
     /// The `[Open]` button, the inline-image click target, and the Enter-key handler all route here.
     pub(crate) fn open_media_natively(&mut self, path: &std::path::Path) -> bool {
         if crate::app::link_opener::open_path(path) {
-            self.show_toast("Opening in default app\u{2026}");
+            let message = self
+                .scrollback
+                .locale()
+                .named_static_text("media.toast.opening", "Opening in default app\u{2026}")
+                .to_string();
+            self.show_toast(&message);
             true
         } else {
-            self.show_toast("Could not open file");
+            let message = self
+                .scrollback
+                .locale()
+                .named_static_text("media.toast.open_failed", "Could not open file")
+                .to_string();
+            self.show_toast(&message);
             false
         }
     }
@@ -444,7 +455,12 @@ impl AgentView {
         let path_owned = path.to_path_buf();
         let (tx, rx) = std::sync::mpsc::channel();
         self.video_load_rx = Some(rx);
-        self.show_toast("Loading video\u{2026}");
+        let message = self
+            .scrollback
+            .locale()
+            .named_static_text("media.toast.loading_video", "Loading video\u{2026}")
+            .to_string();
+        self.show_toast(&message);
         std::thread::spawn(move || {
             let result =
                 crate::prompt_images::VideoViewerState::open_from_path(&path_owned).map(|viewer| {
@@ -511,7 +527,12 @@ impl AgentView {
                     tracing::debug!("copy image failed: {e}");
                 }
             });
-            self.show_toast("Copied image");
+            let message = self
+                .scrollback
+                .locale()
+                .named_static_text("media.toast.copied_image", "Copied image")
+                .to_string();
+            self.show_toast(&message);
             return Some(InputOutcome::Changed);
         }
 

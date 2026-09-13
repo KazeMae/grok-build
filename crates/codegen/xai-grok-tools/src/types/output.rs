@@ -594,6 +594,10 @@ impl xai_tool_runtime::ToolOutput for BashToolOutput {
 pub struct SearchToolOutput {
     pub result_count: usize,
     pub content: String,
+    /// Trusted display provenance carried only in the structured tool output.
+    /// `to_prompt_format` continues to expose `content` alone to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_gateway_tools: Option<Vec<crate::types::resources::ManagedGatewayToolIdentity>>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From)]
 #[serde(tag = "type")]
@@ -920,6 +924,9 @@ impl ToolOutput {
                 format!(
                     "{message}\n\n\
                      {plan_status}\n\n\
+                     Write all natural-language plan and task-list content in the same natural language as the user's request. \
+                     If the user's request contains Chinese, or active instructions ask for Chinese, use concise Simplified Chinese and do not translate it into English. \
+                     Preserve code identifiers, tool names, commands, paths, URLs, configuration keys, protocol fields and status values, symbols, product and proper names, and task IDs; keep canonical values such as pending, in_progress, completed, and cancelled verbatim.\n\n\
                      In plan mode, you should:\n\
                      1. Thoroughly explore the codebase to understand existing patterns{task_hint}\n\
                      2. Identify similar features, codebase architecture, and understand trade-offs\n\
@@ -1164,6 +1171,10 @@ pub struct MCPOutput {
     pub is_timeout: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_error: bool,
+    /// Present only when the managed gateway actually handled this call.
+    /// Local MCP results deliberately leave it absent, even on name collisions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    managed_gateway_tool: Option<crate::types::resources::ManagedGatewayToolIdentity>,
     /// Pre-truncation image captures for session harvest (same contract as
     /// [`FileContent::extracted_images`]). Must survive ToolDyn hub
     /// `to_value`/`from_value`; session drains before PostToolUse and ACP.
@@ -1180,6 +1191,7 @@ impl MCPOutput {
             auth_retry_attempted: false,
             is_timeout: false,
             is_error: false,
+            managed_gateway_tool: None,
             extracted_images: Vec::new(),
         }
     }
@@ -1192,6 +1204,7 @@ impl MCPOutput {
             auth_retry_attempted: false,
             is_timeout: false,
             is_error: true,
+            managed_gateway_tool: None,
             extracted_images: Vec::new(),
         }
     }
@@ -1200,6 +1213,38 @@ impl MCPOutput {
     }
     pub fn output_mut(&mut self) -> &mut MCPOutputDetails {
         &mut self.output
+    }
+    pub(crate) fn with_managed_gateway_tool(
+        mut self,
+        identity: crate::types::resources::ManagedGatewayToolIdentity,
+    ) -> Self {
+        self.managed_gateway_tool = Some(identity);
+        self
+    }
+    pub fn managed_gateway_tool(
+        &self,
+    ) -> Option<&crate::types::resources::ManagedGatewayToolIdentity> {
+        self.managed_gateway_tool.as_ref()
+    }
+
+    pub(crate) fn without_managed_gateway_tool(mut self) -> Self {
+        self.managed_gateway_tool = None;
+        self
+    }
+}
+
+impl ToolOutput {
+    /// Remove managed-gateway display provenance from outputs produced by a
+    /// local dispatch path. Only the gateway adapter may add this marker.
+    pub(crate) fn without_managed_gateway_provenance(self) -> Self {
+        match self {
+            Self::MCP(mcp) => Self::MCP(mcp.without_managed_gateway_tool()),
+            Self::SearchTool(mut search) => {
+                search.managed_gateway_tools = None;
+                Self::SearchTool(search)
+            }
+            other => other,
+        }
     }
 }
 impl xai_tool_runtime::ToolOutput for ToolOutput {
@@ -1359,6 +1404,71 @@ mod tests {
     fn to_json(output: ToolOutput) -> serde_json::Value {
         serde_json::to_value(&output).unwrap()
     }
+
+    fn managed_identity() -> crate::types::resources::ManagedGatewayToolIdentity {
+        crate::types::resources::ManagedGatewayToolIdentity {
+            qualified_name: "tasks__list".into(),
+            connector_id: "tasks".into(),
+            tool_id: "list".into(),
+            display_name: "List".into(),
+            description_sha256: "fixture-tasks-list".into(),
+        }
+    }
+
+    #[test]
+    fn managed_search_provenance_is_structured_only_and_prompt_content_is_unchanged() {
+        let content = r#"{"results":[]}"#.to_owned();
+        let output = ToolOutput::SearchTool(SearchToolOutput {
+            result_count: 0,
+            content: content.clone(),
+            managed_gateway_tools: Some(vec![managed_identity()]),
+        });
+
+        assert_eq!(output.to_prompt_format(), content);
+        let json = to_json(output);
+        assert_eq!(
+            json["managed_gateway_tools"][0]["qualified_name"],
+            "tasks__list"
+        );
+        assert!(
+            !json["content"]
+                .as_str()
+                .expect("content string")
+                .contains("managed_gateway_tools")
+        );
+    }
+
+    #[test]
+    fn managed_mcp_provenance_roundtrips_without_changing_prompt_output() {
+        let output = ToolOutput::MCP(
+            MCPOutput::okay_output("tasks__list".into(), "Tasks".into(), "opaque".into())
+                .with_managed_gateway_tool(managed_identity()),
+        );
+        assert_eq!(output.to_prompt_format(), "opaque");
+
+        let json = to_json(output);
+        assert_eq!(
+            json["managed_gateway_tool"]["qualified_name"],
+            "tasks__list"
+        );
+        let back: ToolOutput = serde_json::from_value(json).expect("roundtrip");
+        let ToolOutput::MCP(back) = back else {
+            panic!("expected MCP output");
+        };
+        assert_eq!(back.managed_gateway_tool(), Some(&managed_identity()));
+
+        let legacy: MCPOutput = serde_json::from_value(serde_json::json!({
+            "tool_name": "tasks__list",
+            "server_name": "Tasks",
+            "output": {"OkayOutput": "opaque"},
+            "auth_retry_attempted": false,
+            "is_timeout": false,
+            "is_error": false
+        }))
+        .expect("legacy output without provenance remains replayable");
+        assert!(legacy.managed_gateway_tool().is_none());
+    }
+
     #[test]
     fn mcp_extracted_images_survive_hub_json_roundtrip() {
         let mut mcp = MCPOutput::okay_output(
@@ -2288,6 +2398,10 @@ mod tests {
         assert!(prompt.contains("/tmp/plan.md"));
         assert!(prompt.contains("ask_user_question"));
         assert!(prompt.contains("exit_plan_mode"));
+        assert!(prompt.contains("If the user's request contains Chinese"));
+        assert!(prompt.contains("pending, in_progress, completed, and cancelled"));
+        assert!(prompt.contains("5. Write your plan to the plan file above"));
+        assert!(prompt.contains("present your plan to the user"));
         assert!(
             !prompt.contains("subagent_type"),
             "should not contain subagent guidance without task tool"

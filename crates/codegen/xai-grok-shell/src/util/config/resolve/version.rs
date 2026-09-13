@@ -8,12 +8,14 @@ pub(crate) fn channel_name_from_cache() -> Option<&'static str> {
     use std::sync::OnceLock;
     static NAME: OnceLock<Option<&'static str>> = OnceLock::new();
     *NAME.get_or_init(|| {
-        let version_path = crate::util::grok_home::grok_home().join("version.json");
-        let content = std::fs::read_to_string(&version_path).ok()?;
+        let home = crate::util::grok_home::grok_home();
+        let content = ["version.grok-build-zh.json", "version.json"]
+            .into_iter()
+            .find_map(|name| std::fs::read_to_string(home.join(name)).ok())?;
         let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
         let stable = parsed.get("stable_version")?.as_str()?;
-        let current = semver::Version::parse(xai_grok_version::VERSION).ok()?;
-        let stable_v = semver::Version::parse(stable).ok()?;
+        let current = Version::parse(xai_grok_version::VERSION).ok()?;
+        let stable_v = Version::parse(stable).ok()?;
         if current > stable_v {
             Some("alpha")
         } else {
@@ -482,6 +484,15 @@ mod tests {
         // This is the ordering every updater path depends on
         assert_eq!(
             pol(Some("0.2.100"), Some("0.2.50"), None, None).resolve_target("0.2.200"),
+            None
+        );
+
+        assert_eq!(
+            pol(Some("1.0.1"), None, None, None).resolve_target("1.0.2"),
+            Some("1.0.2".into())
+        );
+        assert_eq!(
+            pol(Some("1.0.2"), None, None, None).resolve_target("1.0.1"),
             None
         );
     }

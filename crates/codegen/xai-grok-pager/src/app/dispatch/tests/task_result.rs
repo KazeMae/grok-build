@@ -191,14 +191,14 @@ fn doctor_planning_opens_refuses_remote_and_rejects_stale_identity() {
         TaskResult::DoctorFixPlanned {
             target: target.clone(),
             result: Ok(crate::app::actions::DoctorPlanningOutcome::RunLocally(
-                "grok doctor fix ssh-wrap".to_owned(),
+                "grok-zh doctor fix ssh-wrap".to_owned(),
             )),
         },
         &mut app,
     );
     assert!(
         last_system_text(&app, id)
-            .contains("On your local computer, run: grok doctor fix ssh-wrap")
+            .contains("On your local computer, run: grok-zh doctor fix ssh-wrap")
     );
 
     app.agents
@@ -901,6 +901,44 @@ fn uninstall_result_notice_is_footer_only_not_row_anchored() {
         n.entry_index, None,
         "uninstall removes the row → footer-only, no stale row checkmark"
     );
+}
+
+#[test]
+fn stale_plugin_uninstall_does_not_unanchor_a_hook_result() {
+    use crate::views::extensions_modal::{ActionResultOrigin, ExtensionsModalState, ExtensionsTab};
+
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    {
+        let mut modal = ExtensionsModalState::new(ExtensionsTab::Hooks);
+        modal.pending_entry_index = Some(4);
+        modal.last_plugins_action = Some(xai_hooks_plugins_types::PluginsAction::Uninstall {
+            plugin_id: "user/ab12/old".into(),
+            confirmed: true,
+        });
+        app.agents.get_mut(&id).unwrap().extensions_modal = Some(modal);
+    }
+
+    dispatch(
+        Action::TaskComplete(TaskResult::HooksActionResult {
+            agent_id: id,
+            result: Ok(xai_hooks_plugins_types::ActionOutcome {
+                status: xai_hooks_plugins_types::OutcomeStatus::Success,
+                message: "Hook disabled.".into(),
+                requires_reload: false,
+                requires_restart: false,
+            }),
+        }),
+        &mut app,
+    );
+
+    let notice = app.agents[&id]
+        .extensions_modal
+        .as_ref()
+        .and_then(|modal| modal.result_notice.as_ref())
+        .expect("hook result notice");
+    assert_eq!(notice.origin, ActionResultOrigin::Hooks);
+    assert_eq!(notice.entry_index, Some(4));
 }
 
 #[test]
@@ -2925,7 +2963,7 @@ fn persist_failed_toast_contains_key_and_error() {
     let toast = read_toast(&app);
     assert!(toast.contains("compact_mode"));
     assert!(toast.contains("permission denied"));
-    assert!(toast.contains('\u{2717}'));
+    assert_toast_glyph(&toast, '\u{2717}');
 }
 
 /// The rollback path must revert BOTH `app.current_ui` AND the thread-local cache.

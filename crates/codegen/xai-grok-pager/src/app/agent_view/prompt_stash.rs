@@ -38,9 +38,6 @@ pub(in crate::app) fn prompt_history_text(text: &str, input_mode: PromptInputMod
     }
 }
 
-/// Top-border caption shown while a draft sits in the stash.
-const STASH_CAPTION: &str = "Stashed";
-
 impl AgentView {
     /// The prompt's top-border caption: the stash label, the `/rename` title, or both joined the way the bottom info line joins its parts.
     pub(super) fn prompt_caption(&self) -> Option<String> {
@@ -49,10 +46,14 @@ impl AgentView {
             .display_name
             .as_deref()
             .map(|s| crate::views::session_title::sanitize_display_text(s).into_owned());
+        let stash_caption = self
+            .scrollback
+            .locale()
+            .named_static_text("prompt.stash.caption", "Stashed");
 
         match (self.prompt_stash.is_some(), title) {
-            (true, Some(title)) => Some(format!("{STASH_CAPTION} · {title}")),
-            (true, None) => Some(STASH_CAPTION.to_owned()),
+            (true, Some(title)) => Some(format!("{stash_caption} · {title}")),
+            (true, None) => Some(stash_caption.to_string()),
             (false, title) => title,
         }
     }
@@ -76,9 +77,15 @@ impl AgentView {
         // The history does not hold it: `Ctrl+S` was the only way back
         self.prompt_stash = Some(entry);
 
-        self.note_stash_change_in_minimal(
-            "Draft stashed. Press the stash key again to restore it.",
-        );
+        let message = self
+            .scrollback
+            .locale()
+            .named_static_text(
+                "prompt.stash.saved",
+                "Draft stashed. Press the stash key again to restore it.",
+            )
+            .to_owned();
+        self.note_stash_change_in_minimal(&message);
     }
 
     /// An explicit stash means "get this out of my way", so the composer drops its `!`/`#` mode too.
@@ -112,7 +119,12 @@ impl AgentView {
         };
 
         self.restore_stash_entry(entry);
-        self.note_stash_change_in_minimal("Stashed draft restored.");
+        let message = self
+            .scrollback
+            .locale()
+            .named_static_text("prompt.stash.restored", "Stashed draft restored.")
+            .to_owned();
+        self.note_stash_change_in_minimal(&message);
     }
 
     /// A browse that commits the stashed draft is a pop: two live copies means the next send restores what the user just sent.
@@ -159,7 +171,12 @@ impl AgentView {
         };
 
         self.restore_stash_entry(entry);
-        self.note_stash_change_in_minimal("Stashed draft restored.");
+        let message = self
+            .scrollback
+            .locale()
+            .named_static_text("prompt.stash.restored", "Stashed draft restored.")
+            .to_owned();
+        self.note_stash_change_in_minimal(&message);
         InputOutcome::Changed
     }
 

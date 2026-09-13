@@ -10,6 +10,7 @@ use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::input::line_editor::{LineEditOutcome, LineEditor};
+use crate::locale::LocaleContext;
 use crate::theme::Theme;
 use crate::views::managed_connectors_wait::WAIT_BACK_SHORTCUT_ID;
 use crate::views::mcps_modal::MCP_SERVERS_REFRESH_KEY;
@@ -20,8 +21,52 @@ use crate::views::modal_window::{
 use crate::views::picker;
 use xai_grok_tools::implementations::skills::types::SkillInfo;
 
+fn extension_static(
+    locale: Option<&LocaleContext>,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
+fn extension_text(locale: Option<&LocaleContext>, id: &str, english: &str) -> String {
+    locale
+        .map(|locale| locale.named_text(id, english).into_owned())
+        .unwrap_or_else(|| english.to_owned())
+}
+
+/// Expand placeholders from the template without scanning inserted values again.
+///
+/// Extension source labels and marketplace metadata may contain text such as
+/// `{count}` or `{author}` literally. Chained `str::replace` calls would treat
+/// those fragments as placeholders belonging to the localized template.
+fn render_extension_template(template: &str, replacements: &[(&str, &str)]) -> String {
+    let mut output = String::with_capacity(template.len());
+    let mut remaining = template;
+    loop {
+        let Some((index, placeholder, value)) = replacements
+            .iter()
+            .filter_map(|(placeholder, value)| {
+                remaining
+                    .find(placeholder)
+                    .map(|index| (index, *placeholder, *value))
+            })
+            .min_by_key(|(index, _, _)| *index)
+        else {
+            output.push_str(remaining);
+            break;
+        };
+        output.push_str(&remaining[..index]);
+        output.push_str(value);
+        remaining = &remaining[index + placeholder.len()..];
+    }
+    output
+}
+
 mod workflows_picker_rows;
-use workflows_picker_rows::build_workflows_picker_rows;
+use workflows_picker_rows::build_workflows_picker_rows_with_locale;
 
 /// Check if a name fuzzy-matches the search query.
 /// Empty query matches everything.
@@ -329,10 +374,36 @@ type GroupedPlugins<'a> = std::collections::BTreeMap<
 
 /// Header count suffix: `1 plugin`, `2 plugins`.
 fn plugin_count_label(n: usize) -> String {
+    plugin_count_label_with_locale(n, None)
+}
+
+fn plugin_count_label_with_locale(n: usize, locale: Option<&LocaleContext>) -> String {
     if n == 1 {
-        "1 plugin".to_string()
+        extension_text(locale, "extensions.count.plugin", "1 plugin")
     } else {
-        format!("{n} plugins")
+        extension_text(locale, "extensions.count.plugins", "{count} plugins")
+            .replace("{count}", &n.to_string())
+    }
+}
+
+fn plugin_group_display_label<'a>(
+    key: &str,
+    label: &'a str,
+    locale: Option<&LocaleContext>,
+) -> std::borrow::Cow<'a, str> {
+    let mapped = match key {
+        "origin:project" => Some(("extensions.group.project", "Project")),
+        "origin:project-claude" => Some(("extensions.group.project_claude", "Project (Claude)")),
+        "origin:user" => Some(("extensions.group.user", "User")),
+        "origin:user-claude" => Some(("extensions.group.user_claude", "User (Claude)")),
+        "origin:direct" => Some(("extensions.group.direct", "Direct installs")),
+        "origin:cli" => Some(("extensions.group.cli", "CLI override")),
+        "origin:config" => Some(("extensions.group.custom_paths", "Custom paths")),
+        _ => None,
+    };
+    match (locale, mapped) {
+        (Some(locale), Some((id, english))) => locale.named_text(id, english),
+        _ => std::borrow::Cow::Borrowed(label),
     }
 }
 
@@ -341,16 +412,20 @@ fn plugin_count_label(n: usize) -> String {
 fn mcp_row_badge(
     server: &crate::views::mcps_modal::McpServerInfo,
     theme: &crate::theme::Theme,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> (String, Option<ratatui::style::Color>) {
     if server.status == crate::views::mcps_modal::McpServerDisplayStatus::BlockedByPolicy
         || server.enabled
     {
         (
-            format!("[{}]", server.status.label()),
+            format!("[{}]", server.status.label_with_locale(locale)),
             Some(server.status.theme_color(theme)),
         )
     } else {
-        ("[disabled]".to_string(), Some(theme.accent_error))
+        (
+            extension_static(locale, "extensions.badge.disabled", "[disabled]").to_string(),
+            Some(theme.accent_error),
+        )
     }
 }
 
@@ -488,13 +563,17 @@ impl ExtensionsTab {
 
     /// Display label for the tab bar.
     pub fn label(self) -> &'static str {
+        self.label_with_locale(None)
+    }
+
+    pub fn label_with_locale(self, locale: Option<&LocaleContext>) -> &'static str {
         match self {
-            Self::Hooks => "Hooks",
-            Self::Plugins => "Plugins",
-            Self::Marketplace => "Marketplace",
-            Self::Skills => "Skills",
-            Self::Workflows => "Workflows",
-            Self::McpServers => "MCP Servers",
+            Self::Hooks => extension_static(locale, "palette.hooks", "Hooks"),
+            Self::Plugins => extension_static(locale, "palette.plugins", "Plugins"),
+            Self::Marketplace => extension_static(locale, "palette.marketplace", "Marketplace"),
+            Self::Skills => extension_static(locale, "palette.skills", "Skills"),
+            Self::Workflows => extension_static(locale, "palette.workflows", "Workflows"),
+            Self::McpServers => extension_static(locale, "palette.mcp_servers", "MCP Servers"),
         }
     }
 
@@ -567,10 +646,14 @@ pub enum StatusFilter {
 
 impl StatusFilter {
     pub fn label(self) -> &'static str {
+        self.label_with_locale(None)
+    }
+
+    pub fn label_with_locale(self, locale: Option<&LocaleContext>) -> &'static str {
         match self {
-            Self::All => "All",
-            Self::Enabled => "Enabled",
-            Self::Disabled => "Disabled",
+            Self::All => extension_static(locale, "extensions.filter.all", "All"),
+            Self::Enabled => extension_static(locale, "extensions.filter.enabled", "Enabled"),
+            Self::Disabled => extension_static(locale, "extensions.filter.disabled", "Disabled"),
         }
     }
 
@@ -1054,10 +1137,20 @@ pub struct ButtonArea {
 pub struct ActionResultNotice {
     /// Full result text (used verbatim for the tab-wide status line).
     pub message: String,
+    /// Identifies the action family so hook-owned fixed strings can be
+    /// localized without rewriting identical plugin/marketplace output.
+    pub origin: ActionResultOrigin,
     /// Row to anchor a badge to; `None` renders a tab-wide status line.
     pub entry_index: Option<usize>,
     /// Remaining animation ticks before auto-dismiss.
     pub ticks_remaining: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionResultOrigin {
+    Hooks,
+    Plugins,
+    Marketplace,
 }
 
 /// How long a result notice stays on screen, in animation ticks (~2.5s at 30fps).
@@ -1344,6 +1437,373 @@ pub fn action_key_cheatsheet_desc(ch: char, desc: &'static str) -> &'static str 
         ActionVerb::EnableDisable.label()
     } else {
         desc
+    }
+}
+
+fn localized_action_desc(locale: Option<&LocaleContext>, desc: &'static str) -> &'static str {
+    let id = match desc {
+        "reload" => "extensions.action.reload",
+        "refresh" => "extensions.action.refresh",
+        "add" => "extensions.action.add",
+        "auth" => "extensions.action.auth",
+        "remove" => "extensions.action.remove",
+        "update" => "extensions.action.update",
+        "install" => "extensions.action.install",
+        "uninstall" => "extensions.action.uninstall",
+        "add source" => "extensions.action.add_source",
+        "remove source" => "extensions.action.remove_source",
+        "filter" => "extensions.action.filter",
+        "enable" => "extensions.action.enable",
+        "disable" => "extensions.action.disable",
+        "enable/disable" => "extensions.action.enable_disable",
+        other => return other,
+    };
+    extension_static(locale, id, desc)
+}
+
+fn localized_field_label<'a>(
+    locale: Option<&LocaleContext>,
+    label: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    let mapped = match label {
+        "path" | "Path" => Some(("extensions.field.path", "path")),
+        "author" => Some(("extensions.field.author", "author")),
+        "tools" => Some(("extensions.field.tools", "tools")),
+        "when to use" => Some(("extensions.field.when_to_use", "when to use")),
+        "description" => Some(("extensions.field.description", "description")),
+        "error" => Some(("extensions.field.error", "error")),
+        "version" => Some(("extensions.field.version", "version")),
+        "category" => Some(("extensions.field.category", "category")),
+        "tags" => Some(("extensions.field.tags", "tags")),
+        "provides" => Some(("extensions.field.provides", "provides")),
+        "status" => Some(("extensions.field.status", "status")),
+        "installed" => Some(("extensions.field.installed", "installed")),
+        "skills" => Some(("extensions.field.skills", "skills")),
+        "commands" => Some(("extensions.field.commands", "commands")),
+        "agents" => Some(("extensions.field.agents", "agents")),
+        "mcp servers" => Some(("extensions.field.mcp_servers", "mcp servers")),
+        "hooks" => Some(("extensions.field.hooks", "hooks")),
+        "lsp servers" => Some(("extensions.field.lsp_servers", "lsp servers")),
+        "Source" => Some(("extensions.form.source", "Source")),
+        "URL / Command" => Some(("extensions.form.url_command", "URL / Command")),
+        "Name" => Some(("extensions.form.name", "Name")),
+        _ => None,
+    };
+    match (locale, mapped) {
+        (Some(locale), Some((id, english))) => locale.named_text(id, english),
+        _ => std::borrow::Cow::Borrowed(label),
+    }
+}
+
+fn localized_pending_text<'a>(
+    locale: Option<&LocaleContext>,
+    text: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    if let Some(name) = text
+        .strip_prefix("Authenticating ")
+        .and_then(|rest| rest.strip_suffix("..."))
+    {
+        return std::borrow::Cow::Owned(
+            extension_text(
+                locale,
+                "extensions.pending.authenticating_server",
+                "Authenticating {server_name}...",
+            )
+            .replace("{server_name}", name),
+        );
+    }
+    let mapped = match text {
+        "Reloading..." => Some(("extensions.pending.reloading", "Reloading...")),
+        "Processing..." => Some(("extensions.pending.processing", "Processing...")),
+        "Updating..." => Some(("extensions.pending.updating", "Updating...")),
+        "authenticating..." => Some(("extensions.pending.authenticating", "authenticating...")),
+        "enabling..." => Some(("extensions.pending.enabling", "enabling...")),
+        "disabling..." => Some(("extensions.pending.disabling", "disabling...")),
+        "adding..." => Some(("extensions.pending.adding", "adding...")),
+        "Adding source..." => Some(("extensions.pending.adding_source", "Adding source...")),
+        "Uninstalling..." => Some(("extensions.pending.uninstalling", "Uninstalling...")),
+        "Installing..." => Some(("extensions.pending.installing", "Installing...")),
+        "removing..." => Some(("extensions.pending.removing", "removing...")),
+        "toggling..." => Some(("extensions.pending.toggling", "toggling...")),
+        _ => None,
+    };
+    match (locale, mapped) {
+        (Some(locale), Some((id, english))) => locale.named_text(id, english),
+        _ => std::borrow::Cow::Borrowed(text),
+    }
+}
+
+fn localized_modal_message(locale: Option<&LocaleContext>, text: &str) -> String {
+    let fixed = match text {
+        "This hook source is enforced by managed policy and cannot be removed." => Some((
+            "extensions.modal.hook_source_managed_policy",
+            "This hook source is enforced by managed policy and cannot be removed.",
+        )),
+        "Only user-added hook directories can be removed here." => Some((
+            "extensions.modal.hook_source_user_only",
+            "Only user-added hook directories can be removed here.",
+        )),
+        _ => None,
+    };
+    if let Some((id, english)) = fixed {
+        return extension_text(locale, id, english);
+    }
+    let dynamic = [
+        (
+            "Cannot remove managed server '",
+            "'",
+            "extensions.modal.managed_server_remove_denied",
+            "Cannot remove managed server '{name}'",
+        ),
+        (
+            "Remove MCP server \"",
+            "\"?",
+            "extensions.modal.remove_mcp_server",
+            "Remove MCP server \"{name}\"?",
+        ),
+        (
+            "Remove hook source \"",
+            "\"?",
+            "extensions.modal.remove_hook_source",
+            "Remove hook source \"{name}\"?",
+        ),
+        (
+            "Uninstall plugin \"",
+            "\"?",
+            "extensions.modal.uninstall_plugin",
+            "Uninstall plugin \"{name}\"?",
+        ),
+        (
+            "Uninstall marketplace plugin \"",
+            "\"?",
+            "extensions.modal.uninstall_marketplace_plugin",
+            "Uninstall marketplace plugin \"{name}\"?",
+        ),
+        (
+            "Remove source \"",
+            "\" and uninstall all its plugins?",
+            "extensions.modal.remove_source_plugins",
+            "Remove source \"{name}\" and uninstall all its plugins?",
+        ),
+    ];
+    for (prefix, suffix, id, english) in dynamic {
+        if let Some(name) = text
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(suffix))
+        {
+            return extension_text(locale, id, english).replace("{name}", name);
+        }
+    }
+    text.to_owned()
+}
+
+fn localized_action_result_message(
+    locale: Option<&LocaleContext>,
+    origin: ActionResultOrigin,
+    text: &str,
+) -> String {
+    if origin != ActionResultOrigin::Hooks {
+        return text.to_owned();
+    }
+    let (first_line, remainder) = text
+        .split_once('\n')
+        .map_or((text, None), |(line, rest)| (line, Some(rest)));
+    let Some(mut localized) = localized_hook_action_result_line(locale, first_line)
+        .or_else(|| localized_hook_toggle_result(locale, first_line))
+    else {
+        return text.to_owned();
+    };
+    if let Some(remainder) = remainder {
+        localized.push('\n');
+        localized.push_str(remainder);
+    }
+    localized
+}
+
+fn localized_hook_action_result_line(locale: Option<&LocaleContext>, text: &str) -> Option<String> {
+    let fixed = match text {
+        "Only user-added hook directories can be removed here." => Some((
+            "extensions.modal.hook_source_user_only",
+            "Only user-added hook directories can be removed here.",
+        )),
+        "This hook is enforced by managed policy and cannot be disabled." => Some((
+            "extensions.result.hook_managed_policy",
+            "This hook is enforced by managed policy and cannot be disabled.",
+        )),
+        "Hook disabled." => Some(("extensions.result.hook_disabled", "Hook disabled.")),
+        "Hook enabled." => Some(("extensions.result.hook_enabled", "Hook enabled.")),
+        "Hook was not disabled." => Some((
+            "extensions.result.hook_not_disabled",
+            "Hook was not disabled.",
+        )),
+        "Hooks reloaded." => Some(("extensions.result.hooks_reloaded", "Hooks reloaded.")),
+        _ => None,
+    };
+    if let Some((id, english)) = fixed {
+        return Some(extension_text(locale, id, english));
+    }
+    let dynamic = [
+        (
+            "Trusted: ",
+            ".",
+            "extensions.result.project_trusted",
+            "Trusted: {value}.",
+        ),
+        (
+            "Untrusted: ",
+            ".",
+            "extensions.result.project_untrusted",
+            "Untrusted: {value}.",
+        ),
+        (
+            "Added hook path: ",
+            ".",
+            "extensions.result.hook_path_added",
+            "Added hook path: {value}.",
+        ),
+        (
+            "Removed hook path: ",
+            ".",
+            "extensions.result.hook_path_removed",
+            "Removed hook path: {value}.",
+        ),
+    ];
+    for (prefix, suffix, id, english) in dynamic {
+        if let Some(value) = text
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(suffix))
+        {
+            return Some(extension_text(locale, id, english).replace("{value}", value));
+        }
+    }
+    None
+}
+
+fn localized_hook_toggle_result(locale: Option<&LocaleContext>, text: &str) -> Option<String> {
+    let (action, rest) = text
+        .strip_prefix("Disabled ")
+        .map(|rest| ("disabled", rest))
+        .or_else(|| text.strip_prefix("Enabled ").map(|rest| ("enabled", rest)))?;
+    let (counts, suffix) = rest.split_once(" hooks")?;
+    let (toggled, total) = counts.split_once('/')?;
+    if toggled.is_empty()
+        || total.is_empty()
+        || !toggled.chars().all(|ch| ch.is_ascii_digit())
+        || !total.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+
+    let (id, english, skipped) = match (action, suffix) {
+        ("disabled", "") => (
+            "extensions.result.hooks_disabled",
+            "Disabled {toggled}/{total} hooks",
+            None,
+        ),
+        ("enabled", "") => (
+            "extensions.result.hooks_enabled",
+            "Enabled {toggled}/{total} hooks",
+            None,
+        ),
+        ("disabled", suffix) => {
+            let skipped = suffix
+                .strip_prefix(" (")?
+                .strip_suffix(" enforced by managed policy, not disabled)")?;
+            if skipped.is_empty() || !skipped.chars().all(|ch| ch.is_ascii_digit()) {
+                return None;
+            }
+            (
+                "extensions.result.hooks_disabled_managed_skipped",
+                "Disabled {toggled}/{total} hooks ({skipped} enforced by managed policy, not disabled)",
+                Some(skipped),
+            )
+        }
+        _ => return None,
+    };
+    let mut localized = extension_text(locale, id, english)
+        .replace("{toggled}", toggled)
+        .replace("{total}", total);
+    if let Some(skipped) = skipped {
+        localized = localized.replace("{skipped}", skipped);
+    }
+    Some(localized)
+}
+
+fn localized_source_display(locale: Option<&LocaleContext>, source: &str) -> String {
+    if locale.is_none() {
+        return source.to_string();
+    }
+    if let Some(name) = source
+        .strip_prefix("Plugin: ")
+        .or_else(|| source.strip_prefix("plugin: "))
+    {
+        return extension_text(locale, "extensions.source.plugin", "Plugin: {name}")
+            .replace("{name}", name);
+    }
+    if let Some(path) = source.strip_prefix("Custom: ") {
+        return extension_text(locale, "extensions.source.custom", "Custom: {path}")
+            .replace("{path}", path);
+    }
+    let mapped = match source {
+        "Global hooks" => Some(("extensions.source.global_hooks", "Global hooks")),
+        "Claude settings" => Some(("extensions.source.claude_settings", "Claude settings")),
+        "Project hooks" => Some(("extensions.source.project_hooks", "Project hooks")),
+        "Project" => Some(("extensions.source.project", "Project")),
+        "User" => Some(("extensions.source.user", "User")),
+        "Bundled" => Some(("extensions.source.bundled", "Bundled")),
+        "Server" => Some(("extensions.source.server", "Server")),
+        "Config" => Some(("extensions.source.config", "Config")),
+        "user" => Some(("extensions.source.user", "user")),
+        "project" => Some(("extensions.source.project", "project")),
+        "builtin" => Some(("extensions.source.builtin", "builtin")),
+        "bundled" => Some(("extensions.source.bundled", "bundled")),
+        "local" => Some(("extensions.source.local", "local")),
+        "managed" => Some(("extensions.source.managed", "managed")),
+        _ => None,
+    };
+    mapped
+        .map(|(id, english)| extension_text(locale, id, english))
+        .unwrap_or_else(|| source.to_string())
+}
+
+fn localized_status_value(locale: Option<&LocaleContext>, status: &str) -> String {
+    let mapped = match status {
+        "installed" => Some(("extensions.status.installed", "installed")),
+        "update_available" => Some(("extensions.status.update_available", "update available")),
+        "not_installed" => Some(("extensions.status.not_installed", "not installed")),
+        _ => None,
+    };
+    mapped
+        .map(|(id, english)| extension_text(locale, id, english))
+        .unwrap_or_else(|| status.to_string())
+}
+
+fn localized_form_placeholder<'a>(
+    locale: Option<&LocaleContext>,
+    placeholder: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    let mapped = match placeholder {
+        "owner/repo, URL, or local path" => Some((
+            "extensions.form.source_placeholder",
+            "owner/repo, URL, or local path",
+        )),
+        "owner/repo, git URL, or local path" => Some((
+            "extensions.form.marketplace_source_placeholder",
+            "owner/repo, git URL, or local path",
+        )),
+        "https://... or command [args...]" => Some((
+            "extensions.form.url_command_placeholder",
+            "https://... or command [args...]",
+        )),
+        "Auto generated by URL" => Some((
+            "extensions.form.auto_name_placeholder",
+            "Auto generated by URL",
+        )),
+        _ => None,
+    };
+    match (locale, mapped) {
+        (Some(locale), Some((id, english))) => locale.named_text(id, english),
+        _ => std::borrow::Cow::Borrowed(placeholder),
     }
 }
 
@@ -2331,7 +2791,27 @@ pub(crate) fn build_mcp_servers_picker_rows(
     collapsed_sections: &std::collections::HashSet<String>,
     tools_expanded: &std::collections::HashSet<usize>,
 ) -> McpServersPickerRows {
-    use crate::views::mcps_modal::{McpSectionId, section_for, section_key, section_label};
+    build_mcp_servers_picker_rows_with_locale(
+        servers,
+        query,
+        filter,
+        collapsed_sections,
+        tools_expanded,
+        None,
+    )
+}
+
+pub(crate) fn build_mcp_servers_picker_rows_with_locale(
+    servers: &[crate::views::mcps_modal::McpServerInfo],
+    query: &str,
+    filter: StatusFilter,
+    collapsed_sections: &std::collections::HashSet<String>,
+    tools_expanded: &std::collections::HashSet<usize>,
+    locale: Option<&LocaleContext>,
+) -> McpServersPickerRows {
+    use crate::views::mcps_modal::{
+        McpSectionId, section_for, section_key, section_label_with_locale,
+    };
 
     let searching = !query.is_empty();
     let mut sections: std::collections::BTreeMap<
@@ -2357,8 +2837,11 @@ pub(crate) fn build_mcp_servers_picker_rows(
         let sec_key = section_key(section_id);
         let section_collapsed =
             mcp_section_children_hidden(collapsed_sections, &sec_key, searching);
-        out.labels
-            .push(section_label(section_id, section_servers.len()));
+        out.labels.push(section_label_with_locale(
+            section_id,
+            section_servers.len(),
+            locale,
+        ));
         out.data_indices.push(None);
         out.group_keys.push(Some(sec_key));
         if section_collapsed {
@@ -2666,27 +3149,79 @@ fn skill_source_str(skill: &SkillInfo) -> String {
 
 /// Build picker fields for an expanded plugin.
 fn build_plugin_fields(plugin: &xai_hooks_plugins_types::PluginInfo) -> Vec<String> {
+    build_plugin_fields_with_locale(plugin, None)
+}
+
+fn build_plugin_fields_with_locale(
+    plugin: &xai_hooks_plugins_types::PluginInfo,
+    locale: Option<&LocaleContext>,
+) -> Vec<String> {
     use xai_hooks_plugins_types::McpStatus;
     let mut components = Vec::new();
     if !plugin.skill_names.is_empty() {
-        components.push(format!("skills: {}", plugin.skill_names.join(", ")));
+        components.push(
+            extension_text(
+                locale,
+                "extensions.components.skills_named",
+                "skills: {names}",
+            )
+            .replace("{names}", &plugin.skill_names.join(", ")),
+        );
     } else if plugin.skill_count > 0 {
-        components.push(format!("{} skills", plugin.skill_count));
+        components.push(
+            extension_text(
+                locale,
+                "extensions.components.skills_count",
+                "{count} skills",
+            )
+            .replace("{count}", &plugin.skill_count.to_string()),
+        );
     }
     if !plugin.agent_names.is_empty() {
-        components.push(format!("agents: {}", plugin.agent_names.join(", ")));
+        components.push(
+            extension_text(
+                locale,
+                "extensions.components.agents_named",
+                "agents: {names}",
+            )
+            .replace("{names}", &plugin.agent_names.join(", ")),
+        );
     } else if plugin.agent_count > 0 {
-        components.push(format!("{} agents", plugin.agent_count));
+        components.push(
+            extension_text(
+                locale,
+                "extensions.components.agents_count",
+                "{count} agents",
+            )
+            .replace("{count}", &plugin.agent_count.to_string()),
+        );
     }
     if plugin.hook_count > 0 {
-        components.push(format!("{} hooks", plugin.hook_count));
+        components.push(
+            extension_text(locale, "extensions.components.hooks_count", "{count} hooks")
+                .replace("{count}", &plugin.hook_count.to_string()),
+        );
     }
     match plugin.mcp_status {
         McpStatus::Active | McpStatus::ActiveInline => {
-            components.push(format!("{} MCP servers", plugin.mcp_server_count));
+            components.push(
+                extension_text(
+                    locale,
+                    "extensions.components.mcp_count",
+                    "{count} MCP servers",
+                )
+                .replace("{count}", &plugin.mcp_server_count.to_string()),
+            );
         }
         McpStatus::Blocked => {
-            components.push(format!("{} MCP: blocked", plugin.mcp_server_count));
+            components.push(
+                extension_text(
+                    locale,
+                    "extensions.components.mcp_blocked",
+                    "{count} MCP: blocked",
+                )
+                .replace("{count}", &plugin.mcp_server_count.to_string()),
+            );
         }
         McpStatus::None => {}
     }
@@ -2720,6 +3255,13 @@ fn component_categories(
 pub(crate) fn render_components_fields(
     components: &xai_hooks_plugins_types::PluginComponents,
 ) -> Vec<(String, String)> {
+    render_components_fields_with_locale(components, None)
+}
+
+fn render_components_fields_with_locale(
+    components: &xai_hooks_plugins_types::PluginComponents,
+    locale: Option<&LocaleContext>,
+) -> Vec<(String, String)> {
     let mut fields = Vec::new();
     for (label, items) in component_categories(components) {
         if items.is_empty() {
@@ -2732,9 +3274,12 @@ pub(crate) fn render_components_fields(
             .collect();
         let mut value = names.join(", ");
         if items.len() > COMPONENT_ITEMS_CAP {
-            value.push_str(&format!(" +{} more", items.len() - COMPONENT_ITEMS_CAP));
+            value.push_str(
+                &extension_text(locale, "extensions.components.more", " +{count} more")
+                    .replace("{count}", &(items.len() - COMPONENT_ITEMS_CAP).to_string()),
+            );
         }
-        fields.push((label.to_string(), value));
+        fields.push((localized_field_label(locale, label).into_owned(), value));
     }
     fields
 }
@@ -2743,10 +3288,34 @@ pub(crate) fn render_components_fields(
 pub(crate) fn marketplace_components_summary(
     plugin: &xai_hooks_plugins_types::MarketplacePluginEntry,
 ) -> Option<String> {
-    plugin
-        .components
-        .as_ref()
-        .and_then(|components| components.summary_line())
+    marketplace_components_summary_with_locale(plugin, None)
+}
+
+fn marketplace_components_summary_with_locale(
+    plugin: &xai_hooks_plugins_types::MarketplacePluginEntry,
+    locale: Option<&LocaleContext>,
+) -> Option<String> {
+    let components = plugin.components.as_ref()?;
+    if !locale.is_some_and(|locale| locale.locale() == crate::locale::UiLocale::ZhCn) {
+        return components.summary_line();
+    }
+    let parts: Vec<String> = component_categories(components)
+        .into_iter()
+        .filter(|(_, items)| !items.is_empty())
+        .map(|(category, items)| {
+            let id = match category {
+                "skills" => "extensions.components.summary.skills",
+                "commands" => "extensions.components.summary.commands",
+                "agents" => "extensions.components.summary.agents",
+                "mcp servers" => "extensions.components.summary.mcp_servers",
+                "hooks" => "extensions.components.summary.hooks",
+                "lsp servers" => "extensions.components.summary.lsp_servers",
+                _ => "extensions.components.summary.items",
+            };
+            extension_text(locale, id, "{count} items").replace("{count}", &items.len().to_string())
+        })
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 // ---------------------------------------------------------------------------
@@ -2763,6 +3332,18 @@ pub fn render_extensions_modal(
     _shortcuts_area: Option<Rect>,
     compact: bool,
     tick: u64,
+) {
+    render_extensions_modal_with_locale(buf, full_area, state, _shortcuts_area, compact, tick, None)
+}
+
+pub fn render_extensions_modal_with_locale(
+    buf: &mut Buffer,
+    full_area: Rect,
+    state: &mut ExtensionsModalState,
+    _shortcuts_area: Option<Rect>,
+    compact: bool,
+    tick: u64,
+    locale: Option<&LocaleContext>,
 ) {
     let theme = Theme::current();
 
@@ -2785,7 +3366,10 @@ pub fn render_extensions_modal(
     }
 
     // Tab labels and active index.
-    let labels: Vec<&str> = ExtensionsTab::ALL.iter().map(|t| t.label()).collect();
+    let labels: Vec<&str> = ExtensionsTab::ALL
+        .iter()
+        .map(|t| t.label_with_locale(locale))
+        .collect();
     let active_idx = ExtensionsTab::ALL
         .iter()
         .position(|t| *t == state.active_tab)
@@ -2856,10 +3440,28 @@ pub fn render_extensions_modal(
                         let collapsed =
                             !searching && state.skills_collapsed_groups.contains(group_label);
                         let count = members.len();
+                        let localized_group = localized_source_display(locale, group_label);
                         entry_labels.push(if count == 1 {
-                            format!("{group_label} (1 skill)")
+                            render_extension_template(
+                                &extension_text(
+                                    locale,
+                                    "extensions.skills.group_count.one",
+                                    "{source} (1 skill)",
+                                ),
+                                &[("{source}", &localized_group)],
+                            )
                         } else {
-                            format!("{group_label} ({count} skills)")
+                            render_extension_template(
+                                &extension_text(
+                                    locale,
+                                    "extensions.skills.group_count.many",
+                                    "{source} ({count} skills)",
+                                ),
+                                &[
+                                    ("{source}", &localized_group),
+                                    ("{count}", &count.to_string()),
+                                ],
+                            )
                         });
                         entry_right_labels.push(String::new());
                         entry_desc_lines.push(vec![]);
@@ -2879,7 +3481,7 @@ pub fn render_extensions_modal(
                         for m in members {
                             let si = m.skill_index;
                             let skill = &skills[si];
-                            let source = skill_source_str(skill);
+                            let source = localized_source_display(locale, &skill_source_str(skill));
                             entry_labels.push(skill.label().to_string());
                             let right = match &skill.author {
                                 Some(a) if !a.is_empty() => format!("({} · {})", source, a),
@@ -2914,7 +3516,14 @@ pub fn render_extensions_modal(
                             entry_data_indices.push(Some(si));
                             entry_group_keys.push(None);
                             if !skill.enabled {
-                                entry_badge_text.push("[disabled]".into());
+                                entry_badge_text.push(
+                                    extension_static(
+                                        locale,
+                                        "extensions.badge.disabled",
+                                        "[disabled]",
+                                    )
+                                    .into(),
+                                );
                                 entry_badge_color.push(Some(theme.accent_error));
                             } else {
                                 entry_badge_text.push(String::new());
@@ -2923,7 +3532,10 @@ pub fn render_extensions_modal(
                         }
                     }
                 } else if let TabDataState::Error(ref msg) = state.skills_data {
-                    entry_labels.push(format!("Error: {}", msg));
+                    entry_labels.push(
+                        extension_text(locale, "extensions.error.prefix", "Error: {error}")
+                            .replace("{error}", msg),
+                    );
                     entry_right_labels.push(String::new());
                     entry_desc_lines.push(vec![]);
                     entry_summary_lines.push(vec![]);
@@ -2939,9 +3551,11 @@ pub fn render_extensions_modal(
             }
             ExtensionsTab::Workflows => {
                 // The builder owns all data states (loaded/empty/error).
-                for row in
-                    build_workflows_picker_rows(&state.workflows_data, state.picker_state.query())
-                {
+                for row in build_workflows_picker_rows_with_locale(
+                    &state.workflows_data,
+                    state.picker_state.query(),
+                    locale,
+                ) {
                     entry_labels.push(row.label);
                     entry_right_labels.push(row.right_label);
                     entry_desc_lines.push(row.desc_lines);
@@ -2987,8 +3601,8 @@ pub fn render_extensions_modal(
                             !searching && state.plugins_collapsed_groups.contains(group_key);
                         entry_labels.push(format!(
                             "{} ({})",
-                            label,
-                            plugin_count_label(plugins.len())
+                            plugin_group_display_label(group_key, label, locale),
+                            plugin_count_label_with_locale(plugins.len(), locale)
                         ));
                         entry_right_labels.push(String::new());
                         entry_desc_lines.push(vec![]);
@@ -3013,7 +3627,7 @@ pub fn render_extensions_modal(
                             entry_labels.push(format!("{}{}", plugin.name, version_str));
                             entry_right_labels.push(String::new());
                             // Build description lines from components.
-                            let components = build_plugin_fields(plugin);
+                            let components = build_plugin_fields_with_locale(plugin, locale);
                             if components.is_empty() {
                                 entry_desc_lines.push(vec![]);
                             } else {
@@ -3035,7 +3649,8 @@ pub fn render_extensions_modal(
                             entry_data_indices.push(Some(pi));
                             entry_group_keys.push(None);
                             entry_badge_text.push(if !plugin.enabled {
-                                "[disabled]".into()
+                                extension_static(locale, "extensions.badge.disabled", "[disabled]")
+                                    .into()
                             } else {
                                 String::new()
                             });
@@ -3047,7 +3662,10 @@ pub fn render_extensions_modal(
                         }
                     }
                 } else if let TabDataState::Error(ref msg) = state.plugins_data {
-                    entry_labels.push(format!("Error: {}", msg));
+                    entry_labels.push(
+                        extension_text(locale, "extensions.error.prefix", "Error: {error}")
+                            .replace("{error}", msg),
+                    );
                     entry_right_labels.push(String::new());
                     entry_desc_lines.push(vec![]);
                     entry_summary_lines.push(vec![]);
@@ -3070,15 +3688,23 @@ pub fn render_extensions_modal(
                     );
                     for group in &groups {
                         let source_dir = group.source_dir;
-                        let label = &group.label;
+                        let label = localized_source_display(locale, &group.label);
                         let indices = &group.indices;
                         // While searching we ignore previous collapse state so every hook inside the group can be seen and matched
                         let searching = !state.picker_state.query().is_empty();
                         let collapsed =
                             !searching && state.hooks_collapsed_groups.contains(source_dir);
-                        let count = indices.len();
-                        let noun = if count == 1 { "hook" } else { "hooks" };
-                        entry_labels.push(format!("{label} ({count} {noun})"));
+                        entry_labels.push(render_extension_template(
+                            &extension_text(
+                                locale,
+                                "extensions.hooks.group_count",
+                                "{source} ({count} hooks)",
+                            ),
+                            &[
+                                ("{source}", &label),
+                                ("{count}", &indices.len().to_string()),
+                            ],
+                        ));
                         entry_right_labels.push(String::new());
                         entry_desc_lines.push(vec![]);
                         entry_summary_lines.push(vec![]);
@@ -3095,11 +3721,26 @@ pub fn render_extensions_modal(
                         }
                         for &hi in indices {
                             let hook = &data.hooks[hi];
-                            entry_labels.push(hook_row_label(hook));
-                            let cmd = hook
-                                .command
+                            let event_str = hook.event.to_string();
+                            let matcher_str = hook
+                                .matcher
                                 .as_deref()
-                                .unwrap_or(hook.url.as_deref().unwrap_or("(no command)"));
+                                .map(|m| format!(" /{m}"))
+                                .unwrap_or_default();
+                            entry_labels.push(format!(
+                                "{}{}{}",
+                                extension_static(locale, "extensions.hook.on_prefix", "on:"),
+                                event_str,
+                                matcher_str
+                            ));
+                            let cmd =
+                                hook.command
+                                    .as_deref()
+                                    .unwrap_or(hook.url.as_deref().unwrap_or(extension_static(
+                                        locale,
+                                        "extensions.hook.no_command",
+                                        "(no command)",
+                                    )));
                             entry_right_labels.push(String::new());
                             entry_desc_lines.push(vec![format!("\u{2192} {}", cmd)]);
                             entry_summary_lines.push(vec![]);
@@ -3109,12 +3750,15 @@ pub fn render_extensions_modal(
                             entry_indent.push(1);
                             entry_data_indices.push(Some(hi));
                             entry_group_keys.push(None);
-                            // Pinned (managed-policy) hooks show their state up front, so a refused Disable isn't the first signal
-                            // A pinned hook never shows [disabled]
+                            // Managed-policy hooks show their immutable state before an
+                            // attempted Disable can be refused. A pinned hook never
+                            // displays the disabled badge.
                             entry_badge_text.push(if hook.pinned {
-                                "[policy]".into()
+                                extension_static(locale, "extensions.badge.policy", "[policy]")
+                                    .into()
                             } else if hook.disabled {
-                                "[disabled]".into()
+                                extension_static(locale, "extensions.badge.disabled", "[disabled]")
+                                    .into()
                             } else {
                                 String::new()
                             });
@@ -3128,7 +3772,10 @@ pub fn render_extensions_modal(
                         }
                     }
                 } else if let TabDataState::Error(ref msg) = state.hooks_data {
-                    entry_labels.push(format!("Error: {}", msg));
+                    entry_labels.push(
+                        extension_text(locale, "extensions.error.prefix", "Error: {error}")
+                            .replace("{error}", msg),
+                    );
                     entry_right_labels.push(String::new());
                     entry_desc_lines.push(vec![]);
                     entry_summary_lines.push(vec![]);
@@ -3155,7 +3802,7 @@ pub fn render_extensions_modal(
                         entry_labels.push(format!(
                             "{} ({})",
                             source.source_name,
-                            plugin_count_label(source.plugins.len())
+                            plugin_count_label_with_locale(source.plugins.len(), locale)
                         ));
                         entry_right_labels.push(String::new());
                         entry_desc_lines.push(vec![]);
@@ -3171,7 +3818,10 @@ pub fn render_extensions_modal(
                         entry_data_indices.push(None);
                         entry_group_keys.push(Some(si.to_string()));
                         if source.error.is_some() {
-                            entry_badge_text.push("[error]".into());
+                            entry_badge_text.push(
+                                extension_static(locale, "extensions.badge.error", "[error]")
+                                    .into(),
+                            );
                             entry_badge_color.push(Some(theme.accent_error));
                         } else {
                             entry_badge_text.push(String::new());
@@ -3186,16 +3836,36 @@ pub fn render_extensions_modal(
                                 continue;
                             }
                             let status_label = match plugin.install_status.as_str() {
-                                "installed" => "[installed]",
-                                "update_available" => "[update available]",
+                                "installed" => extension_static(
+                                    locale,
+                                    "extensions.badge.installed",
+                                    "[installed]",
+                                ),
+                                "update_available" => extension_static(
+                                    locale,
+                                    "extensions.badge.update_available",
+                                    "[update available]",
+                                ),
                                 _ => "",
                             };
                             entry_labels.push(plugin.name.clone());
                             let right = match (plugin.version.as_deref(), plugin.author.as_deref())
                             {
-                                (Some(v), Some(a)) => format!("v{v} by {a}"),
+                                (Some(v), Some(a)) => render_extension_template(
+                                    &extension_text(
+                                        locale,
+                                        "extensions.marketplace.version_author",
+                                        "v{version} by {author}",
+                                    ),
+                                    &[("{version}", v), ("{author}", a)],
+                                ),
                                 (Some(v), None) => format!("v{v}"),
-                                (None, Some(a)) => format!("by {a}"),
+                                (None, Some(a)) => extension_text(
+                                    locale,
+                                    "extensions.marketplace.author",
+                                    "by {author}",
+                                )
+                                .replace("{author}", a),
                                 (None, None) => String::new(),
                             };
                             entry_right_labels.push(right);
@@ -3205,7 +3875,7 @@ pub fn render_extensions_modal(
                             } else {
                                 entry_desc_lines.push(vec![desc.to_string()]);
                             }
-                            match marketplace_components_summary(plugin) {
+                            match marketplace_components_summary_with_locale(plugin, locale) {
                                 Some(summary) => entry_summary_lines.push(vec![summary]),
                                 None => entry_summary_lines.push(vec![]),
                             }
@@ -3225,25 +3895,40 @@ pub fn render_extensions_modal(
                             }
                             match &plugin.components {
                                 Some(components) if !components.is_empty() => {
-                                    fields.extend(render_components_fields(components));
+                                    fields.extend(render_components_fields_with_locale(
+                                        components, locale,
+                                    ));
                                 }
                                 Some(_) => {
                                     fields.push((
                                         "provides".to_string(),
-                                        NO_DETECTABLE_COMPONENTS.to_string(),
+                                        extension_static(
+                                            locale,
+                                            "extensions.components.none_detectable",
+                                            NO_DETECTABLE_COMPONENTS,
+                                        )
+                                        .to_string(),
                                     ));
                                 }
                                 None => {
                                     if plugin.remote_url.is_some() {
                                         fields.push((
                                             "provides".to_string(),
-                                            "contents shown after install".to_string(),
+                                            extension_static(
+                                                locale,
+                                                "extensions.components.after_install",
+                                                "contents shown after install",
+                                            )
+                                            .to_string(),
                                         ));
                                     }
                                 }
                             }
                             if plugin.install_status != "not_installed" {
-                                fields.push(("status".to_string(), plugin.install_status.clone()));
+                                fields.push((
+                                    "status".to_string(),
+                                    localized_status_value(locale, &plugin.install_status),
+                                ));
                                 if let Some(ref iv) = plugin.installed_version {
                                     fields.push(("installed".to_string(), iv.clone()));
                                 }
@@ -3263,7 +3948,10 @@ pub fn render_extensions_modal(
                         }
                     }
                 } else if let TabDataState::Error(ref msg) = state.marketplace_data {
-                    entry_labels.push(format!("Error: {}", msg));
+                    entry_labels.push(
+                        extension_text(locale, "extensions.error.prefix", "Error: {error}")
+                            .replace("{error}", msg),
+                    );
                     entry_right_labels.push(String::new());
                     entry_desc_lines.push(vec![]);
                     entry_summary_lines.push(vec![]);
@@ -3280,8 +3968,9 @@ pub fn render_extensions_modal(
             ExtensionsTab::McpServers => {
                 if let TabDataState::Loaded(ref servers) = state.mcps_data {
                     use crate::views::mcps_modal::{
-                        McpSectionId, McpServerDisplayStatus, section_description_lines,
-                        section_for, section_key, section_label,
+                        McpSectionId, McpServerDisplayStatus,
+                        section_description_lines_with_locale, section_for, section_key,
+                        section_label_with_locale,
                     };
 
                     init_mcps_section_collapse_on_first_load(
@@ -3316,11 +4005,16 @@ pub fn render_extensions_modal(
                             &sec_key,
                             searching,
                         );
-                        entry_labels.push(section_label(section_id, section_servers.len()));
+                        entry_labels.push(section_label_with_locale(
+                            section_id,
+                            section_servers.len(),
+                            locale,
+                        ));
                         entry_right_labels.push(String::new());
-                        entry_desc_lines.push(section_description_lines(
+                        entry_desc_lines.push(section_description_lines_with_locale(
                             section_id,
                             state.session_team_id.as_deref(),
+                            locale,
                         ));
                         entry_summary_lines.push(vec![]);
                         entry_fields.push(vec![]);
@@ -3341,40 +4035,83 @@ pub fn render_extensions_modal(
                                     .clone()
                                     .unwrap_or_else(|| server.name.clone()),
                             );
-                            entry_right_labels.push(format!("({})", server.source));
+                            entry_right_labels.push(format!(
+                                "({})",
+                                localized_source_display(locale, &server.source)
+                            ));
                             // Summary line: name the actual cause of an empty tool list instead of guessing at connection state.
                             if server.tools.is_empty() {
                                 let line =
                                     if server.status == McpServerDisplayStatus::BlockedByPolicy {
                                         // The reason already carries its source in parentheses.
                                         match server.blocked_reason.as_deref() {
-                                            Some(reason) => format!("blocked by policy — {reason}"),
-                                            None => "blocked by policy".to_string(),
+                                            Some(reason) => format!(
+                                                "{} — {reason}",
+                                                extension_static(
+                                                    locale,
+                                                    "extensions.mcp.status.blocked_by_policy",
+                                                    "blocked by policy",
+                                                )
+                                            ),
+                                            None => extension_static(
+                                                locale,
+                                                "extensions.mcp.status.blocked_by_policy",
+                                                "blocked by policy",
+                                            )
+                                            .to_string(),
                                         }
                                     } else if !server.enabled {
-                                        "no tools — server is disabled".to_string()
+                                        extension_static(
+                                            locale,
+                                            "extensions.mcp.no_tools_disabled",
+                                            "no tools — server is disabled",
+                                        )
+                                        .to_string()
                                     } else if matches!(
                                         server.status,
                                         McpServerDisplayStatus::SetupRequired
                                             | McpServerDisplayStatus::NeedsAuth
                                     ) {
-                                        format!("no tools — {}", server.status.label())
+                                        format!(
+                                            "{} — {}",
+                                            extension_static(
+                                                locale,
+                                                "extensions.mcp.no_tools_prefix",
+                                                "no tools",
+                                            ),
+                                            server.status.label_with_locale(locale)
+                                        )
                                     } else {
-                                        "no tools (server may not be connected)".to_string()
+                                        extension_static(
+                                            locale,
+                                            "extensions.mcp.no_tools",
+                                            "no tools (server may not be connected)",
+                                        )
+                                        .to_string()
                                     };
                                 entry_desc_lines.push(vec![line]);
                             } else {
                                 let enabled_count =
                                     server.tools.iter().filter(|t| t.enabled).count();
                                 if enabled_count == server.tools.len() {
-                                    entry_desc_lines
-                                        .push(vec![format!("{} tools", server.tools.len())]);
+                                    entry_desc_lines.push(vec![
+                                        extension_text(
+                                            locale,
+                                            "extensions.mcp.tools_count",
+                                            "{count} tools",
+                                        )
+                                        .replace("{count}", &server.tools.len().to_string()),
+                                    ]);
                                 } else {
-                                    entry_desc_lines.push(vec![format!(
-                                        "{} tools ({} enabled)",
-                                        server.tools.len(),
-                                        enabled_count
-                                    )]);
+                                    entry_desc_lines.push(vec![
+                                        extension_text(
+                                            locale,
+                                            "extensions.mcp.tools_enabled_count",
+                                            "{count} tools ({enabled} enabled)",
+                                        )
+                                        .replace("{count}", &server.tools.len().to_string())
+                                        .replace("{enabled}", &enabled_count.to_string()),
+                                    ]);
                                 }
                             }
                             entry_summary_lines.push(vec![]);
@@ -3385,7 +4122,7 @@ pub fn render_extensions_modal(
                             entry_indent.push(1);
                             entry_data_indices.push(Some(si));
                             entry_group_keys.push(Some(tools_group_key));
-                            let (badge_text, badge_col) = mcp_row_badge(server, &theme);
+                            let (badge_text, badge_col) = mcp_row_badge(server, &theme, locale);
                             entry_badge_text.push(badge_text);
                             entry_badge_color.push(badge_col);
                             if state.mcps_tools_expanded.contains(&si) {
@@ -3408,7 +4145,15 @@ pub fn render_extensions_modal(
                                     entry_data_indices.push(Some(si));
                                     entry_group_keys.push(None);
                                     let tool_badge = if !t.enabled {
-                                        ("[disabled]".to_string(), Some(theme.accent_error))
+                                        (
+                                            extension_static(
+                                                locale,
+                                                "extensions.badge.disabled",
+                                                "[disabled]",
+                                            )
+                                            .to_string(),
+                                            Some(theme.accent_error),
+                                        )
                                     } else {
                                         (String::new(), None)
                                     };
@@ -3419,7 +4164,10 @@ pub fn render_extensions_modal(
                         }
                     }
                 } else if let TabDataState::Error(ref msg) = state.mcps_data {
-                    entry_labels.push(format!("Error: {}", msg));
+                    entry_labels.push(
+                        extension_text(locale, "extensions.error.prefix", "Error: {error}")
+                            .replace("{error}", msg),
+                    );
                     entry_right_labels.push(String::new());
                     entry_desc_lines.push(vec![]);
                     entry_summary_lines.push(vec![]);
@@ -3436,11 +4184,20 @@ pub fn render_extensions_modal(
         }
     }
 
+    // Field labels are display-only; localize them after the stable entry data
+    // and action mappings have been built so grouping/routing keys stay intact.
+    for fields in &mut entry_fields {
+        for (label, _) in fields {
+            *label = localized_field_label(locale, label).into_owned();
+        }
+    }
+
     // Override badge for the entry with an in-flight action.
     if let Some(pending_idx) = state.pending_entry_index
         && let Some(ref pending_text) = state.pending_action
     {
         if let Some(badge) = entry_badge_text.get_mut(pending_idx) {
+            let pending_text = localized_pending_text(locale, pending_text);
             *badge = format!("[{}]", pending_text.trim_end_matches("..."));
         }
         if let Some(color) = entry_badge_color.get_mut(pending_idx) {
@@ -3544,7 +4301,10 @@ pub fn render_extensions_modal(
                 &entry_group_keys,
                 selected,
             );
-            Some((i, format!("{key_str} {verb}")))
+            Some((
+                i,
+                format!("{key_str} {}", localized_action_desc(locale, verb)),
+            ))
         })
         .collect();
 
@@ -3591,17 +4351,21 @@ pub fn render_extensions_modal(
         // Input-mode is handled below; it owns its own footer.
     } else if state.mcp_setup.is_some() {
         shortcuts.push(Shortcut {
-            label: "Enter save and authenticate",
+            label: extension_static(
+                locale,
+                "extensions.shortcut.save_auth",
+                "Enter save and authenticate",
+            ),
             clickable: false,
             id: 0,
         });
         shortcuts.push(Shortcut {
-            label: "↑/↓ select",
+            label: extension_static(locale, "extensions.shortcut.select", "↑/↓ select"),
             clickable: false,
             id: 0,
         });
         shortcuts.push(Shortcut {
-            label: "Esc cancel",
+            label: extension_static(locale, "extensions.shortcut.cancel", "Esc cancel"),
             clickable: false,
             id: 0,
         });
@@ -3609,21 +4373,21 @@ pub fn render_extensions_modal(
         // "Add"/input mode: show the keys the input form actually handles
         // Tab is either path completion (single-field) or field navigation (multi-field)
         shortcuts.push(Shortcut {
-            label: "Enter submit",
+            label: extension_static(locale, "extensions.shortcut.submit", "Enter submit"),
             clickable: false,
             id: 0,
         });
         shortcuts.push(Shortcut {
             label: if input.is_multi_field() {
-                "Tab/Shift+Tab field"
+                extension_static(locale, "extensions.shortcut.field", "Tab/Shift+Tab field")
             } else {
-                "Tab complete"
+                extension_static(locale, "extensions.shortcut.complete", "Tab complete")
             },
             clickable: false,
             id: 0,
         });
         shortcuts.push(Shortcut {
-            label: "Esc cancel",
+            label: extension_static(locale, "extensions.shortcut.cancel", "Esc cancel"),
             clickable: false,
             id: 0,
         });
@@ -3631,7 +4395,7 @@ pub fn render_extensions_modal(
         // Tab/Shift+Tab cycles tabs (handled in picker.rs). Click on the hint cycles to the next tab only
         // (sentinel id 98, dispatched in `handle_extensions_modal_mouse`).
         shortcuts.push(Shortcut {
-            label: "Tab tabs",
+            label: extension_static(locale, "extensions.shortcut.tabs", "Tab tabs"),
             clickable: true,
             id: 98,
         });
@@ -3644,7 +4408,11 @@ pub fn render_extensions_modal(
         }
         if state.active_tab == ExtensionsTab::McpServers {
             shortcuts.push(Shortcut {
-                label: MCP_SERVERS_OPEN_CONNECTORS_FOOTER,
+                label: extension_static(
+                    locale,
+                    "extensions.shortcut.open_connectors",
+                    MCP_SERVERS_OPEN_CONNECTORS_FOOTER,
+                ),
                 clickable: false,
                 id: 0,
             });
@@ -3653,7 +4421,7 @@ pub fn render_extensions_modal(
         // The hint is omitted from the footer to save space; the cheatsheet still lists it
         // ID 99 is the close action, handled in the mouse handler
         shortcuts.push(Shortcut {
-            label: "Esc close",
+            label: extension_static(locale, "extensions.shortcut.close", "Esc close"),
             clickable: true,
             id: 99,
         });
@@ -3663,10 +4431,13 @@ pub fn render_extensions_modal(
             .iter()
             .any(|&(ch, _)| ch == 'i');
         if !i_is_action_key {
-            modal_window::push_vim_nav_search_hint(
-                &mut shortcuts,
-                state.picker_state.search_active,
-            );
+            if !state.picker_state.search_active && crate::appearance::cache::load_vim_mode() {
+                shortcuts.push(Shortcut {
+                    label: extension_static(locale, "extensions.shortcut.search", "i search"),
+                    clickable: false,
+                    id: 0,
+                });
+            }
         }
     }
 
@@ -3710,7 +4481,7 @@ pub fn render_extensions_modal(
     if !in_input_mode {
         // Search bar at top of content area.
         let search_active_render = state.picker_state.search_active;
-        picker::render_picker_search_bar(
+        picker::render_picker_search_bar_with_locale(
             buf,
             content_area.x,
             content_area.y,
@@ -3720,6 +4491,7 @@ pub fn render_extensions_modal(
             search_active_render,
             true, // show_search_hint
             Some(theme.bg_base),
+            locale,
         );
     }
 
@@ -3731,7 +4503,7 @@ pub fn render_extensions_modal(
             content_area.y,
             search_width,
             &theme,
-            filter.label(),
+            filter.label_with_locale(locale),
             "f",
             filter != StatusFilter::All,
             state.picker_state.filter_hovered,
@@ -3839,7 +4611,7 @@ pub fn render_extensions_modal(
         state.picker_state.link_band = None;
         (Vec::new(), Vec::new())
     } else {
-        let content_hit = picker::render_picker_content_with_scrollbar_x(
+        let content_hit = picker::render_picker_content_with_scrollbar_x_and_locale(
             buf,
             entries_area,
             &theme,
@@ -3851,6 +4623,7 @@ pub fn render_extensions_modal(
             loading,
             tick,
             inner_x + inner_width - 1,
+            locale,
         );
         (content_hit.item_rects, content_hit.entry_indices)
     };
@@ -3878,14 +4651,14 @@ pub fn render_extensions_modal(
         let form_height = entries_area.height;
         if form_height > 0 {
             let form_area = Rect::new(content_area.x, form_y, content_area.width, form_height);
-            render_mcp_setup_form(buf, form_area, setup, &theme);
+            render_mcp_setup_form_with_locale(buf, form_area, setup, &theme, locale);
         }
     } else if let Some(ref input) = state.input {
         let form_y = entries_start_y;
         let form_height = entries_area.height;
         if form_height > 0 {
             let form_area = Rect::new(content_area.x, form_y, content_area.width, form_height);
-            render_input_form(buf, form_area, input, &theme);
+            render_input_form_with_locale(buf, form_area, input, &theme, locale);
         }
     }
 
@@ -3899,7 +4672,10 @@ pub fn render_extensions_modal(
             popup_rect.y + popup_rect.height.saturating_sub(1),
         )
     {
-        let label = state.pending_action.as_deref().unwrap_or("Processing...");
+        let label = localized_pending_text(
+            locale,
+            state.pending_action.as_deref().unwrap_or("Processing..."),
+        );
         let frames = crate::glyphs::braille_spinner_frames();
         let frame_idx = (tick / SPINNER_DIVISOR) as usize % frames.len();
         let display = format!("{} {label}", frames[frame_idx]);
@@ -3920,11 +4696,15 @@ pub fn render_extensions_modal(
     }
     // Stop the overlay above the footer so the dismissal hint we render into the footer below
     // stays visible. Applies to errors, info, and confirmations.
-    let overlay_text: Option<(&str, ratatui::style::Color)> = match &state.modal_message {
-        Some(ModalMessage::Error(e)) => Some((e.as_str(), theme.accent_error)),
-        Some(ModalMessage::Info(m)) => Some((m.as_str(), theme.text_secondary)),
+    let overlay_text: Option<(String, ratatui::style::Color)> = match &state.modal_message {
+        Some(ModalMessage::Error(e)) => {
+            Some((localized_modal_message(locale, e), theme.accent_error))
+        }
+        Some(ModalMessage::Info(m)) => {
+            Some((localized_modal_message(locale, m), theme.text_secondary))
+        }
         Some(ModalMessage::Confirmation { message, .. }) => {
-            Some((message.as_str(), theme.accent_tool))
+            Some((localized_modal_message(locale, message), theme.accent_tool))
         }
         None => None,
     };
@@ -3936,7 +4716,7 @@ pub fn render_extensions_modal(
         let text_style = Style::reset().fg(fg).bg(theme.bg_base);
         let pad = 2u16;
         let max_w = msg_area.width.saturating_sub(pad * 2) as usize;
-        let wrapped_lines: Vec<&str> = word_wrap(text, max_w);
+        let wrapped_lines: Vec<&str> = word_wrap(&text, max_w);
         let msg_height = wrapped_lines.len().min(msg_area.height as usize);
         let msg_y = msg_area.y + (msg_area.height.saturating_sub(msg_height as u16)) / 2;
         // Centered: left-aligned overlay text reads poorly.
@@ -3950,8 +4730,20 @@ pub fn render_extensions_modal(
     // Custom render (not via Shortcut) is needed because dismissal keys ("any key") are multi-word.
     if let Some(kind) = modal_msg_kind {
         let segments: &[(&str, &str)] = match kind {
-            ModalMsgKind::Error => &[("any key", " back")],
-            ModalMsgKind::Confirm => &[("y", " confirm"), ("any other key", " cancel")],
+            ModalMsgKind::Error => &[(
+                extension_static(locale, "extensions.shortcut.any_key", "any key"),
+                extension_static(locale, "extensions.shortcut.back_suffix", " back"),
+            )],
+            ModalMsgKind::Confirm => &[
+                (
+                    "y",
+                    extension_static(locale, "extensions.shortcut.confirm_suffix", " confirm"),
+                ),
+                (
+                    extension_static(locale, "extensions.shortcut.any_other_key", "any other key"),
+                    extension_static(locale, "extensions.shortcut.cancel_suffix", " cancel"),
+                ),
+            ],
             ModalMsgKind::ConnectorsWait => &[],
         };
         if !segments.is_empty() {
@@ -3962,7 +4754,11 @@ pub fn render_extensions_modal(
     {
         // Result status line (per-row and tab-wide): a non-covering success line in the footer so the list stays visible above it
         // Auto-expires; the per-row case also gets a "✓" on its row
-        let text = n.message.lines().next().unwrap_or(n.message.as_str());
+        let localized_message = localized_action_result_message(locale, n.origin, &n.message);
+        let text = localized_message
+            .lines()
+            .next()
+            .unwrap_or(localized_message.as_str());
         let avail = footer_area.width.saturating_sub(2) as usize;
         let shown: String = if UnicodeWidthStr::width(text) > avail {
             // Truncate by display width (file convention) so wide chars can't overflow the footer, then add an ellipsis
@@ -4004,6 +4800,16 @@ pub fn render_extensions_modal(
 }
 
 fn render_mcp_setup_form(buf: &mut Buffer, area: Rect, setup: &McpSetupFormState, theme: &Theme) {
+    render_mcp_setup_form_with_locale(buf, area, setup, theme, None)
+}
+
+fn render_mcp_setup_form_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    setup: &McpSetupFormState,
+    theme: &Theme,
+    locale: Option<&LocaleContext>,
+) {
     if area.height < 6 || area.width < 20 {
         return;
     }
@@ -4012,7 +4818,11 @@ fn render_mcp_setup_form(buf: &mut Buffer, area: Rect, setup: &McpSetupFormState
     let w = area.width.saturating_sub(h_inset * 2);
     let rows = (setup.field.options.len() as u16).saturating_add(4);
     let top = area.y + area.height.saturating_sub(rows) / 2;
-    let title = format!("{} · {}", setup.server_name, setup.field.label);
+    let title = format!(
+        "{} · {}",
+        setup.server_name,
+        localized_field_label(locale, &setup.field.label)
+    );
     buf.set_string(
         x,
         top,
@@ -4022,7 +4832,11 @@ fn render_mcp_setup_form(buf: &mut Buffer, area: Rect, setup: &McpSetupFormState
             .bg(theme.bg_base)
             .add_modifier(Modifier::BOLD),
     );
-    let hint = "Save and authenticate";
+    let hint = extension_static(
+        locale,
+        "extensions.form.save_authenticate",
+        "Save and authenticate",
+    );
     buf.set_string(
         x,
         top.saturating_add(1),
@@ -4049,10 +4863,15 @@ fn render_mcp_setup_form(buf: &mut Buffer, area: Rect, setup: &McpSetupFormState
     }
     if let Some(ref err) = setup.error {
         let y = area.y + area.height.saturating_sub(1);
+        let display_error = if err == "Select an option" {
+            extension_static(locale, "extensions.form.select_option", "Select an option")
+        } else {
+            err
+        };
         buf.set_string(
             x,
             y,
-            take_by_width(err, w as usize),
+            take_by_width(display_error, w as usize),
             Style::default().fg(theme.accent_error).bg(theme.bg_base),
         );
     }
@@ -4121,6 +4940,16 @@ fn render_footer_hint_segments(
 /// border around the input row, mirroring the prompt input chrome. Labels sit above the bordered
 /// row so they remain visible. Layout (stacked, one field shown).
 fn render_input_form(buf: &mut Buffer, area: Rect, input: &ModalInput, theme: &Theme) {
+    render_input_form_with_locale(buf, area, input, theme, None)
+}
+
+fn render_input_form_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    input: &ModalInput,
+    theme: &Theme,
+    locale: Option<&LocaleContext>,
+) {
     if area.height < 4 || area.width < 20 {
         return;
     }
@@ -4173,7 +5002,8 @@ fn render_input_form(buf: &mut Buffer, area: Rect, input: &ModalInput, theme: &T
         } else {
             label_dim_style
         };
-        buf.set_string(label_x, cur_y, field.label(), ls);
+        let field_label = localized_field_label(locale, field.label());
+        buf.set_string(label_x, cur_y, field_label.as_ref(), ls);
         cur_y += 1;
 
         // Rows 2-4: Rounded border around the single-line input.
@@ -4211,7 +5041,8 @@ fn render_input_form(buf: &mut Buffer, area: Rect, input: &ModalInput, theme: &T
             // Placeholder only renders when the field is NOT focused
             // This matches the prompt widget convention so the cursor isn't overlapping placeholder text on the active row
             if !is_focused && let Some(ph) = field.placeholder() {
-                let display: String = take_by_width(ph, max_text_w);
+                let placeholder = localized_form_placeholder(locale, ph);
+                let display: String = take_by_width(placeholder.as_ref(), max_text_w);
                 buf.set_string(text_x, content_y, &display, placeholder_style);
             }
             if is_focused && let Some(cell) = buf.cell_mut((text_x, content_y)) {
@@ -4245,7 +5076,13 @@ fn render_input_form(buf: &mut Buffer, area: Rect, input: &ModalInput, theme: &T
         cur_y += 1;
         if cur_y < area.y + area.height {
             let error_style = Style::default().fg(theme.accent_error).bg(theme.bg_base);
-            let display = take_by_width(err, box_w.saturating_sub(2) as usize);
+            let localized_error = if let Some(fields) = err.strip_prefix("Required: ") {
+                extension_text(locale, "extensions.form.required", "Required: {fields}")
+                    .replace("{fields}", fields)
+            } else {
+                err.clone()
+            };
+            let display = take_by_width(&localized_error, box_w.saturating_sub(2) as usize);
             buf.set_string(label_x, cur_y, &display, error_style);
         }
     }
@@ -4255,6 +5092,24 @@ fn render_input_form(buf: &mut Buffer, area: Rect, input: &ModalInput, theme: &T
 mod tests {
     use super::*;
     use crossterm::event::KeyModifiers;
+
+    #[test]
+    fn extension_template_does_not_replace_placeholder_text_inside_dynamic_values() {
+        assert_eq!(
+            render_extension_template(
+                "{source} ({count} hooks)",
+                &[("{source}", "Custom: /tmp/{count}"), ("{count}", "7")],
+            ),
+            "Custom: /tmp/{count} (7 hooks)"
+        );
+        assert_eq!(
+            render_extension_template(
+                "v{version} by {author}",
+                &[("{version}", "1.0-{author}"), ("{author}", "alice")],
+            ),
+            "v1.0-{author} by alice"
+        );
+    }
 
     #[test]
     fn derive_source_label_detects_project_scoped_plugins() {
@@ -6582,6 +7437,7 @@ mod tests {
         let mut state = ExtensionsModalState::new(ExtensionsTab::Plugins);
         state.result_notice = Some(ActionResultNotice {
             message: "x: updated".into(),
+            origin: ActionResultOrigin::Plugins,
             entry_index: Some(0),
             ticks_remaining: 2,
         });
@@ -7965,6 +8821,112 @@ mod tests {
         assert_eq!(
             labels,
             ["on:Notification", "on:Pre-Tool Use /Bash", "on:Stop"]
+        );
+    }
+
+    #[test]
+    fn zh_localization_skill_source_groups_cover_all_builtin_scopes() {
+        let locale = LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        let labels = ["Project", "User", "Bundled", "Server", "Config"]
+            .map(|source| localized_source_display(Some(&locale), source));
+        assert_eq!(labels, ["项目", "用户", "随附", "服务器", "配置"]);
+    }
+
+    #[test]
+    fn zh_localization_covers_new_hook_policy_and_result_messages_only() {
+        let locale = LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        assert_eq!(
+            localized_modal_message(
+                Some(&locale),
+                "This hook source is enforced by managed policy and cannot be removed."
+            ),
+            "此钩子源由托管策略强制执行，无法移除。"
+        );
+        assert_eq!(
+            localized_action_result_message(
+                Some(&locale),
+                ActionResultOrigin::Hooks,
+                "Hook disabled."
+            ),
+            "已禁用钩子。"
+        );
+        assert_eq!(
+            localized_action_result_message(
+                Some(&locale),
+                ActionResultOrigin::Hooks,
+                "Disabled 2/3 hooks (1 enforced by managed policy, not disabled)"
+            ),
+            "已禁用 2/3 个钩子（1 个由托管策略强制启用，未禁用）"
+        );
+        assert_eq!(
+            localized_action_result_message(
+                Some(&locale),
+                ActionResultOrigin::Hooks,
+                "Hooks reloaded.\nLoaded 3 hooks."
+            ),
+            "钩子已重新加载。\nLoaded 3 hooks."
+        );
+        assert_eq!(
+            localized_action_result_message(
+                Some(&locale),
+                ActionResultOrigin::Hooks,
+                "Added hook path: /tmp/my-hooks.\nLoaded 3 hooks."
+            ),
+            "已添加钩子路径：/tmp/my-hooks。\nLoaded 3 hooks."
+        );
+        assert_eq!(
+            localized_action_result_message(
+                Some(&locale),
+                ActionResultOrigin::Hooks,
+                "Trusted: /tmp/project.\nLoaded 3 hooks."
+            ),
+            "已信任：/tmp/project。\nLoaded 3 hooks."
+        );
+        assert_eq!(
+            localized_action_result_message(
+                Some(&locale),
+                ActionResultOrigin::Hooks,
+                "Untrusted: /tmp/project.\nLoaded 3 hooks."
+            ),
+            "已取消信任：/tmp/project。\nLoaded 3 hooks."
+        );
+        assert_eq!(
+            localized_action_result_message(
+                Some(&locale),
+                ActionResultOrigin::Hooks,
+                "Removed hook path: /tmp/my-hooks.\nLoaded 3 hooks."
+            ),
+            "已移除钩子路径：/tmp/my-hooks。\nLoaded 3 hooks."
+        );
+        let english = LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::EnUs,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        assert_eq!(
+            localized_action_result_message(
+                Some(&english),
+                ActionResultOrigin::Hooks,
+                "Trusted: /tmp/project.\nLoaded 3 hooks."
+            ),
+            "Trusted: /tmp/project.\nLoaded 3 hooks."
+        );
+        assert_eq!(
+            localized_modal_message(Some(&locale), "opaque extension error"),
+            "opaque extension error"
+        );
+        assert_eq!(
+            localized_action_result_message(
+                Some(&locale),
+                ActionResultOrigin::Plugins,
+                "Hook disabled."
+            ),
+            "Hook disabled."
         );
     }
 }

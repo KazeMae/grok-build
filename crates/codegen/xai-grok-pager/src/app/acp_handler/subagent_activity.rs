@@ -43,9 +43,17 @@ pub(super) fn sync_subagent_activity(
 /// Resolve a subagent child view's live activity into the display label [`sync_subagent_activity`] stamps.
 /// A child that is busy between activities shows "Waiting".
 pub(super) fn subagent_activity_label(child_view: &AgentView) -> Option<String> {
+    let locale = child_view.scrollback.locale();
     match child_view.resolve_turn_activity() {
-        Some(a) => Some(crate::app::subagent::format_activity_label(&a)),
-        None if child_view.session.state.is_busy() => Some("Waiting".to_string()),
+        Some(a) => Some(crate::app::subagent::format_activity_label_with_locale(
+            &a,
+            Some(locale),
+        )),
+        None if child_view.session.state.is_busy() => Some(
+            locale
+                .named_static_text("turn.activity.waiting", "Waiting")
+                .to_string(),
+        ),
         None => None,
     }
 }

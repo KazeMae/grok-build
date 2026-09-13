@@ -27,6 +27,39 @@ use crate::app::agent_view::McpInitProgress;
 use crate::render::line_utils::truncate_str;
 use crate::theme::Theme;
 
+fn turn_text<'a>(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    locale
+        .map(|locale| locale.named_text(id, english))
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed(english))
+}
+
+fn turn_static_text(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
+fn turn_format(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &str,
+    arguments: &[(&str, String)],
+) -> String {
+    let mut output = turn_text(locale, id, english).into_owned();
+    for (name, value) in arguments {
+        output = output.replace(&format!("{{{name}}}"), value);
+    }
+    output
+}
+
 /// Show each spinner frame for this many animation ticks.
 /// At ~30fps, 4 ticks is ~133ms per frame, about 7.5 spinner fps.
 pub(crate) const SPINNER_DIVISOR: u64 = 4;
@@ -109,8 +142,16 @@ impl Watchers {
 pub(crate) fn format_still_running<'a>(
     kinds: impl IntoIterator<Item = (usize, &'a str)>,
 ) -> Option<String> {
+    format_still_running_with_locale(kinds, None)
+}
+
+pub(crate) fn format_still_running_with_locale<'a>(
+    kinds: impl IntoIterator<Item = (usize, &'a str)>,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> Option<String> {
     use std::fmt::Write as _;
     let mut label = String::with_capacity(48);
+    let is_zh = locale.is_some_and(|locale| locale.locale() == crate::locale::UiLocale::ZhCn);
     for (count, noun) in kinds {
         if count == 0 {
             continue;
@@ -118,26 +159,52 @@ pub(crate) fn format_still_running<'a>(
         if !label.is_empty() {
             label.push_str(" \u{00b7} ");
         }
-        let plural = if count == 1 { "" } else { "s" };
-        let _ = write!(label, "{count} {noun}{plural}");
+        if is_zh {
+            let noun = match noun {
+                "command" => turn_static_text(locale, "turn.watcher.command", "command"),
+                "monitor" => turn_static_text(locale, "turn.watcher.monitor", "monitor"),
+                "loop" => turn_static_text(locale, "turn.watcher.loop", "loop"),
+                "task" => turn_static_text(locale, "turn.watcher.task", "task"),
+                "subagent" => turn_static_text(locale, "turn.watcher.subagent", "subagent"),
+                "workflow" => turn_static_text(locale, "turn.watcher.workflow", "workflow"),
+                other => other,
+            };
+            let _ = write!(label, "{count} 个{noun}");
+        } else {
+            let plural = if count == 1 { "" } else { "s" };
+            let _ = write!(label, "{count} {noun}{plural}");
+        }
     }
     if label.is_empty() {
         return None;
     }
-    label.push_str(" still running");
+    label.push_str(turn_static_text(
+        locale,
+        "turn.watcher.still_running",
+        " still running",
+    ));
     Some(label)
 }
 
-/// The idle watcher cue's label, e.g. `"1 command · 2 monitors · 1 loop · 1 subagent still running"`; `None` when no watchers are live.
-/// It leads with the counts (not an ambient "watching") so a glance under a "Worked for X" marker still reads as unfinished work.
-fn still_running_label(watchers: Watchers) -> Option<String> {
-    format_still_running([
-        (watchers.commands, "command"),
-        (watchers.monitors, "monitor"),
-        (watchers.loops, "loop"),
-        (watchers.subagents, "subagent"),
-        (watchers.workflows, "workflow"),
-    ])
+/// The idle watcher cue's label — e.g.
+/// `"1 command · 2 monitors · 1 loop · 1 subagent still running"`. Leads
+/// with the counts (not an ambient "watching") so a glance under a
+/// "Worked for X" marker still reads as unfinished work. `None` when no
+/// watchers are live.
+fn still_running_label(
+    watchers: Watchers,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> Option<String> {
+    format_still_running_with_locale(
+        [
+            (watchers.commands, "command"),
+            (watchers.monitors, "monitor"),
+            (watchers.loops, "loop"),
+            (watchers.subagents, "subagent"),
+            (watchers.workflows, "workflow"),
+        ],
+        locale,
+    )
 }
 
 /// Whether the turn is blocked in a wait the shell aborts as soon as the user sends a message.
@@ -179,6 +246,7 @@ pub struct TurnStatusArgs<'a> {
     pub flat_background: bool,
     pub held_queue: usize,
     pub held_queue_top_sendable: bool,
+    pub locale: Option<&'a crate::locale::LocaleContext>,
 }
 
 /// Render the turn status line into the given area.
@@ -208,6 +276,7 @@ pub fn render_turn_status(
         flat_background,
         held_queue,
         held_queue_top_sendable,
+        locale,
     } = args;
     // Resolve the mouse affordances: a keyboard-only host (`None`) suppresses both buttons and reports no hover
     let show_buttons = buttons.is_some();
@@ -228,7 +297,7 @@ pub fn render_turn_status(
         && progress.total == 0
         && progress.is_visible()
     {
-        render_starting_session(buf, area, progress, tick, &theme);
+        render_starting_session(buf, area, progress, tick, &theme, locale);
         return TurnStatusOutput::default();
     }
 
@@ -242,7 +311,12 @@ pub fn render_turn_status(
                 Style::default().fg(diamond_color),
             ),
             Span::styled(
-                "agent idle ~ waiting on your edit",
+                turn_text(
+                    locale,
+                    "turn.idle_waiting_edit",
+                    "agent idle ~ waiting on your edit",
+                )
+                .into_owned(),
                 Style::default().fg(theme.gray),
             ),
         ];
@@ -256,16 +330,34 @@ pub fn render_turn_status(
     if state.is_idle() || parked {
         // Parked with held queued rows: the queued hint says what Enter does (act on the queue now), so it replaces the generic interrupt copy
         let parked_suffix = if held_queue > 0 && held_queue_top_sendable {
-            format!(" \u{00b7} {held_queue} queued, Enter to send now")
+            turn_format(
+                locale,
+                "turn.queue.send_now",
+                " \u{00b7} {count} queued, Enter to send now",
+                &[("count", held_queue.to_string())],
+            )
         } else if held_queue > 0 {
-            format!(" \u{00b7} {held_queue} queued")
+            turn_format(
+                locale,
+                "turn.queue.queued",
+                " \u{00b7} {count} queued",
+                &[("count", held_queue.to_string())],
+            )
         } else {
-            " \u{00b7} send a message to interrupt".to_string()
+            turn_text(
+                locale,
+                "turn.send_message_interrupt",
+                " \u{00b7} send a message to interrupt",
+            )
+            .into_owned()
         };
-        let cue = match (still_running_label(watchers), parked) {
+        let cue = match (still_running_label(watchers, locale), parked) {
             (Some(label), true) => Some(format!("{label}{parked_suffix}")),
             (Some(label), false) => Some(label),
-            (None, true) => Some(format!("waiting{parked_suffix}")),
+            (None, true) => Some(format!(
+                "{}{parked_suffix}",
+                turn_static_text(locale, "turn.waiting", "waiting")
+            )),
             (None, false) => None,
         };
         if let Some(cue) = cue {
@@ -307,8 +399,14 @@ pub fn render_turn_status(
         );
 
     // ── Compute activity style and label ──
-    let (activity_style, label, is_tool) =
-        compute_activity(&theme, state, activity, is_bash_turn, goal_verifying);
+    let (activity_style, label, is_tool) = compute_activity(
+        &theme,
+        state,
+        activity,
+        is_bash_turn,
+        goal_verifying,
+        locale,
+    );
 
     // Early return for idle (shouldn't happen if should_show is respected, but be safe).
     if matches!(state, AgentState::Idle) {
@@ -341,7 +439,7 @@ pub fn render_turn_status(
         );
     let bg_str = if show_bg {
         if bg_hovered {
-            " [send to bg]"
+            turn_static_text(locale, "turn.button.send_to_background", " [send to bg]")
         } else {
             " [\u{2193}]"
         }
@@ -355,8 +453,8 @@ pub fn render_turn_status(
     // Hover state is conveyed by color (red on hover, see `cancel_style`), not by swapping the label
     let cancel_str: &str = match (show_cancel, show_bg) {
         (false, _) => "",
-        (true, true) => "[stop]",
-        (true, false) => " [stop]",
+        (true, true) => turn_static_text(locale, "turn.button.stop", "[stop]"),
+        (true, false) => turn_static_text(locale, "turn.button.stop_spaced", " [stop]"),
     };
     let cancel_width = cancel_str.width();
 
@@ -439,7 +537,12 @@ pub fn render_turn_status(
                     .strip_prefix("Ask: ")
                     .or_else(|| title.strip_prefix("Ask "))
                     .unwrap_or(title.as_str());
-                let msg = format!("Waiting on answers for {detail}");
+                let msg = turn_format(
+                    locale,
+                    "turn.waiting_answers",
+                    "Waiting on answers for {detail}",
+                    &[("detail", detail.to_string())],
+                );
                 let display = truncate_str(&msg, available_for_label);
                 left_spans.push(Span::styled(display, activity_style));
             } else if let Some(desc) = description
@@ -453,8 +556,8 @@ pub fn render_turn_status(
                 let display = truncate_str(&msg, available_for_label);
                 left_spans.push(Span::styled(display, activity_style));
             } else if let Some(query) = title.strip_prefix("Web search: ") {
-                // Web search renders "Search " (muted) then the query (yellow)
-                let prefix = "Search ";
+                // Web search: "Search " (muted) + query (yellow)
+                let prefix = turn_static_text(locale, "turn.prefix.search", "Search ");
                 let prefix_width = prefix.width();
                 let query = query.trim_matches('"');
                 let max_query = available_for_label.saturating_sub(prefix_width).max(5);
@@ -462,8 +565,8 @@ pub fn render_turn_status(
                 left_spans.push(Span::styled(prefix, Style::default().fg(theme.gray)));
                 left_spans.push(Span::styled(display, Style::default().fg(theme.command)));
             } else if let Some(url) = title.strip_prefix("Fetch: ") {
-                // Fetch tools render "Fetch " (muted) then the URL (yellow)
-                let prefix = "Fetch ";
+                // Fetch tools: "Fetch " (muted) + URL (yellow)
+                let prefix = turn_static_text(locale, "turn.prefix.fetch", "Fetch ");
                 let prefix_width = prefix.width();
                 let max_url = available_for_label.saturating_sub(prefix_width).max(5);
                 let display = truncate_str(url, max_url);
@@ -472,7 +575,7 @@ pub fn render_turn_status(
             } else {
                 // Normal tools render "Run " (muted) then the command (syntax-highlighted). Prettify it to
                 // `(Server) Action` so the spinner doesn't show the raw delimiter form.
-                let prefix = "Run ";
+                let prefix = turn_static_text(locale, "turn.prefix.run", "Run ");
                 let pretty = mcp_pretty_name_if_qualified(title.as_str());
                 let detail = pretty.as_str();
                 let prefix_width = prefix.width();
@@ -487,9 +590,19 @@ pub fn render_turn_status(
         // "Enter to send now" is advertised only when Enter would actually send the top row.
         let suffix = if held_queue > 0 && is_sendable_wait(activity) {
             if held_queue_top_sendable {
-                format!(" · {held_queue} queued, Enter to send now")
+                turn_format(
+                    locale,
+                    "turn.queue.send_now",
+                    " · {count} queued, Enter to send now",
+                    &[("count", held_queue.to_string())],
+                )
             } else {
-                format!(" · {held_queue} queued")
+                turn_format(
+                    locale,
+                    "turn.queue.queued",
+                    " · {count} queued",
+                    &[("count", held_queue.to_string())],
+                )
             }
         } else {
             String::new()
@@ -575,17 +688,49 @@ pub fn render_turn_status(
 }
 
 /// Compute activity style, label, and whether it's a tool.
+fn localized_command_display_name(
+    command: &AgentCommand,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> &'static str {
+    match command {
+        AgentCommand::Compact => {
+            turn_static_text(locale, "turn.command.compacting", command.display_name())
+        }
+        AgentCommand::CreateWorktree => turn_static_text(
+            locale,
+            "turn.command.creating_worktree",
+            command.display_name(),
+        ),
+        AgentCommand::RestoreWorktree => turn_static_text(
+            locale,
+            "turn.command.restoring_worktree",
+            command.display_name(),
+        ),
+        AgentCommand::RestoreCode => turn_static_text(
+            locale,
+            "turn.command.restoring_code",
+            command.display_name(),
+        ),
+        AgentCommand::ForkSession => turn_static_text(
+            locale,
+            "turn.command.forking_session",
+            command.display_name(),
+        ),
+    }
+}
+
 fn compute_activity(
     theme: &Theme,
     state: &AgentState,
     activity: &Option<TurnActivity>,
     is_bash_turn: bool,
     goal_verifying: bool,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> (Style, String, bool) {
     match (state, activity) {
         (AgentState::TurnCancelling | AgentState::CommandCancelling { .. }, _) => (
             Style::default().fg(theme.accent_error),
-            "Cancelling…".to_string(),
+            turn_static_text(locale, "turn.cancelling", "Cancelling…").to_string(),
             false,
         ),
         // Goal-mode completion verification runs in-turn after the model stops streaming
@@ -593,17 +738,17 @@ fn compute_activity(
         // Label the whole window "Verifying…" so the multi-minute panel isn't mislabelled as the model responding (or a hung "Waiting…")
         (AgentState::TurnRunning, _) if goal_verifying => (
             Style::default().fg(theme.text_secondary),
-            "Verifying…".to_string(),
+            turn_static_text(locale, "turn.verifying", "Verifying…").to_string(),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::Thinking)) => (
             Style::default().fg(theme.text_secondary),
-            "Thinking…".to_string(),
+            turn_static_text(locale, "turn.thinking", "Thinking…").to_string(),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::Responding)) => (
             Style::default().fg(theme.text_secondary),
-            "Responding…".to_string(),
+            turn_static_text(locale, "turn.responding", "Responding…").to_string(),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::ToolRunning { title, description })) => {
@@ -624,7 +769,7 @@ fn compute_activity(
         }
         (AgentState::TurnRunning, Some(TurnActivity::AutoCompacting)) => (
             Style::default().fg(theme.text_secondary),
-            "Compacting…".to_string(),
+            turn_static_text(locale, "turn.compacting", "Compacting…").to_string(),
             false,
         ),
         (
@@ -637,38 +782,39 @@ fn compute_activity(
             }),
         ) => (
             Style::default().fg(theme.warning),
-            crate::app::error_display::format_retry_activity_label(
+            crate::app::error_display::format_retry_activity_label_with_locale(
                 *attempt,
                 *max_retries,
                 reason,
                 error_type.as_deref(),
                 crate::app::error_display::RetryLabelStyle::Status,
+                locale,
             ),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::WritingToolCall(writing))) => (
             Style::default().fg(theme.text_secondary),
-            writing.label(),
+            writing.label_with_locale(locale),
             false,
         ),
         (AgentState::TurnRunning, Some(TurnActivity::Waiting(reason))) => (
             // An explicit wait reason (model, subagent, task output, tasks, sleep) names what the agent is blocked on, not a generic "Waiting…"
             // See `WaitingReason` and `AgentView::resolve_turn_activity`
             Style::default().fg(theme.text_secondary),
-            reason.label(),
+            reason.label_with_locale(locale),
             false,
         ),
         (AgentState::TurnRunning, None) if is_bash_turn => (
             // Bash turn: not inference, show generic "Running…".
             Style::default().fg(theme.text_secondary),
-            "Running…".to_string(),
+            turn_static_text(locale, "turn.running", "Running…").to_string(),
             false,
         ),
         (AgentState::TurnRunning, None) => (
             // Fallback: a running inference turn with no resolved activity
             // The view resolves this gap into Waiting(Model/Subagent) before render, so this is a rarely-hit safety net
             Style::default().fg(theme.text_secondary),
-            "Waiting…".to_string(),
+            turn_static_text(locale, "turn.waiting_generic", "Waiting…").to_string(),
             false,
         ),
         (
@@ -683,12 +829,12 @@ fn compute_activity(
             _,
         ) => (
             Style::default().fg(theme.gray),
-            format!("{}…", command.display_name()),
+            format!("{}…", localized_command_display_name(command, locale)),
             false,
         ),
         (AgentState::CommandRunning { command, .. }, _) => (
             Style::default().fg(theme.text_secondary),
-            format!("{}…", command.display_name()),
+            format!("{}…", localized_command_display_name(command, locale)),
             false,
         ),
         (AgentState::Idle, _) => (Style::default(), String::new(), false),
@@ -710,6 +856,7 @@ fn render_starting_session(
     progress: &McpInitProgress,
     tick: u64,
     theme: &Theme,
+    locale: Option<&crate::locale::LocaleContext>,
 ) {
     let frames = crate::glyphs::braille_spinner_frames();
     let frame_idx = (tick / SPINNER_DIVISOR) as usize % frames.len();
@@ -717,7 +864,10 @@ fn render_starting_session(
     let style = Style::default().fg(theme.gray_dim);
     let spans = vec![
         Span::styled(format!("{} ", frames[frame_idx]), style),
-        Span::styled("Starting session…", style),
+        Span::styled(
+            turn_static_text(locale, "turn.starting_session", "Starting session…"),
+            style,
+        ),
         Span::styled(timer_str, style),
     ];
     buf.set_line(area.x, area.y, &Line::from(spans), area.width);
@@ -845,11 +995,13 @@ mod tests {
     #[test]
     fn activity_label_reads_verifying_while_goal_verifying_overriding_stale_activity() {
         let theme = Theme::current();
-        // Running turn, no streaming activity, the verifying flag set: "Verifying…"
-        let (_, label, _) = compute_activity(&theme, &AgentState::TurnRunning, &None, false, true);
+        // Running turn, no streaming activity, goal verifying → "Verifying…".
+        let (_, label, _) =
+            compute_activity(&theme, &AgentState::TurnRunning, &None, false, true, None);
         assert_eq!(label, "Verifying…");
-        // The same state without the verifying flag falls back to the generic "Waiting…"
-        let (_, label, _) = compute_activity(&theme, &AgentState::TurnRunning, &None, false, false);
+        // Same state without the verifying flag → generic "Waiting…".
+        let (_, label, _) =
+            compute_activity(&theme, &AgentState::TurnRunning, &None, false, false, None);
         assert_eq!(label, "Waiting…");
         // During verification the model is idle but its last streaming activity (Responding/Thinking) can linger
         // The flag overrides it so the panel reads "Verifying…", not "Responding…"
@@ -860,6 +1012,7 @@ mod tests {
                 &Some(activity),
                 false,
                 true,
+                None,
             );
             assert_eq!(label, "Verifying…");
         }
@@ -870,6 +1023,7 @@ mod tests {
             &Some(TurnActivity::Responding),
             false,
             false,
+            None,
         );
         assert_eq!(label, "Responding…");
     }
@@ -910,6 +1064,7 @@ mod tests {
                 &Some(TurnActivity::Waiting(reason.clone())),
                 false,
                 false,
+                None,
             );
             assert_eq!(label, expected, "reason {reason:?}");
             assert!(!is_tool, "waiting is not a tool activity");
@@ -919,8 +1074,10 @@ mod tests {
     #[test]
     fn bash_turn_still_renders_running_not_waiting() {
         let theme = Theme::current();
-        // A bash (non-inference) turn with no activity keeps its own "Running…" label; the view leaves it as `None` rather than Waiting(Model)
-        let (_, label, _) = compute_activity(&theme, &AgentState::TurnRunning, &None, true, false);
+        // A bash (non-inference) turn with no activity keeps its own "Running…"
+        // label — the view leaves it as `None` rather than Waiting(Model).
+        let (_, label, _) =
+            compute_activity(&theme, &AgentState::TurnRunning, &None, true, false, None);
         assert_eq!(label, "Running…");
     }
 
@@ -981,6 +1138,7 @@ mod tests {
                 flat_background: false,
                 held_queue: 0,
                 held_queue_top_sendable: false,
+                locale: None,
             },
         );
         assert!(
@@ -1138,6 +1296,7 @@ mod tests {
             flat_background: false,
             held_queue: 0,
             held_queue_top_sendable: false,
+            locale: None,
         }
     }
 
@@ -1473,55 +1632,73 @@ mod tests {
     #[test]
     fn still_running_label_lists_only_nonzero_kinds() {
         assert_eq!(
-            still_running_label(Watchers {
-                commands: 2,
-                ..Watchers::default()
-            }),
+            still_running_label(
+                Watchers {
+                    commands: 2,
+                    ..Watchers::default()
+                },
+                None,
+            ),
             Some("2 commands still running".into())
         );
         assert_eq!(
-            still_running_label(Watchers {
-                monitors: 2,
-                ..Watchers::default()
-            }),
+            still_running_label(
+                Watchers {
+                    monitors: 2,
+                    ..Watchers::default()
+                },
+                None,
+            ),
             Some("2 monitors still running".into())
         );
         assert_eq!(
-            still_running_label(Watchers {
-                loops: 1,
-                ..Watchers::default()
-            }),
+            still_running_label(
+                Watchers {
+                    loops: 1,
+                    ..Watchers::default()
+                },
+                None,
+            ),
             Some("1 loop still running".into())
         );
         assert_eq!(
-            still_running_label(Watchers {
-                subagents: 1,
-                ..Watchers::default()
-            }),
+            still_running_label(
+                Watchers {
+                    subagents: 1,
+                    ..Watchers::default()
+                },
+                None,
+            ),
             Some("1 subagent still running".into())
         );
         assert_eq!(
-            still_running_label(Watchers {
-                monitors: 1,
-                loops: 2,
-                ..Watchers::default()
-            }),
+            still_running_label(
+                Watchers {
+                    monitors: 1,
+                    loops: 2,
+                    ..Watchers::default()
+                },
+                None,
+            ),
             Some("1 monitor \u{00b7} 2 loops still running".into())
         );
         assert_eq!(
-            still_running_label(Watchers {
-                commands: 1,
-                monitors: 1,
-                loops: 1,
-                subagents: 2,
-                workflows: 0,
-            }),
+            still_running_label(
+                Watchers {
+                    commands: 1,
+                    monitors: 1,
+                    loops: 1,
+                    subagents: 2,
+                    workflows: 0,
+                },
+                None,
+            ),
             Some(
                 "1 command \u{00b7} 1 monitor \u{00b7} 1 loop \u{00b7} 2 subagents still running"
                     .into()
             )
         );
-        assert_eq!(still_running_label(Watchers::default()), None);
+        assert_eq!(still_running_label(Watchers::default(), None), None);
     }
 
     #[test]

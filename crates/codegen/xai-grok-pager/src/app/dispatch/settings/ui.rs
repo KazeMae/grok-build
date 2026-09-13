@@ -31,8 +31,141 @@ pub(in crate::app::dispatch) fn save_success_toast(label: &str, on: bool) -> Str
     format!("\u{2713} {label}: {value}")
 }
 
-/// Refresh every open settings modal's `ui_snapshot` and `pager_snapshot` so the next render reads the latest live state.
-/// The modal stores snapshots by value; without this, toggles would appear stuck.
+/// Locale-aware setting toast. Stable config keys stay canonical while only
+/// their display label and value are translated.
+pub(in crate::app::dispatch) fn save_setting_value_toast(
+    locale: &crate::locale::LocaleContext,
+    setting_key: &str,
+    label: &str,
+    value: &str,
+) -> String {
+    let label = locale.setting_label(setting_key, label);
+    locale
+        .named_text("settings.toast.saved", "\u{2713} {label}: {value}")
+        .replace("{label}", label.as_ref())
+        .replace("{value}", value)
+}
+
+pub(in crate::app::dispatch) fn save_setting_choice_toast(
+    locale: &crate::locale::LocaleContext,
+    setting_key: &str,
+    label: &str,
+    canonical: &str,
+    value: &str,
+) -> String {
+    let value = locale.setting_choice_label(setting_key, canonical, value);
+    save_setting_value_toast(locale, setting_key, label, value.as_ref())
+}
+
+pub(in crate::app::dispatch) fn save_success_toast_with_locale(
+    locale: &crate::locale::LocaleContext,
+    setting_key: &str,
+    label: &str,
+    on: bool,
+) -> String {
+    let (id, english) = if on {
+        ("settings.ui.value.on", "on")
+    } else {
+        ("settings.ui.value.off", "off")
+    };
+    let value = locale.named_static_text(id, english);
+    save_setting_value_toast(locale, setting_key, label, value)
+}
+
+pub(in crate::app::dispatch) fn restart_required_toast(
+    locale: &crate::locale::LocaleContext,
+    message: &str,
+) -> String {
+    locale
+        .named_text(
+            "settings.toast.restart_required",
+            "{message} (restart to apply)",
+        )
+        .replace("{message}", message)
+}
+
+pub(in crate::app::dispatch) fn setting_already_default_toast(
+    locale: &crate::locale::LocaleContext,
+    setting_key: &str,
+    label: &str,
+) -> String {
+    let label = locale.setting_label(setting_key, label);
+    locale
+        .named_text(
+            "settings.toast.already_default",
+            "{label}: already at default",
+        )
+        .replace("{label}", label.as_ref())
+}
+
+pub(in crate::app::dispatch) fn setting_cleared_toast(
+    locale: &crate::locale::LocaleContext,
+    setting_key: &str,
+    label: &str,
+) -> String {
+    let cleared = locale.named_static_text("settings.toast.value.cleared", "cleared");
+    save_setting_value_toast(locale, setting_key, label, cleared)
+}
+
+pub(in crate::app::dispatch) fn show_setting_value_toast(
+    app: &mut AppView,
+    setting_key: &str,
+    label: &str,
+    value: &str,
+) {
+    let toast = save_setting_value_toast(app.locale.as_ref(), setting_key, label, value);
+    app.show_toast(&toast);
+}
+
+pub(in crate::app::dispatch) fn show_setting_choice_toast(
+    app: &mut AppView,
+    setting_key: &str,
+    label: &str,
+    canonical: &str,
+    value: &str,
+) {
+    let toast =
+        save_setting_choice_toast(app.locale.as_ref(), setting_key, label, canonical, value);
+    app.show_toast(&toast);
+}
+
+pub(in crate::app::dispatch) fn show_setting_success_toast(
+    app: &mut AppView,
+    setting_key: &str,
+    label: &str,
+    on: bool,
+) {
+    let toast = save_success_toast_with_locale(app.locale.as_ref(), setting_key, label, on);
+    app.show_toast(&toast);
+}
+
+pub(in crate::app::dispatch) fn show_restart_required_setting_success_toast(
+    app: &mut AppView,
+    setting_key: &str,
+    label: &str,
+    on: bool,
+) {
+    let saved = save_success_toast_with_locale(app.locale.as_ref(), setting_key, label, on);
+    let toast = restart_required_toast(app.locale.as_ref(), &saved);
+    app.show_toast(&toast);
+}
+
+pub(in crate::app::dispatch) fn show_restart_required_setting_choice_toast(
+    app: &mut AppView,
+    setting_key: &str,
+    label: &str,
+    canonical: &str,
+    value: &str,
+) {
+    let saved =
+        save_setting_choice_toast(app.locale.as_ref(), setting_key, label, canonical, value);
+    let toast = restart_required_toast(app.locale.as_ref(), &saved);
+    app.show_toast(&toast);
+}
+
+/// Refresh every open settings modal's `ui_snapshot` + `pager_snapshot`
+/// so the next render reads the latest live state. The modal stores
+/// snapshots by value; without this, toggles would appear stuck.
 pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
     use crate::views::modal::ActiveModal;
     // Early exit when no settings modal is open (common case).
@@ -129,6 +262,7 @@ pub(in crate::app::dispatch) fn dispatch_open_command_palette(app: &mut AppView)
 /// Open the How-to Guides doc picker (`/docs`). Toggles closed if already open.
 pub(in crate::app::dispatch) fn dispatch_open_howto_guides(app: &mut AppView) -> Vec<Effect> {
     use crate::views::modal::ActiveModal;
+    let locale = app.locale.locale();
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -139,7 +273,7 @@ pub(in crate::app::dispatch) fn dispatch_open_howto_guides(app: &mut AppView) ->
         agent.active_modal = None;
         return vec![];
     }
-    agent.active_modal = Some(crate::views::modal::howto_list_modal(None));
+    agent.active_modal = Some(crate::views::modal::howto_list_modal_for(None, locale));
     vec![]
 }
 
@@ -358,9 +492,9 @@ pub(in crate::app::dispatch) fn dispatch_confirm_reset_setting(
                     ?default_value,
                     "reset skipped — setting already at default",
                 );
-                with_active_agent(app, |agent| {
-                    agent.show_toast(&format!("{}: already at default", meta.label));
-                });
+                let toast =
+                    setting_already_default_toast(app.locale.as_ref(), meta.key, meta.label);
+                with_active_agent(app, |agent| agent.show_toast(&toast));
                 return vec![];
             }
 
@@ -418,9 +552,11 @@ pub(in crate::app::dispatch) fn dispatch_toggle_vim_mode(app: &mut AppView) -> V
     set_vim_mode_inner(app, enabled);
     refresh_open_settings_modals(app);
     let msg = if enabled {
-        "Vim mode: on"
+        app.locale
+            .named_static_text("settings.vim_mode.on", "Vim mode: on")
     } else {
-        "Vim mode: off"
+        app.locale
+            .named_static_text("settings.vim_mode.off", "Vim mode: off")
     };
     tracing::info!(vim_mode = enabled, "Vim mode toggled");
     match app.active_view {
@@ -502,9 +638,13 @@ pub(in crate::app::dispatch) fn dispatch_toggle_mouse_capture(app: &mut AppView)
         for agent in app.agents.values_mut() {
             agent.set_sticky_toast_recursive(None);
         }
+        let toast = app
+            .locale
+            .named_text("settings.toast.mouse_reporting_on", "Mouse reporting on")
+            .into_owned();
         with_active_agent(app, |agent| {
             toast_applied = true;
-            agent.show_toast("Mouse reporting on");
+            agent.show_toast(&toast);
         });
     } else {
         for agent in app.agents.values_mut() {
@@ -1068,10 +1208,38 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
                 "rollback path has no arm for this setting key; in-memory cache is now \
                  inconsistent with the on-disk state (which already failed to write)"
             );
-            app.show_toast(ROLLBACK_NO_ARM_TOAST);
+            let toast = app
+                .locale
+                .named_text("settings.toast.rollback_out_of_sync", ROLLBACK_NO_ARM_TOAST)
+                .into_owned();
+            app.show_toast(&toast);
             return companion_effects;
         }
     }
     refresh_open_settings_modals(app);
     companion_effects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_setting_choice_toast;
+
+    #[test]
+    fn zh_localization_follow_up_behavior_toast_uses_localized_setting_and_choice() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+
+        assert_eq!(
+            save_setting_choice_toast(
+                &locale,
+                "follow_up_behavior",
+                "Follow-up behavior",
+                "steer",
+                "Steer",
+            ),
+            "✓ 跟进方式：插话",
+        );
+    }
 }

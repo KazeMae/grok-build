@@ -220,11 +220,49 @@ impl AgentView {
         Some(sticky)
     }
 
+    /// Locale-aware display text for the active toast. Stored toast content
+    /// remains canonical; only the two client-owned mouse-reporting hints are
+    /// translated, while dynamic errors and provider messages stay opaque.
+    pub(super) fn active_toast_message_with_locale(
+        &self,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Option<String> {
+        if let Some((message, _)) = &self.toast {
+            return Some(message.clone());
+        }
+        let message = self.active_toast_message()?;
+        let Some(locale) = locale else {
+            return Some(message.to_string());
+        };
+        let catalog_id = match message {
+            crate::app::MOUSE_OFF_HINT_SCROLLBACK => {
+                Some("settings.toast.mouse_reporting_off_scrollback")
+            }
+            crate::app::MOUSE_OFF_HINT_PROMPT => Some("settings.toast.mouse_reporting_off_prompt"),
+            _ => None,
+        };
+        Some(
+            catalog_id
+                .map(|id| locale.named_text(id, message).into_owned())
+                .unwrap_or_else(|| message.to_string()),
+        )
+    }
+
     /// Show a transient "Switched to mode: ..." banner above the prompt.
     /// Triggered on Shift+Tab mode cycles.
     /// Renders at full visibility for 2 s, then fades out over the final 0.3 s.
     pub fn show_mode_switch_banner(&mut self, mode_name: &str) {
-        let msg = format!("Switched to mode: {}", mode_name);
+        let locale = self.scrollback.locale();
+        let localized_mode = match mode_name {
+            "Plan" => locale.named_text("mode.plan.label", mode_name),
+            "Auto" => locale.named_text("mode.auto.label", mode_name),
+            "Normal" => locale.named_text("mode.normal.label", mode_name),
+            "Always-Approve" => locale.named_text("mode.always_approve.label", mode_name),
+            _ => std::borrow::Cow::Borrowed(mode_name),
+        };
+        let msg = locale
+            .named_text("mode.switch.banner", "Switched to mode: {mode}")
+            .replace("{mode}", localized_mode.as_ref());
         self.mode_switch_banner = Some((msg, MODE_BANNER_TOTAL_TICKS));
     }
 
@@ -247,7 +285,9 @@ impl AgentView {
     /// (`~/.grok/last-copy.txt`, or `GROK_COPY_FILE`) instead. The returned
     pub fn copy_to_clipboard(&mut self, text: &str) -> crate::clipboard::CopyDelivery {
         let delivery = crate::clipboard::copy_text_or_file(text);
-        self.show_toast_ticks(delivery.toast_message().as_ref(), delivery.toast_ticks());
+        let message =
+            crate::clipboard_toast::localized_copy_toast(self.scrollback.locale(), &delivery);
+        self.show_toast_ticks(&message, delivery.toast_ticks());
         delivery
     }
 
@@ -272,11 +312,23 @@ impl AgentView {
         if crate::terminal::image::detect_graphics_protocol().supports_images() {
             return true;
         }
-        let msg = match crate::terminal::terminal_context().graphics_protocol_skip_reason() {
-            Some("tmux") => "Inline images disabled within tmux.",
-            _ => "Image rendering not supported in this terminal",
-        };
-        self.show_toast_ticks(msg, 60);
+        let (id, english) =
+            match crate::terminal::terminal_context().graphics_protocol_skip_reason() {
+                Some("tmux") => (
+                    "media.toast.tmux_disabled",
+                    "Inline images disabled within tmux.",
+                ),
+                _ => (
+                    "media.toast.unsupported_terminal",
+                    "Image rendering not supported in this terminal",
+                ),
+            };
+        let message = self
+            .scrollback
+            .locale()
+            .named_static_text(id, english)
+            .to_string();
+        self.show_toast_ticks(&message, 60);
         false
     }
 
@@ -316,7 +368,11 @@ impl AgentView {
                     .push_block(RenderBlock::system(browser_unavailable_message(url)));
                 // Best-effort clipboard so SSH/VM users can paste into a browser on another machine without selecting TUI text
                 let _ = crate::clipboard::SystemClipboard::try_set(url);
-                self.show_toast("Browser unavailable - URL shown above");
+                let message = self.scrollback.locale().named_static_text(
+                    "browser.unavailable_url_shown",
+                    "Browser unavailable - URL shown above",
+                );
+                self.show_toast(message);
             }
         }
     }
@@ -334,7 +390,11 @@ impl AgentView {
             OpenUrlResult::BrowserUnavailable => {
                 self.scrollback
                     .push_block(RenderBlock::system(browser_unavailable_message(url)));
-                self.show_toast("Browser unavailable - URL shown above");
+                let message = self.scrollback.locale().named_static_text(
+                    "browser.unavailable_url_shown",
+                    "Browser unavailable - URL shown above",
+                );
+                self.show_toast(message);
             }
         }
     }
@@ -367,6 +427,41 @@ mod mouse_off_banner_tests {
         // A transient toast still wins over the sticky banner, regardless of pane.
         view.show_toast("Copied!");
         assert_eq!(view.active_toast_message(), Some("Copied!"));
+    }
+
+    #[test]
+    fn zh_localization_mouse_off_banner_preserves_commands_and_dynamic_toasts() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        let mut view = make_running_agent();
+        view.set_sticky_toast(Some(crate::app::MOUSE_OFF_HINT_SCROLLBACK));
+
+        view.active_pane = AgentPane::Scrollback;
+        assert_eq!(
+            view.active_toast_message_with_locale(Some(&locale)),
+            Some("按 Ctrl+r 开启鼠标报告并恢复 TUI 功能".to_string())
+        );
+
+        view.active_pane = AgentPane::Prompt;
+        assert_eq!(
+            view.active_toast_message_with_locale(Some(&locale)),
+            Some("使用 /toggle-mouse-reporting 开启鼠标报告并恢复 TUI 功能".to_string())
+        );
+
+        view.show_toast("Provider retrying");
+        assert_eq!(
+            view.active_toast_message_with_locale(Some(&locale)),
+            Some("Provider retrying".to_string())
+        );
+
+        view.show_toast(crate::app::MOUSE_OFF_HINT_SCROLLBACK);
+        assert_eq!(
+            view.active_toast_message_with_locale(Some(&locale)),
+            Some(crate::app::MOUSE_OFF_HINT_SCROLLBACK.to_string()),
+            "a transient provider message that collides with the client hint stays opaque"
+        );
     }
 
     #[test]

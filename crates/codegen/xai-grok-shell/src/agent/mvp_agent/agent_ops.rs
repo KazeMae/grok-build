@@ -1481,6 +1481,7 @@ impl MvpAgent {
         &self,
         auth: &xai_grok_login::GrokAuth,
     ) -> Option<crate::util::config::RemoteSettings> {
+        xai_grok_announcements::load_events::notify_started();
         let identity = auth.user_id.clone();
         let channel = {
             let proxy_url = self.cfg.borrow().endpoints.proxy_url();
@@ -1760,6 +1761,9 @@ impl MvpAgent {
             tracing::debug!("announcements refresh skipped: not authenticated");
             return;
         };
+        if crate::util::config::resolve_remote_fetch_enabled() {
+            xai_grok_announcements::load_events::notify_started();
+        }
         let pre_fetch = self
             .cfg
             .borrow()
@@ -2278,7 +2282,7 @@ impl MvpAgent {
         if relay_sync_enabled {
             tracing::info!("[grok] Relay sync: ENABLED");
         } else if tui_mode && relay_config_enabled && !has_xai_auth {
-            tracing::info!("[grok] Relay sync: DISABLED (no auth - run 'grok login' first)");
+            tracing::info!("[grok-zh] Relay sync: DISABLED (no auth - run 'grok-zh login' first)");
         } else if tui_mode && !relay_config_enabled {
             tracing::debug!("Relay sync: DISABLED (not configured in config.toml or env)");
         } else {

@@ -2451,8 +2451,33 @@ fn activity_writing_tool_call_labels_and_redraws() {
     assert!(!tracker.note_tool_call_arguments_delta(None, 0));
     assert!(!tracker.note_tool_call_arguments_delta(Some("write"), 0));
 }
-/// First-party tools with long argument streams read as friendly phrases (wire spellings pinned per toolset).
-/// Tiny-payload read-style tools keep the raw-name fallback.
+
+#[test]
+fn activity_writing_tool_call_labels_localize_without_translating_subjects() {
+    let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::ProductDefault,
+    });
+    let mut tracker = AcpUpdateTracker::new();
+    tracker.note_tool_call_arguments_delta(Some("write"), 0);
+    let Some(TurnActivity::WritingToolCall(writing)) = tracker.activity() else {
+        panic!("expected WritingToolCall activity");
+    };
+    assert_eq!(writing.label_with_locale(Some(&locale)), "正在编写文件…");
+
+    let mut tracker = AcpUpdateTracker::new();
+    tracker.note_tool_call_arguments_delta(Some("linear__list_issues"), 0);
+    let Some(TurnActivity::WritingToolCall(writing)) = tracker.activity() else {
+        panic!("expected qualified MCP activity");
+    };
+    assert_eq!(
+        writing.label_with_locale(Some(&locale)),
+        "正在准备 (Linear) List Issues…"
+    );
+}
+/// First-party tools with long argument streams read as friendly phrases
+/// (wire spellings pinned per toolset); tiny-payload read-style tools keep
+/// the raw-name fallback.
 #[test]
 fn activity_writing_tool_call_labels_first_party_writing_tools() {
     for (name, expected) in [
@@ -3410,7 +3435,7 @@ fn parse_search_tool_results_grouped_format() {
         "status": "ready"
     });
     let content = serde_json::to_string_pretty(&json).unwrap();
-    let results = parse_search_tool_results(&content);
+    let results = parse_search_tool_results(&content, &[]);
     assert_eq!(results.len(), 3);
     assert_eq!(results[0].name, "linear__save_issue");
     assert_eq!(results[0].server, "linear");
@@ -3421,6 +3446,75 @@ fn parse_search_tool_results_grouped_format() {
     assert_eq!(results[2].name, "slack__send_message");
     assert_eq!(results[2].server, "slack");
 }
+
+#[test]
+fn parse_search_tool_results_attaches_only_matching_managed_provenance() {
+    let json = serde_json::json!({
+        "results": [{
+            "server": "tasks",
+            "tools": [{
+                "tool_name": "tasks__list",
+                "description": "opaque description",
+                "score": 1.0,
+                "input_schema": {}
+            }]
+        }]
+    });
+    let content = serde_json::to_string_pretty(&json).unwrap();
+    let valid = xai_grok_tools::types::resources::ManagedGatewayToolIdentity {
+        qualified_name: "tasks__list".into(),
+        connector_id: "tasks".into(),
+        tool_id: "list".into(),
+        display_name: "List".into(),
+        description_sha256: "fixture-tasks-list".into(),
+    };
+    let results = parse_search_tool_results(&content, std::slice::from_ref(&valid));
+    assert_eq!(results[0].managed_gateway_tool.as_ref(), Some(&valid));
+
+    let spoofed = xai_grok_tools::types::resources::ManagedGatewayToolIdentity {
+        connector_id: "custom".into(),
+        ..valid
+    };
+    let results = parse_search_tool_results(&content, &[spoofed]);
+    assert!(results[0].managed_gateway_tool.is_none());
+}
+
+#[test]
+fn extract_use_tool_output_preserves_managed_provenance_and_legacy_absence() {
+    let identity = xai_grok_tools::types::resources::ManagedGatewayToolIdentity {
+        qualified_name: "tasks__list".into(),
+        connector_id: "tasks".into(),
+        tool_id: "list".into(),
+        display_name: "List".into(),
+        description_sha256: "fixture-tasks-list".into(),
+    };
+    let output = ToolOutput::MCP(xai_grok_tools::types::output::MCPOutput::okay_output(
+        "tasks__list".into(),
+        "Tasks".into(),
+        "opaque result".into(),
+    ));
+    let mut raw_value = serde_json::to_value(output).unwrap();
+    raw_value["managed_gateway_tool"] = serde_json::to_value(&identity).unwrap();
+    let raw = Some(raw_value);
+    let (text, provenance) = extract_use_tool_output(&raw);
+    assert_eq!(text.as_deref(), Some("opaque result"));
+    assert_eq!(provenance, Some(identity));
+
+    let legacy = Some(
+        serde_json::to_value(ToolOutput::MCP(
+            xai_grok_tools::types::output::MCPOutput::okay_output(
+                "tasks__list".into(),
+                "Tasks".into(),
+                "legacy result".into(),
+            ),
+        ))
+        .unwrap(),
+    );
+    let (text, provenance) = extract_use_tool_output(&legacy);
+    assert_eq!(text.as_deref(), Some("legacy result"));
+    assert!(provenance.is_none());
+}
+
 #[test]
 fn parse_search_tool_results_old_flat_format_returns_empty() {
     let json = serde_json::json!({
@@ -3434,7 +3528,7 @@ fn parse_search_tool_results_old_flat_format_returns_empty() {
         ]
     });
     let content = serde_json::to_string_pretty(&json).unwrap();
-    let results = parse_search_tool_results(&content);
+    let results = parse_search_tool_results(&content, &[]);
     assert!(
         results.is_empty(),
         "old flat format should not parse: {results:?}"

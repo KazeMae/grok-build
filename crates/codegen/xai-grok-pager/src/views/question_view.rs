@@ -30,7 +30,7 @@ use crate::render::wrapping::word_wrap_lines_with_joiners;
 use crate::syntax::get_syntect;
 use crate::theme::Theme;
 use crate::theme::md_style;
-use crate::views::prompt_widget::StashedPrompt;
+use crate::views::prompt_widget::{PromptBg, PromptStyle, StashedPrompt};
 
 /// Maximum description lines shown in the question chrome before truncation.
 const DEFAULT_MAX_CHROME_DESC_LINES: u16 = 5;
@@ -121,7 +121,29 @@ pub enum LocalQuestionKind {
         plan: Box<crate::diagnostics::FixPlan>,
     },
     DeleteCurrentSession,
+    /// Freeform report modal opened by `/feedback`.
+    Feedback,
+    /// Second stage of the `/feedback` card: trace consent.
+    /// Carries the committed report (text and drained image attachments) so Esc can skip the question without dropping it.
+    FeedbackTrace {
+        report: String,
+        images: crate::views::prompt_widget::FeedbackImages,
+    },
 }
+
+/// Bare `/feedback` pane label (first paragraph of the question chrome).
+pub const FEEDBACK_QUESTION_LABEL: &str = "How can we improve Grok Build?";
+
+/// Trace-consent question shown after the report is submitted.
+/// The wording comes from legal review: it discloses retention/training scope, not just debugging.
+pub const FEEDBACK_TRACE_QUESTION_LABEL: &str = "Opt-in to provide your trace for debugging \
+     purposes. This will also provide SpaceXAI the ability to retain and train on coding data, \
+     e.g., prompts, traces, & metrics.";
+
+/// Option ids for the trace-consent question; the submit handler maps ids (never positions) back to a [`crate::app::actions::FeedbackTraceChoice`].
+pub const FEEDBACK_TRACE_OPTION_OPT_IN: &str = "always_upload";
+pub const FEEDBACK_TRACE_OPTION_OPT_OUT: &str = "no_upload";
+pub const FEEDBACK_TRACE_OPTION_NEVER_ASK: &str = "never_ask";
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -187,6 +209,11 @@ pub struct QuestionViewState {
     /// When `true`, the freeform "Other" input row is hidden.
     /// Used by locally-driven questions (e.g. the credit-limit upsell) that only offer fixed options with no free-text fallback.
     pub no_freeform: bool,
+    /// Whether Enter on the report advances to the trace-consent question.
+    pub feedback_offer_trace: bool,
+    /// Opted-out account: the "Opt in" option also switches coding-data
+    /// sharing back on (and says so in its description).
+    pub feedback_offer_reenables_sharing: bool,
 }
 
 // ── Constructor & basic helpers ────────────────────────────────────────
@@ -252,6 +279,8 @@ impl QuestionViewState {
             opened_at: Instant::now(),
             opened_at_wall_ms: chrono::Utc::now().timestamp_millis(),
             no_freeform: false,
+            feedback_offer_trace: false,
+            feedback_offer_reenables_sharing: false,
         }
     }
 
@@ -751,6 +780,115 @@ impl QuestionViewState {
         )
     }
 
+    /// Either stage of the `/feedback` card (report or trace consent).
+    pub fn is_feedback(&self) -> bool {
+        matches!(
+            self.local_kind,
+            Some(LocalQuestionKind::Feedback | LocalQuestionKind::FeedbackTrace { .. })
+        )
+    }
+
+    /// The freeform report stage of the `/feedback` card.
+    pub fn is_feedback_report(&self) -> bool {
+        matches!(self.local_kind, Some(LocalQuestionKind::Feedback))
+    }
+
+    /// The trace-consent stage of the `/feedback` card.
+    pub fn is_feedback_trace(&self) -> bool {
+        matches!(
+            self.local_kind,
+            Some(LocalQuestionKind::FeedbackTrace { .. })
+        )
+    }
+
+    pub fn feedback_report(&self) -> String {
+        self.per_question_freeform
+            .first()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Swap the report card for the trace-consent question, keeping the stashed prompt.
+    /// Built through the constructor so the per-question vector-length invariant lives in exactly one place.
+    pub fn begin_feedback_trace_stage(
+        &mut self,
+        report: String,
+        images: Vec<crate::prompt_images::PastedImage>,
+    ) {
+        self.begin_feedback_trace_stage_with_locale(report, images, None);
+    }
+
+    pub fn begin_feedback_trace_stage_with_locale(
+        &mut self,
+        report: String,
+        images: Vec<crate::prompt_images::PastedImage>,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) {
+        let text = |id: &str, english: &str| {
+            locale
+                .map(|locale| locale.named_text(id, english).into_owned())
+                .unwrap_or_else(|| english.to_owned())
+        };
+        // "Opt in" is a persistent grant, so its description names what it
+        // turns on beyond this one upload.
+        let opt_in_description = if self.feedback_offer_reenables_sharing {
+            text(
+                "feedback.trace.opt_in.description.persisted",
+                "Turns on trace upload for future sessions on this machine and switches coding \
+                 data sharing back on for this account.",
+            )
+        } else {
+            text(
+                "feedback.trace.opt_in.description.reenable",
+                "Turns on trace upload for future sessions on this machine (change any time with \
+                 [telemetry] trace_upload in config.toml).",
+            )
+        };
+        let question = Question {
+            question: text("feedback.trace.question", FEEDBACK_TRACE_QUESTION_LABEL),
+            options: vec![
+                QuestionOption {
+                    label: text("feedback.trace.opt_in", "Opt in"),
+                    description: opt_in_description,
+                    preview: None,
+                    id: Some(FEEDBACK_TRACE_OPTION_OPT_IN.into()),
+                },
+                QuestionOption {
+                    label: text("feedback.trace.opt_out_once", "Opt out this time"),
+                    description: String::new(),
+                    preview: None,
+                    id: Some(FEEDBACK_TRACE_OPTION_OPT_OUT.into()),
+                },
+                QuestionOption {
+                    label: text("feedback.trace.never_ask", "Opt out and don't ask again"),
+                    description: String::new(),
+                    preview: None,
+                    id: Some(FEEDBACK_TRACE_OPTION_NEVER_ASK.into()),
+                },
+            ],
+            multi_select: Some(false),
+            id: None,
+        };
+        let mut next = QuestionViewState::new(
+            std::mem::take(&mut self.tool_call_id),
+            vec![question],
+            std::mem::take(&mut self.stashed_prompt),
+        );
+        next.selections = vec![QuestionSelection::Single(Some(0))];
+        next.no_freeform = true;
+        next.fullscreen = self.fullscreen;
+        // Card-open time spans both stages (pause accounting).
+        next.opened_at = self.opened_at;
+        next.opened_at_wall_ms = self.opened_at_wall_ms;
+        next.feedback_offer_trace = self.feedback_offer_trace;
+        next.feedback_offer_reenables_sharing = self.feedback_offer_reenables_sharing;
+        next.local_kind = Some(LocalQuestionKind::FeedbackTrace {
+            report,
+            images: images.into(),
+        });
+        *self = next;
+    }
+
     /// Labels of the selected options for a given question.
     pub fn selected_labels(&self, question_idx: usize) -> Vec<String> {
         let Some(sel) = self.selections.get(question_idx) else {
@@ -1051,6 +1189,70 @@ pub fn option_prefix_w(_question: &Question) -> usize {
     6 // both multi and single use 3-char markers
 }
 
+/// Report area of the bare `/feedback` card: a multi-line box standing in for the option rows, shared by the full TUI and minimal renderers.
+/// `draw` needs a blank [`crate::views::prompt_widget::PromptInfo`] to put the bottom rule in place.
+pub mod feedback_input {
+    use super::{PromptBg, PromptStyle, QUESTION_VIEW_HPAD, Theme};
+
+    /// Rows at rest: top rule, five text rows, bottom rule. The box grows with the report up to the caller's cap.
+    pub const HEIGHT: u16 = 7;
+
+    /// Rows of that height spent on the outline rather than text.
+    pub const CHROME_H: u16 = 2;
+
+    /// Smallest box that can still carry its outline: the two rules plus one row of text. Below this the renderers drop to [`flat_style`].
+    pub const MIN_HEIGHT: u16 = CHROME_H + 1;
+
+    /// Shown while the box is empty, including while it has focus.
+    pub const PLACEHOLDER: &str = "Please provide as much detail as possible.";
+
+    /// The card's content column, so the box lines up under the label.
+    pub fn width(area_width: u16) -> u16 {
+        area_width.saturating_sub(QUESTION_VIEW_HPAD)
+    }
+
+    pub fn style(theme: &Theme) -> PromptStyle {
+        style_with_locale(theme, None)
+    }
+
+    pub fn style_with_locale(
+        theme: &Theme,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> PromptStyle {
+        PromptStyle {
+            // Sits on the card, so it takes the card's surface rather than the composer's, and pads symmetrically inside its own rules.
+            bg: PromptBg::Panel(theme.bg_light),
+            chrome_pad_right: 2,
+            placeholder_when_focused: true,
+            placeholder_override: Some(
+                locale
+                    .map(|locale| {
+                        locale.named_static_text("feedback.placeholder.detailed", PLACEHOLDER)
+                    })
+                    .unwrap_or(PLACEHOLDER),
+            ),
+            ..PromptStyle::default()
+        }
+    }
+
+    /// Unoutlined variant for a panel too short to spare the two rows the rules cost.
+    pub fn flat_style(theme: &Theme) -> PromptStyle {
+        flat_style_with_locale(theme, None)
+    }
+
+    pub fn flat_style_with_locale(
+        theme: &Theme,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> PromptStyle {
+        PromptStyle {
+            vpad_top: 0,
+            chrome: false,
+            show_borders: false,
+            ..style_with_locale(theme, locale)
+        }
+    }
+}
+
 /// Width available for inline prompt text given the full area width.
 pub fn inline_text_width(area_width: u16) -> u16 {
     const LEFT_PAD: u16 = 3; // accent column + 2 padding
@@ -1139,6 +1341,35 @@ pub fn build_flat_option_lines(
     freeform_selected: bool,
     panel_focused: bool,
 ) -> Vec<Line<'static>> {
+    build_flat_option_lines_with_placeholder(
+        question,
+        content_w,
+        cursor,
+        hovered,
+        selections,
+        theme,
+        show_freeform,
+        freeform_text,
+        freeform_selected,
+        panel_focused,
+        "Type your answer here",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_flat_option_lines_with_placeholder(
+    question: &Question,
+    content_w: usize,
+    cursor: usize,
+    hovered: Option<usize>,
+    selections: &QuestionSelection,
+    theme: &Theme,
+    show_freeform: bool,
+    freeform_text: &str,
+    freeform_selected: bool,
+    panel_focused: bool,
+    freeform_placeholder: &str,
+) -> Vec<Line<'static>> {
     let prefix_w = option_prefix_w(question);
     let max_lw = compute_max_label_w(&question.options, content_w);
     let is_multi = question.multi_select.unwrap_or(false);
@@ -1203,7 +1434,7 @@ pub fn build_flat_option_lines(
     // The freeform row is hidden in InputMode (the prompt widget below replaces it)
     if show_freeform {
         let freeform_idx = question.options.len();
-        all_lines.push(build_freeform_line(
+        all_lines.push(build_freeform_line_with_placeholder(
             freeform_idx == cursor,
             hovered == Some(freeform_idx),
             freeform_text,
@@ -1211,6 +1442,7 @@ pub fn build_flat_option_lines(
             is_multi,
             theme,
             panel_focused,
+            freeform_placeholder,
         ));
     }
 
@@ -1441,7 +1673,30 @@ fn build_freeform_line(
     theme: &Theme,
     panel_focused: bool,
 ) -> Line<'static> {
-    // Whitespace-only freeform is treated as empty and never shown as selected
+    build_freeform_line_with_placeholder(
+        is_cursor,
+        is_hovered,
+        freeform_text,
+        is_selected,
+        is_multi,
+        theme,
+        panel_focused,
+        "Type your answer here",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_freeform_line_with_placeholder(
+    is_cursor: bool,
+    is_hovered: bool,
+    freeform_text: &str,
+    is_selected: bool,
+    is_multi: bool,
+    theme: &Theme,
+    panel_focused: bool,
+    freeform_placeholder: &str,
+) -> Line<'static> {
+    // Whitespace-only freeform is treated as empty — never shown as selected.
     let is_selected = is_selected && !freeform_text.trim().is_empty();
 
     let embed = crate::views::modal_window::embedded_row_style(theme, is_cursor && panel_focused);
@@ -1505,7 +1760,7 @@ fn build_freeform_line(
     } else {
         // Empty: show placeholder
         (
-            "Type your answer here".to_string(),
+            freeform_placeholder.to_string(),
             Style::default().fg(fg(theme.gray)).bg(row_bg),
         )
     };
@@ -1547,6 +1802,30 @@ pub fn render_question_view(
     hovered_item: Option<usize>,
     theme: &Theme,
     focused: bool,
+) -> QuestionViewRenderResult {
+    render_question_view_with_placeholder(
+        buf,
+        area,
+        state,
+        hovered_item,
+        theme,
+        focused,
+        "Type your answer here",
+        None,
+    )
+}
+
+/// Locale-aware variant of [`render_question_view`].
+#[allow(clippy::too_many_arguments)]
+pub fn render_question_view_with_placeholder(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &QuestionViewState,
+    hovered_item: Option<usize>,
+    theme: &Theme,
+    focused: bool,
+    freeform_placeholder: &str,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> QuestionViewRenderResult {
     if area.height == 0 || area.width == 0 {
         return QuestionViewRenderResult {
@@ -1601,6 +1880,7 @@ pub fn render_question_view(
         state.fullscreen,
         state.cached_desc_cap,
         state.cached_preview_cap,
+        locale,
     );
 
     // ── Gap ──
@@ -1631,7 +1911,7 @@ pub fn render_question_view(
     let freeform_h: u16 = if sticky_freeform { 1 } else { 0 };
 
     // Build option lines WITHOUT the freeform row (it's sticky or inline).
-    let all_lines = build_flat_option_lines(
+    let all_lines = build_flat_option_lines_with_placeholder(
         question,
         content_w,
         cursor,
@@ -1642,6 +1922,7 @@ pub fn render_question_view(
         freeform_text,
         freeform_selected,
         focused,
+        freeform_placeholder,
     );
 
     let visible_h = visible_bottom.saturating_sub(y).saturating_sub(freeform_h) as usize;
@@ -1667,7 +1948,7 @@ pub fn render_question_view(
             let freeform_idx = question.options.len();
             let is_multi = question.multi_select.unwrap_or(false);
             let _prefix_w = option_prefix_w(question);
-            let freeform_line = build_freeform_line(
+            let freeform_line = build_freeform_line_with_placeholder(
                 freeform_idx == cursor,
                 hovered_item == Some(freeform_idx),
                 freeform_text,
@@ -1675,6 +1956,7 @@ pub fn render_question_view(
                 is_multi,
                 theme,
                 focused,
+                freeform_placeholder,
             );
             let row_rect = Rect {
                 x: content_x,
@@ -1747,7 +2029,14 @@ pub fn render_question_scrollbar(
 }
 
 /// Render a truncation indicator line: `... Ctrl-F to expand`.
-fn render_truncation_indicator(buf: &mut Buffer, x: u16, y: u16, width: u16, theme: &Theme) {
+fn render_truncation_indicator(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    theme: &Theme,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     let style = Style::default().fg(theme.gray).bg(theme.bg_light);
     let indicator = Line::from(vec![
         Span::styled("... ", style),
@@ -1755,7 +2044,12 @@ fn render_truncation_indicator(buf: &mut Buffer, x: u16, y: u16, width: u16, the
             "Ctrl-F",
             Style::default().fg(theme.accent_user).bg(theme.bg_light),
         ),
-        Span::styled(" to expand", style),
+        Span::styled(
+            locale
+                .map(|locale| locale.named_static_text("question.truncation.expand", " to expand"))
+                .unwrap_or(" to expand"),
+            style,
+        ),
     ]);
     buf.set_line(x, y, &indicator, width);
 }
@@ -1774,6 +2068,7 @@ fn render_question_chrome(
     fullscreen: bool,
     desc_cap: u16,
     preview_cap: u16,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> u16 {
     let mut cur_y = y;
     let w = width as usize;
@@ -1836,7 +2131,7 @@ fn render_question_chrome(
                 if cur_y >= max_y {
                     return cur_y;
                 }
-                render_truncation_indicator(buf, x, cur_y, width, theme);
+                render_truncation_indicator(buf, x, cur_y, width, theme, locale);
                 cur_y += 1;
                 break;
             }
@@ -1895,7 +2190,7 @@ fn render_question_chrome(
                     if cur_y >= max_y {
                         return cur_y;
                     }
-                    render_truncation_indicator(buf, x, cur_y, width, theme);
+                    render_truncation_indicator(buf, x, cur_y, width, theme, locale);
                     cur_y += 1;
                     break 'preview_done;
                 }

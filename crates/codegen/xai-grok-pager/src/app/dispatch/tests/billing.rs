@@ -1292,6 +1292,29 @@ fn free_usage_upsell_shows_three_options_with_exact_labels() {
     }
 }
 
+#[test]
+fn zh_localization_free_usage_upsell_keeps_all_three_plans_translated() {
+    let mut app = test_app_with_agent();
+    let locale = Arc::new(crate::locale::LocaleContext::new(
+        crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        },
+    ));
+    app.locale = Arc::clone(&locale);
+    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
+    agent.scrollback.set_locale(locale.as_ref());
+    open_free_usage_upsell(agent, None);
+
+    let q = &agent_qv(&app).questions[0];
+    assert_eq!(q.question, "你已达到免费用量上限。");
+    assert_eq!(q.options.len(), 3);
+    assert_eq!(q.options[0].label, "升级到 SuperGrok");
+    assert_eq!(q.options[1].label, "升级到 SuperGrok Plus");
+    assert_eq!(q.options[2].label, "升级到 SuperGrok Heavy");
+    assert_eq!(q.options[1].description, "获得显著更高的用量和速率上限");
+}
+
 /// Replay the REAL free-usage sequence (send, `RetryState::Retrying`, `Exhausted`, PromptResponse error) through the production handlers.
 /// The paywall modal must open on the turn-end error.
 #[test]

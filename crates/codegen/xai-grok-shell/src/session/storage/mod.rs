@@ -62,13 +62,60 @@ fn write_bytes_atomic_with(
     // Old-or-new only covers replacing a file, whose direntry is already durable A first-time create (a session's first summary.json) has no old file.
     // Its new entry can vanish on power loss until the parent directory is synced A retry after a rename whose parent sync failed sees the file present and cannot tell create from replace.
     // So every successful rename pays the parent sync.
-    match write_synced().and_then(|()| std::fs::rename(&tmp, path)) {
+    match write_synced().and_then(|()| replace_file(&tmp, path)) {
         Ok(()) => sync_parent(),
         Err(e) => {
             let _ = std::fs::remove_file(&tmp);
             Err(e)
         }
     }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn extended_path(path: &Path) -> io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let path = std::path::absolute(path)?;
+    let mut wide = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    if wide.contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path contains NUL",
+        ));
+    }
+    const VERBATIM_PREFIX: &[u16] = &[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    if wide.starts_with(VERBATIM_PREFIX) {
+        wide.push(0);
+        return Ok(wide);
+    }
+    let unc = wide.starts_with(&[b'\\' as u16, b'\\' as u16]);
+    let mut result = if unc { r"\\?\UNC\" } else { r"\\?\" }
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    if unc {
+        wide.drain(..2);
+    }
+    result.extend(wide);
+    result.push(0);
+    Ok(result)
+}
+
+#[cfg(windows)]
+pub(crate) fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    use windows::Win32::Storage::FileSystem::{MOVE_FILE_FLAGS, MoveFileExW};
+    use windows::core::PCWSTR;
+
+    let source = extended_path(source)?;
+    let destination = extended_path(destination)?;
+    // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH.
+    let flags = MOVE_FILE_FLAGS(1 | 8);
+    unsafe { MoveFileExW(PCWSTR(source.as_ptr()), PCWSTR(destination.as_ptr()), flags) }
+        .map_err(io::Error::other)
 }
 
 #[cfg(target_os = "macos")]
@@ -217,10 +264,22 @@ fn is_fs_root(path: &Path) -> bool {
 }
 
 pub(crate) async fn write_bytes_atomic_async(path: &Path, bytes: Vec<u8>) -> io::Result<()> {
-    let path = path.to_owned();
-    tokio::task::spawn_blocking(move || write_bytes_atomic(&path, &bytes))
-        .await
-        .map_err(io::Error::other)?
+    let tmp = temp_sibling(path);
+    let result = match tokio::fs::write(&tmp, bytes).await {
+        Ok(()) => {
+            let source = tmp.clone();
+            let destination = path.to_path_buf();
+            match tokio::task::spawn_blocking(move || replace_file(&source, &destination)).await {
+                Ok(result) => result,
+                Err(error) => Err(io::Error::other(error)),
+            }
+        }
+        Err(e) => Err(e),
+    };
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+    }
+    result
 }
 
 fn to_jsonl_bytes<T: serde::Serialize>(items: &[T]) -> io::Result<Vec<u8>> {
@@ -260,7 +319,7 @@ pub(crate) mod chat_rebuild {
 
     use agent_client_protocol as acp;
 
-    use super::{CHAT_HISTORY_FILE, SessionUpdate, UPDATES_FILE, UpdatesIterator};
+    use super::{CHAT_HISTORY_FILE, SessionUpdate, UPDATES_FILE, UpdatesIterator, replace_file};
     use crate::sampling::{
         AssistantItem, ContentPart, ConversationItem, SyntheticReason, ToolCall, UserItem,
     };
@@ -277,48 +336,49 @@ pub(crate) mod chat_rebuild {
 
         let chat_path = dir.join(CHAT_HISTORY_FILE);
         let tmp_path = dir.join(format!("{CHAT_HISTORY_FILE}.{}.tmp", uuid::Uuid::now_v7()));
-        let file = std::fs::File::create(&tmp_path)?;
-        let mut writer = std::io::BufWriter::new(file);
-        let mut reducer = ChatReducer::new();
+        let result = (|| {
+            let file = std::fs::File::create(&tmp_path)?;
+            let mut writer = std::io::BufWriter::new(file);
+            let mut reducer = ChatReducer::new();
 
-        for result in iter {
-            let update = match result {
-                Ok(u) => u,
-                Err(_) => continue,
-            };
+            for result in iter {
+                let update = match result {
+                    Ok(u) => u,
+                    Err(_) => continue,
+                };
 
-            for item in reducer.process(&update) {
-                if let Ok(line) = serde_json::to_string(&item) {
-                    let _ = writer.write_all(line.as_bytes());
-                    let _ = writer.write_all(b"\n");
+                for item in reducer.process(&update) {
+                    let line = serde_json::to_string(&item)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                    writer.write_all(line.as_bytes())?;
+                    writer.write_all(b"\n")?;
+                }
+
+                // CompactionCheckpoint: truncate file and reset
+                if reducer.should_truncate() {
+                    reducer.clear_truncate_flag();
+                    writer.seek(std::io::SeekFrom::Start(0))?;
+                    writer.get_mut().set_len(0)?;
                 }
             }
 
-            // CompactionCheckpoint: truncate file and reset
-            if reducer.should_truncate() {
-                reducer.clear_truncate_flag();
-                let _ = writer.seek(std::io::SeekFrom::Start(0));
-                let _ = writer.get_mut().set_len(0);
+            for item in reducer.flush() {
+                let line = serde_json::to_string(&item)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                writer.write_all(line.as_bytes())?;
+                writer.write_all(b"\n")?;
             }
-        }
 
-        for item in reducer.flush() {
-            if let Ok(line) = serde_json::to_string(&item) {
-                let _ = writer.write_all(line.as_bytes());
-                let _ = writer.write_all(b"\n");
-            }
-        }
-
-        if let Err(e) = writer.flush() {
+            writer.flush()?;
+            writer.get_ref().sync_all()?;
+            drop(writer);
+            replace_file(&tmp_path, &chat_path)?;
+            Ok(reducer.count())
+        })();
+        if result.is_err() {
             let _ = std::fs::remove_file(&tmp_path);
-            return Err(e);
         }
-        drop(writer);
-        if let Err(e) = std::fs::rename(&tmp_path, &chat_path) {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(e);
-        }
-        Ok(reducer.count())
+        result
     }
 
     /// Turn boundaries: a switch from user to agent flushes the user item, and a switch from agent to user flushes the agent item.
@@ -615,8 +675,10 @@ pub(crate) mod chat_rebuild {
 /// Iterator that streams session updates from a JSONL file without loading all into memory.
 pub struct UpdatesIterator {
     reader: BufReader<std::fs::File>,
-    line_buffer: String,
+    line_buffer: Vec<u8>,
 }
+
+const MAX_UPDATE_LINE_BYTES: usize = 64 * 1024 * 1024;
 
 impl UpdatesIterator {
     /// Returns None if the file doesn't exist.
@@ -627,7 +689,7 @@ impl UpdatesIterator {
         let file = std::fs::File::open(path)?;
         Ok(Some(Self {
             reader: BufReader::new(file),
-            line_buffer: String::new(),
+            line_buffer: Vec::new(),
         }))
     }
 
@@ -636,17 +698,57 @@ impl UpdatesIterator {
     pub fn stream_position(&mut self) -> io::Result<u64> {
         self.reader.stream_position()
     }
+
+    fn read_bounded_line(&mut self) -> io::Result<usize> {
+        self.line_buffer.clear();
+        loop {
+            let available = self.reader.fill_buf()?;
+            if available.is_empty() {
+                return Ok(self.line_buffer.len());
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let take = newline.map_or(available.len(), |index| index + 1);
+            if self.line_buffer.len().saturating_add(take) > MAX_UPDATE_LINE_BYTES {
+                self.reader.consume(take);
+                while newline.is_none() {
+                    let available = self.reader.fill_buf()?;
+                    if available.is_empty() {
+                        break;
+                    }
+                    let next_newline = available.iter().position(|byte| *byte == b'\n');
+                    let consume = next_newline.map_or(available.len(), |index| index + 1);
+                    self.reader.consume(consume);
+                    if next_newline.is_some() {
+                        break;
+                    }
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "session update line exceeds the 64 MiB safety limit",
+                ));
+            }
+            self.line_buffer.extend_from_slice(&available[..take]);
+            self.reader.consume(take);
+            if newline.is_some() {
+                return Ok(self.line_buffer.len());
+            }
+        }
+    }
 }
 
 impl Iterator for UpdatesIterator {
     type Item = io::Result<SessionUpdate>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.line_buffer.clear();
-        match self.reader.read_line(&mut self.line_buffer) {
+        match self.read_bounded_line() {
             Ok(0) => None, // EOF
             Ok(_) => {
-                let line = self.line_buffer.trim();
+                let line = match std::str::from_utf8(&self.line_buffer) {
+                    Ok(line) => line.trim(),
+                    Err(error) => {
+                        return Some(Err(io::Error::new(io::ErrorKind::InvalidData, error)));
+                    }
+                };
                 if line.is_empty() {
                     return self.next();
                 }

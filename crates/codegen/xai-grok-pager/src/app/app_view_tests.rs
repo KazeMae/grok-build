@@ -8,6 +8,28 @@ use crate::scrollback::state::ScrollbackState;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+
+#[test]
+fn welcome_model_name_localizes_effort_without_changing_model_name() {
+    let zh = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let display = localized_welcome_model_name(
+        &zh,
+        "Grok 4.5".to_string(),
+        Some(xai_grok_shell::sampling::types::ReasoningEffort::High),
+    );
+    assert_eq!(display, "Grok 4.5 (高)");
+
+    let english = localized_welcome_model_name(
+        &crate::locale::LocaleContext::default(),
+        "Grok 4.5".to_string(),
+        Some(xai_grok_shell::sampling::types::ReasoningEffort::High),
+    );
+    assert_eq!(english, "Grok 4.5 (high)");
+}
+
 #[test]
 fn welcome_show_toast_scrubs_control_chars() {
     let mut app = test_app();
@@ -107,6 +129,7 @@ pub(crate) fn test_app() -> AppView {
         scroll_state: MouseScrollState::default(),
         scroll_config: ScrollConfig::default(),
         appearance: AppearanceConfig::default(),
+        locale: std::sync::Arc::new(crate::locale::LocaleContext::default()),
         notification_service: NotificationService::new(
             Default::default(),
             crate::render::draw::EscapeWriter::disconnected(),
@@ -116,6 +139,8 @@ pub(crate) fn test_app() -> AppView {
         deferred_notification: None,
         tracing_rx: None,
         active_announcements: vec![],
+        announcement_translations:
+            xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
         hidden_announcement_ids: Default::default(),
         announcements_last_gen: 0,
         announcement: None,
@@ -4838,6 +4863,7 @@ fn welcome_doc_viewer_is_scroll_blocking_and_wheel_scrolls_content() {
     app.welcome_doc_viewer = Some(crate::views::modal::ActiveModal::DocViewer {
         title: "Release Notes".into(),
         content: "line\n".repeat(80),
+        locale: crate::locale::UiLocale::EnUs,
         scroll: 0,
         window: crate::views::modal_window::ModalWindowState::new(),
         cached_lines: None,

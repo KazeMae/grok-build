@@ -73,6 +73,74 @@ static SANDBOX: OnceLock<GlobalSandboxState> = OnceLock::new();
 static CONFIGURED_PROFILE: OnceLock<String> = OnceLock::new();
 static AUTO_ALLOW_BASH: AtomicBool = AtomicBool::new(false);
 const BWRAP_ENV_VAR: &str = "__GROK_INSIDE_BWRAP";
+
+/// Structured failure emitted while preparing a Linux bwrap re-exec.
+///
+/// The sandbox crate deliberately keeps these diagnostics locale-neutral. CLI
+/// composition roots can translate the fixed chrome while preserving the
+/// dynamic OS/path detail verbatim; non-UI callers retain the English Display
+/// fallback used before diagnostics became structured.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BwrapDiagnostic {
+    CurrentExecutable { error: String },
+    HookPlanMaterialization { error: String },
+    ReadDenyPlaceholder { path: String },
+    SentinelPrepare { error: String },
+    RuntimeSocketHandoff { error: String },
+    ProfileResolve { error: String },
+    HookPlanPrepare { error: String },
+    HookPlanMissing,
+    DenyGlobExpand { error: String },
+}
+
+#[cfg(target_os = "linux")]
+impl std::fmt::Display for BwrapDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CurrentExecutable { error } => write!(
+                f,
+                "error: could not resolve the current executable for the bwrap re-exec: {error}"
+            ),
+            Self::HookPlanMaterialization { error } => {
+                write!(
+                    f,
+                    "error: hook write-deny plan materialization failed: {error}"
+                )
+            }
+            Self::ReadDenyPlaceholder { path } => write!(
+                f,
+                "error: could not create bwrap placeholder for read-deny path {path}; refusing to start with a partial sandbox"
+            ),
+            Self::SentinelPrepare { error } => {
+                write!(
+                    f,
+                    "error: could not prepare the bwrap containment sentinel: {error}"
+                )
+            }
+            Self::RuntimeSocketHandoff { error } => {
+                write!(
+                    f,
+                    "error: runtime-socket deny handoff encoding failed: {error}"
+                )
+            }
+            Self::ProfileResolve { error } => {
+                write!(f, "error: sandbox profile resolve failed: {error}")
+            }
+            Self::HookPlanPrepare { error } => {
+                write!(f, "error: hook write-deny plan failed: {error}")
+            }
+            Self::HookPlanMissing => {
+                f.write_str("error: hook write-deny is required but no plan was prepared")
+            }
+            Self::DenyGlobExpand { error } => write!(
+                f,
+                "error: sandbox deny glob could not be enforced on Linux: {error}"
+            ),
+        }
+    }
+}
+
 pub fn is_inside_bwrap() -> bool {
     std::env::var(BWRAP_ENV_VAR).is_ok()
 }
@@ -302,13 +370,32 @@ pub(crate) fn bwrap_reexec_command_ex(
     deny_read: &[&str],
     runtime_socket_denies: &[PathBuf],
 ) -> Option<std::process::Command> {
+    bwrap_reexec_command_ex_with_report(
+        deny_write_optional,
+        hook_plan,
+        deny_read,
+        runtime_socket_denies,
+        &mut |diagnostic| eprintln!("{diagnostic}"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn bwrap_reexec_command_ex_with_report(
+    deny_write_optional: &[&str],
+    hook_plan: Option<&hook_write_deny::HookWriteDenyBwrapPlan>,
+    deny_read: &[&str],
+    runtime_socket_denies: &[PathBuf],
+    report: &mut dyn FnMut(BwrapDiagnostic),
+) -> Option<std::process::Command> {
     if is_inside_bwrap() {
         return None;
     }
     let self_exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
-            eprintln!("error: could not resolve the current executable for the bwrap re-exec: {e}");
+            report(BwrapDiagnostic::CurrentExecutable {
+                error: e.to_string(),
+            });
             return None;
         }
     };
@@ -324,16 +411,17 @@ pub(crate) fn bwrap_reexec_command_ex(
     if let Some(plan) = hook_plan
         && let Err(e) = hook_write_deny::append_hook_plan_binds(&mut cmd, plan)
     {
-        eprintln!("error: hook write-deny plan materialization failed: {e}");
+        report(BwrapDiagnostic::HookPlanMaterialization {
+            error: e.to_string(),
+        });
         return None;
     }
     if !deny_read.is_empty() {
         for path in deny_read {
             let Some(blocked) = bwrap_blocked_source_for_path(Path::new(path)) else {
-                eprintln!(
-                    "error: could not create bwrap placeholder for read-deny path {path}; \
-                     refusing to start with a partial sandbox"
-                );
+                report(BwrapDiagnostic::ReadDenyPlaceholder {
+                    path: (*path).to_string(),
+                });
                 return None;
             };
             cmd.arg("--ro-bind").arg(&blocked).arg(path);
@@ -342,7 +430,9 @@ pub(crate) fn bwrap_reexec_command_ex(
     let sentinel = match read_deny_verify::ensure_bwrap_sentinel_dir() {
         Ok(path) => path,
         Err(e) => {
-            eprintln!("error: could not prepare the bwrap containment sentinel: {e}");
+            report(BwrapDiagnostic::SentinelPrepare {
+                error: e.to_string(),
+            });
             return None;
         }
     };
@@ -353,7 +443,9 @@ pub(crate) fn bwrap_reexec_command_ex(
         match runtime_sockets::encode_bwrap_runtime_socket_denies(runtime_socket_denies) {
             Ok(encoded) => encoded,
             Err(error) => {
-                eprintln!("error: runtime-socket deny handoff encoding failed: {error}");
+                report(BwrapDiagnostic::RuntimeSocketHandoff {
+                    error: error.to_string(),
+                });
                 return None;
             }
         };
@@ -505,7 +597,11 @@ struct BwrapDenyPlan {
     requires_read_deny: bool,
 }
 #[cfg(all(feature = "enforce", target_os = "linux"))]
-fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyPlan> {
+fn bwrap_deny_plan(
+    profile: &ProfileName,
+    workspace: &Path,
+    report: &mut dyn FnMut(BwrapDiagnostic),
+) -> Option<BwrapDenyPlan> {
     let config = profiles::load_sandbox_config(workspace);
     let requires_read_deny = requires_read_deny(profile, workspace);
     let deny_write_optional: Vec<String> = if requires_data_write_deny(profile, workspace) {
@@ -520,7 +616,9 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
             Ok(resolved) => Some(resolved),
             Err(e) => {
                 if resolve_failure_must_refuse(profile, workspace) {
-                    eprintln!("error: sandbox profile resolve failed: {e}");
+                    report(BwrapDiagnostic::ProfileResolve {
+                        error: e.to_string(),
+                    });
                     return None;
                 }
                 None
@@ -541,7 +639,9 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
             Ok(hook_write_deny::HookWriteDenyPrepare::NotRequired) => None,
             Ok(hook_write_deny::HookWriteDenyPrepare::Plan(plan)) => Some(plan),
             Err(e) => {
-                eprintln!("error: hook write-deny plan failed: {e}");
+                report(BwrapDiagnostic::HookPlanPrepare {
+                    error: e.to_string(),
+                });
                 return None;
             }
         }
@@ -549,7 +649,7 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
         None
     };
     if needs_hooks && hook_plan.is_none() {
-        eprintln!("error: hook write-deny is required but no plan was prepared");
+        report(BwrapDiagnostic::HookPlanMissing);
         return None;
     }
     let (exact, globs) = deny::partition_deny_entries(&entries);
@@ -565,7 +665,9 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
             Ok(paths) => deny_read.extend(paths),
             Err(reason) => {
                 tracing::error!(%reason, "sandbox deny-glob expansion failed; refusing to start");
-                eprintln!("error: sandbox deny glob could not be enforced on Linux: {reason}");
+                report(BwrapDiagnostic::DenyGlobExpand {
+                    error: reason.to_string(),
+                });
                 return None;
             }
         }
@@ -580,7 +682,11 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
 }
 /// Without kernel enforcement there is no read-deny; the devbox `/data` write-deny and the hook write-deny plan still apply.
 #[cfg(all(not(feature = "enforce"), target_os = "linux"))]
-fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyPlan> {
+fn bwrap_deny_plan(
+    profile: &ProfileName,
+    workspace: &Path,
+    report: &mut dyn FnMut(BwrapDiagnostic),
+) -> Option<BwrapDenyPlan> {
     let deny_write_optional: Vec<String> = if requires_data_write_deny(profile, workspace) {
         vec!["/data".to_string()]
     } else {
@@ -591,7 +697,9 @@ fn bwrap_deny_plan(profile: &ProfileName, workspace: &Path) -> Option<BwrapDenyP
             Ok(hook_write_deny::HookWriteDenyPrepare::NotRequired) => None,
             Ok(hook_write_deny::HookWriteDenyPrepare::Plan(plan)) => Some(plan),
             Err(e) => {
-                eprintln!("error: hook write-deny plan failed: {e}");
+                report(BwrapDiagnostic::HookPlanPrepare {
+                    error: e.to_string(),
+                });
                 return None;
             }
         }
@@ -614,6 +722,17 @@ pub fn bwrap_reexec_for_profile(
     profile: &ProfileName,
     workspace: &Path,
 ) -> Option<std::process::Command> {
+    bwrap_reexec_for_profile_with_report(profile, workspace, |diagnostic| eprintln!("{diagnostic}"))
+}
+
+/// Locale-neutral variant used by CLI composition roots that render the
+/// structured failure in their resolved UI locale.
+#[cfg(target_os = "linux")]
+pub fn bwrap_reexec_for_profile_with_report(
+    profile: &ProfileName,
+    workspace: &Path,
+    mut report: impl FnMut(BwrapDiagnostic),
+) -> Option<std::process::Command> {
     if is_inside_bwrap() {
         return None;
     }
@@ -623,7 +742,7 @@ pub fn bwrap_reexec_for_profile(
         deny_read,
         runtime_socket_denies,
         requires_read_deny,
-    } = bwrap_deny_plan(profile, workspace)?;
+    } = bwrap_deny_plan(profile, workspace, &mut report)?;
     if deny_write_optional.is_empty()
         && hook_plan.is_none()
         && deny_read.is_empty()
@@ -633,11 +752,12 @@ pub fn bwrap_reexec_for_profile(
     }
     let write_opt: Vec<&str> = deny_write_optional.iter().map(String::as_str).collect();
     let read_refs: Vec<&str> = deny_read.iter().map(String::as_str).collect();
-    bwrap_reexec_command_ex(
+    bwrap_reexec_command_ex_with_report(
         &write_opt,
         hook_plan.as_ref(),
         &read_refs,
         &runtime_socket_denies,
+        &mut report,
     )
 }
 #[cfg(test)]
@@ -827,6 +947,18 @@ mod tests {
         let mut refuse = std::process::Command::new("bwrap");
         let err = hook_write_deny::append_hook_plan_binds(&mut refuse, &plan);
         assert!(err.is_err(), "must refuse replaced leaf identity");
+        let mut diagnostics = Vec::new();
+        assert!(
+            bwrap_reexec_command_ex_with_report(&[], Some(&plan), &[], &[], &mut |diagnostic| {
+                diagnostics.push(diagnostic)
+            },)
+            .is_none(),
+            "stale hook plan must not produce a bwrap command"
+        );
+        assert!(matches!(
+            diagnostics.as_slice(),
+            [BwrapDiagnostic::HookPlanMaterialization { error }] if !error.is_empty()
+        ));
         let _ = std::fs::remove_dir_all(&leaf);
         std::fs::rename(&moved, &leaf).unwrap();
         let plan = hook_write_deny::build_bwrap_plan(&sources).expect("plan2");

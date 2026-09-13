@@ -21,6 +21,8 @@ const ACTION_REQUIRED_BLINK_DIVISOR: u64 = 15;
 
 /// State passed into `TitleManager::update()` each tick.
 pub struct TitleState<'a> {
+    /// Locale for fixed terminal-title chrome. Session/model/tool payloads stay opaque.
+    pub locale: Option<&'a crate::locale::LocaleContext>,
     pub session_name: Option<&'a str>,
     pub model: Option<&'a str>,
     pub activity: Option<&'a TurnActivity>,
@@ -77,7 +79,7 @@ impl TitleManager {
 
         if !has_parts {
             self.composed.clear();
-            self.composed.push_str("grok");
+            self.composed.push_str(xai_grok_product::CLI_NAME);
         }
 
         let result = if self.composed != self.last_title {
@@ -100,9 +102,9 @@ impl TitleManager {
     }
 
     pub fn reset(&mut self) -> String {
-        let esc = build_title_escape("grok");
+        let esc = build_title_escape(xai_grok_product::CLI_NAME);
         self.last_title.clear();
-        self.last_title.push_str("grok");
+        self.last_title.push_str(xai_grok_product::CLI_NAME);
         self.spinner_frame = 0;
         self.tick_count = 0;
         esc
@@ -121,7 +123,7 @@ fn write_item(
     match item {
         TitleItem::Grok => {
             push_separator(buf, has_parts);
-            buf.push_str("grok");
+            buf.push_str(xai_grok_product::CLI_NAME);
         }
         TitleItem::Spinner => {
             if !state.is_busy && state.activity.is_none() {
@@ -133,10 +135,14 @@ fn write_item(
         TitleItem::Activity => {
             if let Some(activity) = state.activity {
                 push_separator(buf, has_parts);
-                write_activity(buf, activity);
+                write_activity(buf, activity, state.locale);
             } else if state.is_busy {
                 push_separator(buf, has_parts);
-                buf.push_str("Waiting");
+                buf.push_str(title_text(
+                    state.locale,
+                    "notifications.title.waiting",
+                    "Waiting",
+                ));
             } else {
                 return false;
             }
@@ -189,7 +195,12 @@ fn write_item(
                 return false;
             }
             push_separator(buf, has_parts);
-            buf.push_str("\u{26A0} Action Required");
+            buf.push_str("\u{26A0} ");
+            buf.push_str(title_text(
+                state.locale,
+                "notifications.title.action_required",
+                "Action Required",
+            ));
         }
     }
     *has_parts = true;
@@ -202,41 +213,80 @@ fn push_separator(buf: &mut String, has_parts: &mut bool) {
     }
 }
 
-fn write_activity(buf: &mut String, activity: &TurnActivity) {
+fn title_text(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
+fn write_activity(
+    buf: &mut String,
+    activity: &TurnActivity,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     match activity {
-        TurnActivity::Thinking => buf.push_str("Thinking"),
-        TurnActivity::Responding => buf.push_str("Responding"),
+        TurnActivity::Thinking => buf.push_str(title_text(
+            locale,
+            "notifications.title.thinking",
+            "Thinking",
+        )),
+        TurnActivity::Responding => buf.push_str(title_text(
+            locale,
+            "notifications.title.responding",
+            "Responding",
+        )),
         TurnActivity::ToolRunning { title, description } => {
             if let Some(desc) = description
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
-                buf.push_str(&crate::acp::tracker::format_waiting_for_subject(desc));
+                buf.push_str(
+                    &crate::acp::tracker::format_waiting_for_subject_with_locale(desc, locale),
+                );
             } else if title.is_empty() {
-                buf.push_str("Running tool");
+                buf.push_str(title_text(
+                    locale,
+                    "notifications.title.running_tool",
+                    "Running tool",
+                ));
             } else {
-                buf.push_str("Running: ");
+                buf.push_str(title_text(
+                    locale,
+                    "notifications.title.running_prefix",
+                    "Running: ",
+                ));
                 write_truncated(buf, title, 30);
             }
         }
-        TurnActivity::AutoCompacting => buf.push_str("Compacting"),
+        TurnActivity::AutoCompacting => buf.push_str(title_text(
+            locale,
+            "notifications.title.compacting",
+            "Compacting",
+        )),
         TurnActivity::Retrying {
             attempt,
             max_retries,
             reason,
             error_type,
         } => {
-            buf.push_str(&crate::app::error_display::format_retry_activity_label(
-                *attempt,
-                *max_retries,
-                reason,
-                error_type.as_deref(),
-                crate::app::error_display::RetryLabelStyle::Compact,
-            ));
+            buf.push_str(
+                &crate::app::error_display::format_retry_activity_label_with_locale(
+                    *attempt,
+                    *max_retries,
+                    reason,
+                    error_type.as_deref(),
+                    crate::app::error_display::RetryLabelStyle::Compact,
+                    locale,
+                ),
+            );
         }
-        TurnActivity::WritingToolCall(writing) => buf.push_str(&writing.label()),
-        TurnActivity::Waiting(reason) => buf.push_str(&reason.label()),
+        TurnActivity::WritingToolCall(writing) => buf.push_str(&writing.label_with_locale(locale)),
+        TurnActivity::Waiting(reason) => buf.push_str(&reason.label_with_locale(locale)),
     }
 }
 
@@ -282,6 +332,7 @@ mod tests {
 
     fn idle_state<'a>() -> TitleState<'a> {
         TitleState {
+            locale: None,
             session_name: None,
             model: None,
             activity: None,
@@ -301,7 +352,7 @@ mod tests {
         let mut mgr = TitleManager::new(&cfg);
         let state = idle_state();
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     #[test]
@@ -313,7 +364,10 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "my project - grok");
+        assert_eq!(
+            mgr.last_title,
+            format!("my project - {}", xai_grok_product::CLI_NAME)
+        );
     }
 
     #[test]
@@ -322,7 +376,7 @@ mod tests {
         let mut mgr = TitleManager::new(&cfg);
         let state = idle_state();
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     #[test]
@@ -334,7 +388,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     #[test]
@@ -344,7 +398,7 @@ mod tests {
 
         // Idle: spinner absent
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
 
         // Active: spinner present
         let activity = TurnActivity::Thinking;
@@ -511,11 +565,69 @@ mod tests {
     }
 
     #[test]
+    fn zh_localization_terminal_title_keeps_dynamic_tool_detail() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        let cfg = config_with_items(vec![TitleItem::Activity]);
+        let mut mgr = TitleManager::new(&cfg);
+
+        let thinking = TurnActivity::Thinking;
+        mgr.update(&TitleState {
+            locale: Some(&locale),
+            activity: Some(&thinking),
+            ..idle_state()
+        });
+        assert_eq!(mgr.last_title, "思考中");
+
+        let running = TurnActivity::ToolRunning {
+            title: "cargo build --frozen".to_owned(),
+            description: None,
+        };
+        mgr.update(&TitleState {
+            locale: Some(&locale),
+            activity: Some(&running),
+            ..idle_state()
+        });
+        assert_eq!(mgr.last_title, "运行：cargo build --frozen");
+
+        let retrying = TurnActivity::Retrying {
+            attempt: 2,
+            max_retries: 5,
+            reason: "timeout".to_owned(),
+            error_type: None,
+        };
+        mgr.update(&TitleState {
+            locale: Some(&locale),
+            activity: Some(&retrying),
+            ..idle_state()
+        });
+        assert_eq!(mgr.last_title, "重试（2/5）");
+    }
+
+    #[test]
+    fn zh_localization_terminal_title_action_required() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        let cfg = config_with_items(vec![TitleItem::ActionRequired]);
+        let mut mgr = TitleManager::new(&cfg);
+        mgr.update(&TitleState {
+            locale: Some(&locale),
+            has_pending_permissions: true,
+            ..idle_state()
+        });
+        assert_eq!(mgr.last_title, "⚠ 需要操作");
+    }
+
+    #[test]
     fn activity_hidden_when_idle() {
         let cfg = config_with_items(vec![TitleItem::Activity, TitleItem::Grok]);
         let mut mgr = TitleManager::new(&cfg);
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     #[test]
@@ -545,7 +657,10 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Waiting - grok");
+        assert_eq!(
+            mgr.last_title,
+            format!("Waiting - {}", xai_grok_product::CLI_NAME)
+        );
     }
 
     #[test]
@@ -559,7 +674,10 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "Thinking - grok");
+        assert_eq!(
+            mgr.last_title,
+            format!("Thinking - {}", xai_grok_product::CLI_NAME)
+        );
     }
 
     // --- Action Required blinking ---
@@ -623,9 +741,9 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     // --- Dedup (no-op when unchanged) ---
@@ -637,7 +755,7 @@ mod tests {
         let state = idle_state();
 
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
 
         // Second update: title is identical, last_title stays the same (no re-emit).
         let title_before = mgr.last_title.clone();
@@ -652,7 +770,7 @@ mod tests {
         let cfg = config_with_items(vec![]);
         let mut mgr = TitleManager::new(&cfg);
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     // --- Model item ---
@@ -666,7 +784,10 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok-3 - grok");
+        assert_eq!(
+            mgr.last_title,
+            format!("grok-3 - {}", xai_grok_product::CLI_NAME)
+        );
     }
 
     #[test]
@@ -674,7 +795,7 @@ mod tests {
         let cfg = config_with_items(vec![TitleItem::Model, TitleItem::Grok]);
         let mut mgr = TitleManager::new(&cfg);
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     // --- Cwd item ---
@@ -688,7 +809,10 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "my-project - grok");
+        assert_eq!(
+            mgr.last_title,
+            format!("my-project - {}", xai_grok_product::CLI_NAME)
+        );
     }
 
     // --- TurnTimer item ---
@@ -702,7 +826,10 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "42s - grok");
+        assert_eq!(
+            mgr.last_title,
+            format!("42s - {}", xai_grok_product::CLI_NAME)
+        );
     }
 
     #[test]
@@ -714,7 +841,7 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     // --- Truncation ---
@@ -759,10 +886,10 @@ mod tests {
             ..idle_state()
         };
         mgr.update(&state);
-        assert_ne!(mgr.last_title, "grok");
+        assert_ne!(mgr.last_title, xai_grok_product::CLI_NAME);
 
         mgr.reset();
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
         assert_eq!(mgr.spinner_frame, 0);
         assert_eq!(mgr.tick_count, 0);
     }
@@ -795,7 +922,10 @@ mod tests {
 
         // Both should contain the persistent parts.
         for t in [&t1, &t2] {
-            assert!(t.contains("grok"), "title missing 'grok': {t}");
+            assert!(
+                t.contains(xai_grok_product::CLI_NAME),
+                "title missing community CLI name: {t}"
+            );
             assert!(t.contains("Responding"), "title missing 'Responding': {t}");
             assert!(t.contains("my-session"), "title missing session name: {t}");
         }
@@ -810,7 +940,7 @@ mod tests {
         let cfg = default_config();
         let mut mgr = TitleManager::new(&cfg);
         mgr.update(&idle_state());
-        assert_eq!(mgr.last_title, "grok");
+        assert_eq!(mgr.last_title, xai_grok_product::CLI_NAME);
     }
 
     // --- Multi-item combinations ---
@@ -836,7 +966,10 @@ mod tests {
         mgr.update(&state);
         assert_eq!(
             mgr.last_title,
-            "Thinking - proj - grok-3 - workspace - grok"
+            format!(
+                "Thinking - proj - grok-3 - workspace - {}",
+                xai_grok_product::CLI_NAME
+            )
         );
     }
 

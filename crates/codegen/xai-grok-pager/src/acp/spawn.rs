@@ -123,13 +123,30 @@ pub struct SpawnedAgent {
 pub struct AgentShutdownGuard {
     cancel: CancellationToken,
     thread: Option<thread::JoinHandle<Result<()>>>,
+    join_notice: &'static str,
 }
 
 impl AgentShutdownGuard {
     /// Guard an in-process agent worker. A `None` thread makes the guard a
     /// no-op cancel (leader mode has no in-process worker to join).
     pub fn new(cancel: CancellationToken, thread: Option<thread::JoinHandle<Result<()>>>) -> Self {
-        Self { cancel, thread }
+        Self {
+            cancel,
+            thread,
+            join_notice: JOIN_NOTICE,
+        }
+    }
+
+    pub fn new_with_locale(
+        cancel: CancellationToken,
+        thread: Option<thread::JoinHandle<Result<()>>>,
+        locale: &crate::locale::LocaleContext,
+    ) -> Self {
+        Self {
+            cancel,
+            thread,
+            join_notice: locale.named_static_text("session.finishing", JOIN_NOTICE),
+        }
     }
 }
 
@@ -143,7 +160,7 @@ impl Drop for AgentShutdownGuard {
             + UPLOAD_DRAIN_AT_CANCEL
             + WORKER_RUNTIME_SHUTDOWN_GRACE
             + AGENT_JOIN_SLACK;
-        match join_agent_thread(handle, timeout) {
+        match join_agent_thread_with_notice(handle, timeout, self.join_notice) {
             JoinOutcome::Joined => {}
             JoinOutcome::Failed(error) => {
                 tracing::warn!(%error, "agent worker exited with error after cancel");
@@ -178,6 +195,14 @@ enum JoinOutcome {
 /// On timeout that helper is abandoned rather than joined. this is safe only because every caller is on its way out
 /// of the process, so the OS reaps the thread at exit. Do not reuse this outside teardown.
 fn join_agent_thread(handle: thread::JoinHandle<Result<()>>, timeout: Duration) -> JoinOutcome {
+    join_agent_thread_with_notice(handle, timeout, JOIN_NOTICE)
+}
+
+fn join_agent_thread_with_notice(
+    handle: thread::JoinHandle<Result<()>>,
+    timeout: Duration,
+    join_notice: &str,
+) -> JoinOutcome {
     use std::sync::mpsc::RecvTimeoutError;
 
     let span = xai_grok_telemetry::session_end::join_span();
@@ -195,7 +220,8 @@ fn join_agent_thread(handle: thread::JoinHandle<Result<()>>, timeout: Duration) 
         Err(RecvTimeoutError::Disconnected) => JoinOutcome::HelperLost,
         Err(RecvTimeoutError::Timeout) => {
             if std::io::stderr().is_terminal() {
-                notice_shown = write_join_notice(&mut std::io::stderr());
+                notice_shown =
+                    crate::best_effort_stderr::write_line(&mut std::io::stderr(), join_notice);
             }
             match rx.recv_timeout(timeout.saturating_sub(quiet)) {
                 Ok(result) => classify_join(result),

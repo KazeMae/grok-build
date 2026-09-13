@@ -155,6 +155,31 @@ pub(crate) fn handle_ask_user_question(
         if let Some(kind) = old_qv.local_kind.take() {
             use crate::views::question_view::LocalQuestionKind;
             match kind {
+                LocalQuestionKind::FeedbackTrace { report, images } => {
+                    use crate::app::actions::FeedbackTraceChoice;
+                    use crate::app::dispatch::notes;
+                    if let Some(session_id) = agent.session.session_id.clone() {
+                        if let Some(effect) = notes::commit_feedback(
+                            agent,
+                            app.coding_data_retention_opt_out,
+                            id,
+                            session_id,
+                            report,
+                            images,
+                            Some(FeedbackTraceChoice::NoUpload),
+                        ) {
+                            app.pending_effects.push(effect);
+                        }
+                    } else {
+                        notes::log_trace_consent_selected(
+                            app.coding_data_retention_opt_out,
+                            FeedbackTraceChoice::NoUpload,
+                        );
+                        agent.scrollback.push_block(RenderBlock::system(
+                            "/feedback cancelled because another question opened.".to_owned(),
+                        ));
+                    }
+                }
                 LocalQuestionKind::DoctorFix { .. } => {
                     agent.scrollback.push_block(RenderBlock::system(
                         "/doctor fix was cancelled because another question opened.".to_owned(),
@@ -162,9 +187,15 @@ pub(crate) fn handle_ask_user_question(
                 }
                 // The hold and the requeued front row survive the displaced card, so the queue stays parked; only the card is lost
                 LocalQuestionKind::PromptBlocked { .. } => {
-                    agent.scrollback.push_block(RenderBlock::system(
-                        "The blocked-prompt card was replaced by another question. Your prompt is still held at the front of the queue.".to_owned(),
-                    ));
+                    let message = agent
+                        .scrollback
+                        .locale()
+                        .named_text(
+                            "prompt.blocked.card_replaced",
+                            "The blocked-prompt card was replaced by another question. Your prompt is still held at the front of the queue.",
+                        )
+                        .into_owned();
+                    agent.scrollback.push_block(RenderBlock::system(message));
                 }
                 kind => {
                     // The doctor-fix arm above owns its variant; its label here is a graceful fallback
@@ -175,6 +206,9 @@ pub(crate) fn handle_ask_user_question(
                         LocalQuestionKind::FreeUsageUpsell { .. } => "SuperGrok upsell",
                         LocalQuestionKind::AgentTypeMismatch { .. } => "model switch",
                         LocalQuestionKind::DeleteCurrentSession => "/delete",
+                        LocalQuestionKind::Feedback | LocalQuestionKind::FeedbackTrace { .. } => {
+                            "/feedback"
+                        }
                         LocalQuestionKind::DoctorFix { .. } => "/doctor fix",
                         // The dedicated arm above owns this variant; the label is kept for exhaustiveness
                         LocalQuestionKind::PromptBlocked { .. } => "blocked prompt",

@@ -330,9 +330,12 @@ impl SessionActor {
         Self::settle_parent_message_completions(message_completions, &result);
 
         if let Some(held) = held_rows_notice {
-            self.send_hook_annotation(&format!(
-                "\u{26a0} {held} queued prompt(s) on hold after the block. Edit or remove them, or send a prompt to resume."
-            ))
+            self.send_hook_annotation_with_kind(
+                crate::extensions::notification::HookAnnotationKind::QueuedPromptsHeld,
+                &format!(
+                    "\u{26a0} {held} queued prompt(s) on hold after the block. Edit or remove them, or send a prompt to resume."
+                ),
+            )
             .await;
         }
 

@@ -99,19 +99,16 @@ const PERMISSION_MODE_CHOICES: &[EnumChoice] = &[
 // Coding-data-sharing catalog. Two choices only: the pager has no `Option`/`Unset` representation for this field.
 // `supports_preview: false` because toggling fires an async ACP call that can fail. Commit on Enter only.
 
-// The setting's own description carries the full explanation, so the choices are bare labels; an empty description collapses each to a single line
-const CODING_DATA_SHARING_CHOICES: &[EnumChoice] = &[
-    EnumChoice {
-        canonical: "opt-in",
-        display: "Opt in",
-        description: "",
-    },
-    EnumChoice {
-        canonical: "opt-out",
-        display: "Opt out",
-        description: "",
-    },
-];
+// The setting's own description carries the full explanation, so the choices are bare labels; an empty description collapses each to a single line.
+// Privacy build: retention is LOCKED to opt-out. A single canonical choice remains so
+// persisted values, pickers, and the shell wire format keep working; opt-in is refused
+// at dispatch time (`set_coding_data_sharing_tracked` Guard 0) and the UI renders the
+// row as locked (`CodingDataSharingLock::PrivacyBuild`).
+const CODING_DATA_SHARING_CHOICES: &[EnumChoice] = &[EnumChoice {
+    canonical: "opt-out",
+    display: "Opt out",
+    description: "Coding data retention is locked to opt-out in this privacy build. Opt-in is not available.",
+}];
 
 // Plan-mode catalog. `Ask` mode is not exposed here; it is only reachable via Shift+Tab. `supports_preview: false`
 // because toggling fires an ACP request that gates tool dispatch. Commit on Enter only.
@@ -258,12 +255,12 @@ const SCREEN_MODE_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "fullscreen",
         display: "Fullscreen",
-        description: "Open plain grok in the standard fullscreen TUI. Default when unset.",
+        description: "Open grok-zh in the standard fullscreen TUI. Default when unset.",
     },
     EnumChoice {
         canonical: "minimal",
         display: "Minimal",
-        description: "Open plain grok in scrollback-native (minimal) mode.",
+        description: "Open grok-zh in scrollback-native (minimal) mode.",
     },
 ];
 
@@ -493,7 +490,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
             label: "Default screen mode",
-            description: "How plain grok opens next time: Fullscreen (default when unset) or \
+            description: "How grok-zh opens next time: Fullscreen (default when unset) or \
                           Minimal. Writes [ui] screen_mode in config.toml. Restart required. \
                           Switch this session only with /minimal or /fullscreen.",
             keywords: &[
@@ -1127,11 +1124,10 @@ pub fn default_settings() -> Vec<SettingMeta> {
             key: "coding_data_sharing",
             category: SettingCategory::Privacy,
             owner: SettingOwner::Shell,
-            label: "Coding data, retention, and training",
-            description: "Opt-in to provide SpaceXAI the ability to retain and train on \
-                          coding data, e.g., prompts, traces, & metrics, for training and \
-                          debugging purposes. We may still collect simple user metrics, \
-                          e.g. how many times you use the product or a feature.",
+            label: "Coding data retention",
+            description: "Coding data retention is locked to opt-out in this privacy build. \
+                          SpaceXAI does not retain or train on your coding data. \
+                          Simple usage metrics (e.g. feature usage counts) are unaffected.",
             keywords: &[
                 "privacy",
                 "data",
@@ -1139,7 +1135,6 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 "coding",
                 "retention",
                 "training",
-                "opt-in",
                 "opt-out",
             ],
             kind: SettingKind::Enum {
@@ -1293,12 +1288,15 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
             label: "Auto-update",
-            description: "Automatically download and install pager updates on startup. \
+            description: "Allow updates to download and install in the background. \
+                          When off, startup only checks and Ctrl+U starts the download. \
                           Restart required.",
             keywords: &[
                 "auto", "update", "updates", "upgrade", "version", "install", "channel",
             ],
-            kind: SettingKind::Bool { default: true },
+            kind: SettingKind::Bool {
+                default: xai_grok_update::default_auto_update_enabled(),
+            },
             restart_required: true,
             hidden_in_minimal: false,
         },
@@ -1527,7 +1525,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
             label: "SSH wrap",
-            description: "Show a `/doctor` tip when an SSH session is not using `grok wrap`.",
+            description: "Show a `/doctor` tip when an SSH session is not using `grok-zh wrap`.",
             keywords: &[
                 "ssh",
                 "wrap",

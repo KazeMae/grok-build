@@ -50,6 +50,15 @@ fn rg_from_path_or_runfiles() -> PathBuf {
     if let Ok(p) = std::env::var("RG_BIN_PATH") {
         return PathBuf::from(p);
     }
+    let binary_name = if cfg!(windows) { "rg.exe" } else { "rg" };
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(parent) = current_exe.parent()
+    {
+        let candidate = parent.join(binary_name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
     if let Ok(rf) = std::env::var("RUNFILES_DIR")
         && let Ok(entries) = std::fs::read_dir(PathBuf::from(rf))
     {
@@ -68,5 +77,5 @@ fn rg_from_path_or_runfiles() -> PathBuf {
             }
         }
     }
-    PathBuf::from("rg")
+    PathBuf::from(binary_name)
 }

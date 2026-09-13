@@ -1,0 +1,40 @@
+KazeMae grok-build overlay (grok-zh)
+====================================
+
+This tree is KazeMae's independently maintained fork of SpaceXAI Grok Build,
+with a Simplified Chinese / privacy overlay ported from the GrokZen community
+fork. It is not an official SpaceXAI release.
+
+Copyright and license notices
+-----------------------------
+
+Copyright 2023-2026 SpaceXAI (see LICENSE, Apache License 2.0).
+
+This derivative work incorporates code and changes from the following
+open-source projects, each licensed under the Apache License 2.0:
+
+- xai-org/grok-build
+  Official upstream of Grok Build by SpaceXAI.
+  https://github.com/xai-org/grok-build
+
+- Catapult291/GrokZen
+  Unofficial Simplified Chinese community distribution of Grok Build.
+  Provides the Chinese UI/translations, grok-zh naming (shared ~/.grok,
+  GROK_HOME), and the compile-time privacy switch used here.
+  Auto-update and installers from GrokZen are not included in this overlay.
+  https://github.com/Catapult291/GrokZen
+
+- JoyElliot/grok-build-Chinese
+  Unofficial Simplified Chinese community localization of Grok Build,
+  via GrokZen.
+  https://github.com/JoyElliot/grok-build-Chinese
+
+- thedavidweng/gork-build (Gork Build)
+  Community distribution of Grok Build with vendor telemetry removed.
+  Mixpanel/product event reporting and GCS research/session-trace upload
+  paths are compile-time disabled here. Official auto-update is left on
+  the grok-build channel.
+  https://github.com/thedavidweng/gork-build
+
+See README.md, FORK.md, THIRD-PARTY-NOTICES, and the per-directory
+third-party license files for further attribution.

@@ -1006,8 +1006,48 @@ fn run_pending_suspends(
     Ok(())
 }
 
-/// Consume a pending in-process switch between `/minimal` and `/fullscreen`.
-/// Returns `true` when the caller must quit (exec fallback armed on `app.relaunch`).
+/// Consume a pending in-process `/minimal` ⇄ `/fullscreen` switch; returns
+/// `true` when the caller must quit (exec fallback armed on `app.relaunch`).
+fn localized_mode_switch_reason(locale: &crate::locale::LocaleContext, reason: &str) -> String {
+    let text = |id: &str, english: &str| locale.named_text(id, english).into_owned();
+    for (prefix, id, english) in [
+        (
+            "terminal writer failed: ",
+            "mode.switch.reason.writer_failed",
+            "terminal writer failed: {error}",
+        ),
+        (
+            "inline viewport probe failed: ",
+            "mode.switch.reason.inline_probe",
+            "inline viewport probe failed: {error}",
+        ),
+        (
+            "fullscreen viewport rebuild failed: ",
+            "mode.switch.reason.fullscreen_rebuild",
+            "fullscreen viewport rebuild failed: {error}",
+        ),
+    ] {
+        if let Some(error) = reason.strip_prefix(prefix) {
+            return text(id, english).replace("{error}", error);
+        }
+    }
+    match reason {
+        "terminal input reader did not park before the mode switch" => text(
+            "mode.switch.reason.input_reader",
+            "terminal input reader did not park before the mode switch",
+        ),
+        "terminal writer did not drain before the mode switch" => text(
+            "mode.switch.reason.writer_drain",
+            "terminal writer did not drain before the mode switch",
+        ),
+        "inline is not a switch target" => text(
+            "mode.switch.reason.inline_target",
+            "inline is not a switch target",
+        ),
+        _ => reason.to_owned(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_pending_mode_switch(
     app: &mut AppView,
@@ -1052,6 +1092,13 @@ fn run_pending_mode_switch(
                 // Cursor color: the loop-top OSC 12/112 tracker reacts to the locked palette next iteration; an inline reset here would race it into a double, unprompted OSC 112 (Ghostty latch).
                 // locked palette next iteration; an inline reset here would
                 // race it into a double, unprompted OSC 112 (Ghostty latch).
+                let switch_message = app
+                    .locale
+                    .named_text(
+                        "mode.switch.to_minimal",
+                        "Switched to minimal mode · /fullscreen to go back",
+                    )
+                    .into_owned();
                 crate::app::mode_switch::dismiss_fullscreen_only_surfaces(app);
                 super::MINIMAL_SHOW_SWITCH_BACK_TO_FULLSCREEN
                     .store(true, std::sync::atomic::Ordering::Release);
@@ -1061,12 +1108,17 @@ fn run_pending_mode_switch(
                 {
                     crate::app::mode_switch::push_block_behind_live_stream(
                         &mut agent.scrollback,
-                        crate::scrollback::block::RenderBlock::system(
-                            "Switched to minimal mode · /fullscreen to go back",
-                        ),
+                        crate::scrollback::block::RenderBlock::system(switch_message),
                     );
                 }
             } else {
+                let switch_message = app
+                    .locale
+                    .named_text(
+                        "mode.switch.to_fullscreen",
+                        "Switched to fullscreen mode · /minimal to go back",
+                    )
+                    .into_owned();
                 super::MINIMAL_SHOW_SWITCH_BACK_TO_FULLSCREEN
                     .store(false, std::sync::atomic::Ordering::Release);
                 // Capture is back on: clear the mouse-off banner like the toggle-on path.
@@ -1077,7 +1129,7 @@ fn run_pending_mode_switch(
                 if let ActiveView::Agent(id) = app.active_view
                     && let Some(agent) = app.agents.get_mut(&id)
                 {
-                    agent.show_toast("Switched to fullscreen mode · /minimal to go back");
+                    agent.show_toast(&switch_message);
                 }
             }
             tracing::info!(
@@ -1090,16 +1142,37 @@ fn run_pending_mode_switch(
         }
         crate::app::mode_switch::ModeSwitchOutcome::Aborted(reason) => {
             tracing::warn!(%reason, "screen-mode switch aborted; staying in current mode");
+            let localized_reason = localized_mode_switch_reason(&app.locale, &reason);
+            let mode = if target.is_minimal() {
+                app.locale
+                    .named_text(
+                        "settings.setting.screen_mode.choice.minimal.label",
+                        target.meta_label(),
+                    )
+                    .into_owned()
+            } else {
+                app.locale
+                    .named_text(
+                        "settings.setting.screen_mode.choice.fullscreen.label",
+                        target.meta_label(),
+                    )
+                    .into_owned()
+            };
+            let message = app
+                .locale
+                .named_text(
+                    "mode.switch.error",
+                    "Couldn't switch to {mode} mode: {reason}",
+                )
+                .replace("{mode}", &mode)
+                .replace("{reason}", &localized_reason);
             if let ActiveView::Agent(id) = app.active_view
                 && let Some(agent) = app.agents.get_mut(&id)
             {
                 // An abort can land mid-turn in minimal too; same stream hazard.
                 crate::app::mode_switch::push_block_behind_live_stream(
                     &mut agent.scrollback,
-                    crate::scrollback::block::RenderBlock::system(format!(
-                        "Couldn't switch to {} mode: {reason}",
-                        target.meta_label()
-                    )),
+                    crate::scrollback::block::RenderBlock::system(message),
                 );
             }
             presenter.request_presentation(app, terminal, true);
@@ -1148,6 +1221,7 @@ pub(crate) async fn run(
     tracing_handle: crate::tracing::TracingHandle,
     config_watcher: &mut ConfigWatcher,
     args: &PagerArgs,
+    locale: std::sync::Arc<crate::locale::LocaleContext>,
     session_cwd: Option<std::path::PathBuf>,
     remote_settings: Option<xai_grok_shell::util::config::RemoteSettings>,
     mut term_state: TerminalState,
@@ -1159,13 +1233,20 @@ pub(crate) async fn run(
 ) -> anyhow::Result<RunResult> {
     crate::unified_log::init(connection.tx.clone());
     crate::unified_log::info("pager started", None, None);
+    let resolved_locale = locale.resolved();
+    tracing::info!(
+        locale = resolved_locale.locale.as_bcp47(),
+        source = ?resolved_locale.source,
+        "UI locale resolved"
+    );
     xai_grok_telemetry::startup::enter(xai_grok_telemetry::startup::StartupPhase::AppInit);
     let mut app = {
         let _t = xai_grok_telemetry::instrumentation::timer("startup.app_init.app_view_new");
-        AppView::new(
+        AppView::new_with_locale(
             connection.tx,
             connection.models,
             connection.available_commands,
+            locale,
             terminal.backend_mut().writer_mut().escape_writer(),
         )
     };
@@ -1189,9 +1270,15 @@ pub(crate) async fn run(
         app.minimal_state.welcome_pending = true;
     }
     if term_state.relaunched_into_minimal && app.screen_mode.is_minimal() {
-        app.screen_mode_switch_hint = Some("Switched to minimal mode · /fullscreen to go back");
+        app.screen_mode_switch_hint = Some(
+            app.locale
+                .text(crate::locale::TextKey::ScreenMinimalEnabled),
+        );
     } else if term_state.relaunched_into_fullscreen && !app.screen_mode.is_minimal() {
-        app.screen_mode_switch_hint = Some("Switched to fullscreen mode · /minimal to go back");
+        app.screen_mode_switch_hint = Some(
+            app.locale
+                .text(crate::locale::TextKey::ScreenFullscreenEnabled),
+        );
     }
     let remote_permission_mode = remote_settings
         .as_ref()
@@ -2381,7 +2468,7 @@ pub(crate) async fn run(
             } else if app.voice_cmd_tx.is_none() {
                 app.voice_state = VoiceState::Idle;
                 app.voice_ui_active = false;
-                app.show_toast("Voice could not start. Restart Grok.");
+                app.show_toast("Voice could not start. Restart grok-zh.");
             } else {
                 // Defensive: a queued start with the pipeline already up (which shouldn't occur); drop it so we don't re-enter every tick
                 app.voice_state = VoiceState::Idle;
@@ -3069,9 +3156,12 @@ pub(crate) async fn run(
                             None,
                             Some(serde_json::json!({ "attempt": attempt })),
                         );
-                        app.show_toast(&format!(
-                            "Disconnected. Reconnecting... (attempt {attempt})"
-                        ));
+                        let attempt = attempt.to_string();
+                        let message = app.locale.format(
+                            crate::locale::TextKey::ReconnectAttempt,
+                            &[("attempt", &attempt)],
+                        );
+                        app.show_toast(&message);
                         presenter.request(false);
                     }
                     ConnectionStatus::Connected { generation }
@@ -3131,6 +3221,10 @@ pub(crate) async fn run(
                             &mut app.dashboard,
                             &mut app.agents,
                         );
+                        let reconnect_reload_message = app
+                            .locale
+                            .text(crate::locale::TextKey::ReconnectReload)
+                            .to_owned();
                         for id in agent_ids {
                             let Some(agent) = app.agents.get_mut(&id) else {
                                 continue;
@@ -3142,7 +3236,10 @@ pub(crate) async fn run(
                             // Yolo wins; it is computed inside `plan_reconnect_load`
                             agent.session.auto_mode =
                                 plan.meta["autoMode"].as_bool().unwrap_or(false);
-                            agent.begin_session_reload(generation);
+                            agent.begin_session_reload_with_message(
+                                generation,
+                                &reconnect_reload_message,
+                            );
                             // The reload adoption supersedes a pre-disconnect stash.
                             app.pending_running_adoptions.remove(&id);
                             reload_agent_ids.push(id);
@@ -3250,11 +3347,13 @@ pub(crate) async fn run(
                         });
                         reconnect_abort_handle = Some(join_handle.abort_handle());
 
-                        app.show_toast(if any_reload {
-                            "Reconnected. Reloading session..."
+                        let message = if any_reload {
+                            app.locale.text(crate::locale::TextKey::ReconnectReload)
                         } else {
-                            "Reconnected. Re-initializing..."
-                        });
+                            app.locale
+                                .text(crate::locale::TextKey::ReconnectReinitialize)
+                        };
+                        app.show_toast(message);
                         presenter.request(false);
                     }
                     ConnectionStatus::Failed { ref error } => {
@@ -3332,11 +3431,23 @@ pub(crate) async fn run(
 
                 if pending.agent_ids.is_empty() {
                     // Nothing was reloaded (no open sessions at reconnect).
-                    app.show_toast("Reconnected.");
+                    let message = app
+                        .locale
+                        .text(crate::locale::TextKey::ReconnectConnected)
+                        .to_owned();
+                    app.show_toast(&message);
                 } else if restored {
-                    app.show_toast("Session restored. In-progress tools and terminals were lost.");
+                    let message = app
+                        .locale
+                        .text(crate::locale::TextKey::ReconnectRestored)
+                        .to_owned();
+                    app.show_toast(&message);
                 } else {
-                    app.show_toast("Session restore failed. Kept the existing transcript.");
+                    let message = app
+                        .locale
+                        .text(crate::locale::TextKey::ReconnectRestoreFailed)
+                        .to_owned();
+                    app.show_toast(&message);
                 }
 
                 // Re-trigger the queue drain suppressed during the outage
@@ -4486,6 +4597,7 @@ pub(crate) fn session_flags_for_effects(
         screen_mode_label: Some(app.screen_mode.meta_label()),
         is_api_key_auth: app.is_api_key_auth,
         resume_local_miss: app.resume_local_miss.clone(),
+        locale: app.locale.clone(),
     }
 }
 
