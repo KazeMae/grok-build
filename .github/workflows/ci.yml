@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  # Keep in sync with the DotSlash-pinned protoc in bin/protoc.
+  PROTOC_VERSION: "29.3"
+
+jobs:
+  check:
+    name: fmt / clippy / build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            protoc: linux-x86_64
+          - name: macos-aarch64
+            os: macos-14
+            protoc: osx-aarch_64
+    steps:
+      - uses: actions/checkout@v5
+
+      # Installs the toolchain, components, and targets pinned by rust-toolchain.toml.
+      - name: Install Rust toolchain
+        run: rustup show
+
+      # Proto codegen (crates/build/xai-proto-build) resolves $PROTOC first;
+      # bin/protoc is a DotSlash script, so CI installs protoc directly.
+      - name: Install protoc
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/protoc"
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${{ matrix.protoc }}.zip" -o "$RUNNER_TEMP/protoc.zip"
+          unzip -qo "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          chmod +x "$RUNNER_TEMP/protoc/bin/protoc"
+          "$RUNNER_TEMP/protoc/bin/protoc" --version
+          echo "PROTOC=$RUNNER_TEMP/protoc/bin/protoc" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ matrix.name }}
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      # Deliberately not --all-targets: the upstream snapshot has known-broken
+      # test/bench targets (see FORK.md); library and binary targets are clean.
+      - name: Clippy (workspace lib/bin targets)
+        run: cargo clippy --workspace --locked -- -D warnings
+
+      # Debug build of the shipped binary; verifies codegen + linking end to end.
+      - name: Build grok binary
+        run: cargo build -p xai-grok-pager-bin --locked

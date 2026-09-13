@@ -1,0 +1,168 @@
+name: Release
+
+# Pushing a `v*` tag builds release binaries for all supported platforms and
+# publishes them as a GitHub Release. `workflow_dispatch` builds the same
+# artifacts (as a dev build, without GROK_VERSION injected) and attaches them
+# to the workflow run only — no release is created.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  # Keep in sync with the DotSlash-pinned protoc in bin/protoc.
+  PROTOC_VERSION: "29.3"
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-aarch64
+            os: macos-14
+            target: aarch64-apple-darwin
+            protoc: osx-aarch_64
+            smoke: true
+          - platform: macos-x86_64
+            os: macos-14
+            target: x86_64-apple-darwin
+            # protoc runs on the (arm64) build host; only the Rust code is cross-compiled.
+            protoc: osx-aarch_64
+            # Cross-compiled from arm64; Rosetta is not guaranteed on the runner.
+            smoke: false
+          - platform: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            protoc: linux-x86_64
+            smoke: true
+          - platform: linux-aarch64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            protoc: linux-aarch_64
+            smoke: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            # The release pipeline always injects GROK_VERSION (see
+            # xai-grok-version); this also stamps "<version> (<commit>)"
+            # via xai-grok-pager-bin's build.rs.
+            echo "GROK_VERSION=$version" >> "$GITHUB_ENV"
+          else
+            crate_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/codegen/xai-grok-version/Cargo.toml | head -n1)"
+            version="${crate_version}-dev.$(git rev-parse --short HEAD)"
+            # GROK_VERSION stays unset so the binary keeps IS_DEV_BUILD=true.
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building version: $version"
+
+      # Installs the toolchain, components, and targets pinned by rust-toolchain.toml.
+      - name: Install Rust toolchain
+        run: |
+          rustup show
+          rustup target add "${{ matrix.target }}"
+
+      # Proto codegen (crates/build/xai-proto-build) resolves $PROTOC first;
+      # bin/protoc is a DotSlash script, so CI installs protoc directly.
+      - name: Install protoc
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/protoc"
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${{ matrix.protoc }}.zip" -o "$RUNNER_TEMP/protoc.zip"
+          unzip -qo "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          chmod +x "$RUNNER_TEMP/protoc/bin/protoc"
+          "$RUNNER_TEMP/protoc/bin/protoc" --version
+          echo "PROTOC=$RUNNER_TEMP/protoc/bin/protoc" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.platform }}
+
+      # Release builds of xai-grok-shell/xai-grok-tools download and embed
+      # ripgrep for the target triple from GitHub Releases during the build,
+      # so this step needs network access (default on GH runners).
+      - name: Build release binary
+        run: cargo build --release --locked -p xai-grok-pager-bin --target "${{ matrix.target }}"
+
+      - name: Smoke test (--version)
+        if: matrix.smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/xai-grok-pager"
+          "$bin" --version
+          if [[ -n "${GROK_VERSION:-}" ]]; then
+            "$bin" --version | grep -qF "$GROK_VERSION"
+          fi
+
+      # Ship the binary under its installed name (`grok`); the build artifact
+      # is `xai-grok-pager` (see README).
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/pkg
+          cp "target/${{ matrix.target }}/release/xai-grok-pager" dist/pkg/grok
+          chmod +x dist/pkg/grok
+          tar -czf "dist/grok-${{ steps.version.outputs.version }}-${{ matrix.platform }}.tar.gz" -C dist/pkg grok
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: grok-${{ matrix.platform }}
+          path: dist/grok-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: grok-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.tar.gz | sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* --generate-notes --title "$tag"
+          fi
