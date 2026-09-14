@@ -367,17 +367,38 @@ impl ElicitationViewState {
     }
 
     pub fn title(&self) -> String {
+        self.title_with_locale(None)
+    }
+
+    pub fn title_with_locale(&self, locale: Option<&crate::locale::LocaleContext>) -> String {
         match &self.stage {
-            ElicitationStage::Form(_) => {
-                format!("MCP “{}” requests your input", self.server_name)
-            }
-            ElicitationStage::UrlConsent(_) => {
-                format!("MCP “{}” wants to open a URL", self.server_name)
-            }
-            ElicitationStage::UrlWaiting(_) => {
-                format!("MCP “{}”, waiting for completion", self.server_name)
-            }
+            ElicitationStage::Form(_) => localized_elicitation_text(
+                locale,
+                "mcp.elicitation.title.form",
+                "MCP “{server}” requests your input",
+            )
+            .replace("{server}", &self.server_name),
+            ElicitationStage::UrlConsent(_) => localized_elicitation_text(
+                locale,
+                "mcp.elicitation.title.url",
+                "MCP “{server}” wants to open a URL",
+            )
+            .replace("{server}", &self.server_name),
+            ElicitationStage::UrlWaiting(_) => localized_elicitation_text(
+                locale,
+                "mcp.elicitation.title.waiting",
+                "MCP “{server}”, waiting for completion",
+            )
+            .replace("{server}", &self.server_name),
         }
+    }
+
+    pub fn localized_banner_error(
+        &self,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Option<String> {
+        self.banner_error()
+            .map(|error| localized_elicitation_error(locale, error))
     }
 
     /// The form-parse or URL-validation error banner, if any.
@@ -720,5 +741,225 @@ impl ElicitationViewState {
             self.action_focus = ElicitationActionFocus::Accept;
             self.scroll = 0;
         }
+    }
+}
+
+fn localized_elicitation_text(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &str,
+) -> String {
+    locale
+        .map(|locale| locale.named_text(id, english).into_owned())
+        .unwrap_or_else(|| english.to_owned())
+}
+
+pub(super) fn localized_elicitation_error(
+    locale: Option<&crate::locale::LocaleContext>,
+    error: &str,
+) -> String {
+    let fixed = |id: &str, english: &str| localized_elicitation_text(locale, id, english);
+    let value = |id: &str, english: &str, token: &str, value: &str| {
+        fixed(id, english).replace(token, value)
+    };
+    let fixed_key = match error {
+        "malformed URL" => Some(("mcp.elicitation.error.url_malformed", "malformed URL")),
+        "URL embeds credentials" => Some((
+            "mcp.elicitation.error.url_credentials",
+            "URL embeds credentials",
+        )),
+        "URL has no host" => Some(("mcp.elicitation.error.url_no_host", "URL has no host")),
+        "requestedSchema must be a JSON object" => Some((
+            "mcp.elicitation.error.schema_object",
+            "requestedSchema must be a JSON object",
+        )),
+        "requestedSchema.type must be \"object\"" => Some((
+            "mcp.elicitation.error.schema_type",
+            "requestedSchema.type must be \"object\"",
+        )),
+        "requestedSchema.properties is required" => Some((
+            "mcp.elicitation.error.properties_required",
+            "requestedSchema.properties is required",
+        )),
+        "array without items" => Some((
+            "mcp.elicitation.error.array_items_missing",
+            "array without items",
+        )),
+        "array without enum items" => Some((
+            "mcp.elicitation.error.array_enum_items_missing",
+            "array without enum items",
+        )),
+        "unsupported field type" => Some((
+            "mcp.elicitation.error.unsupported_field",
+            "unsupported field type",
+        )),
+        "required" => Some(("mcp.elicitation.error.required", "required")),
+        "must be an integer" => Some(("mcp.elicitation.error.integer", "must be an integer")),
+        "invalid number" => Some(("mcp.elicitation.error.number", "invalid number")),
+        "invalid value" => Some(("mcp.elicitation.error.value", "invalid value")),
+        "invalid email" => Some(("mcp.elicitation.error.email", "invalid email")),
+        "invalid URI" => Some(("mcp.elicitation.error.uri", "invalid URI")),
+        "use YYYY-MM-DD" => Some(("mcp.elicitation.error.date", "use YYYY-MM-DD")),
+        "use RFC 3339 date-time" => {
+            Some(("mcp.elicitation.error.date_time", "use RFC 3339 date-time"))
+        }
+        _ => None,
+    };
+    if let Some((id, english)) = fixed_key {
+        return fixed(id, english);
+    }
+
+    for (prefix, id, english, token) in [
+        (
+            "unsupported scheme \"",
+            "mcp.elicitation.error.url_scheme",
+            "unsupported scheme “{scheme}”",
+            "{scheme}",
+        ),
+        (
+            "unsupported type \"",
+            "mcp.elicitation.error.unsupported_type",
+            "unsupported type “{type}”",
+            "{type}",
+        ),
+    ] {
+        if let Some(dynamic) = error
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix('"'))
+        {
+            return value(id, english, token, dynamic);
+        }
+    }
+
+    for (prefix, suffix, id, english) in [
+        (
+            "requestedSchema exceeds ",
+            " bytes",
+            "mcp.elicitation.error.schema_too_large",
+            "requestedSchema exceeds {count} bytes",
+        ),
+        (
+            "requestedSchema.properties exceeds ",
+            " fields",
+            "mcp.elicitation.error.fields_too_many",
+            "requestedSchema.properties exceeds {count} fields",
+        ),
+        (
+            "requestedSchema property name exceeds ",
+            " characters",
+            "mcp.elicitation.error.property_name_too_long",
+            "requestedSchema property name exceeds {count} characters",
+        ),
+        (
+            "requestedSchema title exceeds ",
+            " characters",
+            "mcp.elicitation.error.title_too_long",
+            "requestedSchema title exceeds {count} characters",
+        ),
+        (
+            "requestedSchema description exceeds ",
+            " characters",
+            "mcp.elicitation.error.description_too_long",
+            "requestedSchema description exceeds {count} characters",
+        ),
+        (
+            "requestedSchema default exceeds ",
+            " characters",
+            "mcp.elicitation.error.default_too_long",
+            "requestedSchema default exceeds {count} characters",
+        ),
+        (
+            "requestedSchema enum exceeds ",
+            " values",
+            "mcp.elicitation.error.enum_too_many",
+            "requestedSchema enum exceeds {count} values",
+        ),
+        (
+            "requestedSchema enum value exceeds ",
+            " characters",
+            "mcp.elicitation.error.enum_value_too_long",
+            "requestedSchema enum value exceeds {count} characters",
+        ),
+    ] {
+        if let Some(dynamic) = error
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(suffix))
+        {
+            return value(id, english, "{count}", dynamic);
+        }
+    }
+
+    for (prefix, id, english, token) in [
+        (
+            "select at least ",
+            "mcp.elicitation.error.select_min",
+            "select at least {count}",
+            "{count}",
+        ),
+        (
+            "select at most ",
+            "mcp.elicitation.error.select_max",
+            "select at most {count}",
+            "{count}",
+        ),
+        (
+            "min length ",
+            "mcp.elicitation.error.min_length",
+            "min length {count}",
+            "{count}",
+        ),
+        (
+            "max length ",
+            "mcp.elicitation.error.max_length",
+            "max length {count}",
+            "{count}",
+        ),
+        (
+            "min ",
+            "mcp.elicitation.error.min_value",
+            "min {value}",
+            "{value}",
+        ),
+        (
+            "max ",
+            "mcp.elicitation.error.max_value",
+            "max {value}",
+            "{value}",
+        ),
+    ] {
+        if let Some(dynamic) = error.strip_prefix(prefix) {
+            return value(id, english, token, dynamic);
+        }
+    }
+
+    error.to_owned()
+}
+
+#[cfg(test)]
+mod localization_tests {
+    use super::localized_elicitation_error;
+
+    fn zh_locale() -> crate::locale::LocaleContext {
+        crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::ProductDefault,
+        })
+    }
+
+    #[test]
+    fn localizes_dynamic_elicitation_errors_without_unsafe_slicing() {
+        let locale = zh_locale();
+        assert_eq!(
+            localized_elicitation_error(Some(&locale), "unsupported scheme \"ftp\""),
+            "不支持的协议“ftp”"
+        );
+        assert_eq!(
+            localized_elicitation_error(Some(&locale), "unsupported type \"record\""),
+            "不支持的类型“record”"
+        );
+        assert_eq!(
+            localized_elicitation_error(Some(&locale), "unsupported scheme \""),
+            "unsupported scheme \""
+        );
     }
 }

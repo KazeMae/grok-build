@@ -12,8 +12,53 @@ use super::status_line::{
 };
 use crate::views::status_line::RowSize;
 
-/// The row's next state, decided before anything is touched.
-/// Owned rather than borrowed out of the config, so it can be applied through `&mut self`.
+fn localized_status_line_template(
+    locale: &crate::locale::LocaleContext,
+    id: &str,
+    english: &str,
+    arguments: &[(&str, &str)],
+) -> String {
+    let mut text = locale.named_text(id, english).into_owned();
+    for (name, value) in arguments {
+        text = text.replace(&format!("{{{name}}}"), value);
+    }
+    text
+}
+
+fn localized_status_line_problem(locale: &crate::locale::LocaleContext, problem: &str) -> String {
+    if let Some(fields) = problem.strip_prefix("[ui.status_line] ignored ") {
+        return localized_status_line_template(
+            locale,
+            "status_line.config.ignored",
+            "[ui.status_line] ignored {fields}",
+            &[("fields", fields)],
+        );
+    }
+
+    let id = match problem {
+        "[ui.status_line] must be a table" => "status_line.config.must_be_table",
+        "[ui.status_line] needs type = \"builtin\" or \"command\"" => {
+            "status_line.config.needs_type"
+        }
+        "[ui.status_line] type = \"command\" needs command = \"…\"" => {
+            "status_line.config.command_needs_command"
+        }
+        "[ui.status_line] type = \"builtin\" needs at least one item" => {
+            "status_line.config.builtin_needs_items"
+        }
+        "[ui.status_line] refresh_interval needs type = \"command\"" => {
+            "status_line.config.refresh_needs_command"
+        }
+        "[ui.status_line] refresh_interval_ms is retired: updates are debounced automatically; refresh_interval re-runs a command row every N seconds; a script that should call out less can read a cache on state runs" => {
+            "status_line.config.retired_refresh_interval_ms"
+        }
+        _ => return problem.to_string(),
+    };
+    locale.named_text(id, problem).into_owned()
+}
+
+/// The row's next state, decided before anything is touched. Owned rather than
+/// borrowed out of the config, so it can be applied through `&mut self`.
 enum StatusLineWork {
     Clear,
     Problem(String),
@@ -112,7 +157,10 @@ impl AppView {
         let Some(resolved) = config.resolve() else {
             // Not throttled, so a config with no visible effect is named on the first tick
             return Some(match config.problem_to_paint() {
-                Some(problem) => StatusLineWork::Problem(problem.to_string()),
+                Some(problem) => StatusLineWork::Problem(localized_status_line_problem(
+                    self.locale.as_ref(),
+                    problem,
+                )),
                 None => StatusLineWork::Clear,
             });
         };
@@ -141,7 +189,12 @@ impl AppView {
                     self.status_line.settle_empty();
                     return;
                 };
-                let segments = compose_builtin(&ctx, self.local_turn_elapsed(), &items);
+                let segments = compose_builtin(
+                    &ctx,
+                    self.local_turn_elapsed(),
+                    &items,
+                    Some(self.locale.as_ref()),
+                );
                 self.status_line.set_segments(segments);
                 self.status_line.stamp(now, ForcePolicy::Clear);
             }
@@ -154,10 +207,14 @@ impl AppView {
                     return;
                 };
                 let term_size = self.status_line_term_size();
-                if let Some(effect) =
-                    self.status_line
-                        .begin_command_run(now, command, Box::new(ctx), term_size)
-                {
+                let locale = self.locale.clone();
+                if let Some(effect) = self.status_line.begin_command_run(
+                    now,
+                    command,
+                    Box::new(ctx),
+                    locale,
+                    term_size,
+                ) {
                     self.pending_effects.push(effect);
                 }
             }

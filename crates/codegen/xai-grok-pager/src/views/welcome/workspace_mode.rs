@@ -40,6 +40,17 @@ impl WelcomeWorkspaceMode {
         }
     }
 
+    pub fn label_with_locale(self, locale: Option<&crate::locale::LocaleContext>) -> &'static str {
+        match self {
+            Self::Sandbox => locale.map_or("Sandbox", |locale| {
+                locale.named_static_text("welcome.workspace.sandbox", "Sandbox")
+            }),
+            Self::LocalWorkspace => locale.map_or("Local workspace", |locale| {
+                locale.named_static_text("welcome.workspace.local", "Local workspace")
+            }),
+        }
+    }
+
     pub fn hint(self) -> &'static str {
         match self {
             Self::Sandbox => "backend sandbox",
@@ -56,7 +67,25 @@ impl WelcomeWorkspaceMode {
         }
     }
 
-    /// Unified-list `kind`: Sandbox maps to `chat`, Local to `build`.
+    pub fn status_label_with_locale(
+        self,
+        cli_locked: bool,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> &'static str {
+        match (self, cli_locked) {
+            (Self::Sandbox, _) => locale.map_or("Sandbox", |locale| {
+                locale.named_static_text("welcome.workspace.sandbox", "Sandbox")
+            }),
+            (Self::LocalWorkspace, true) => locale.map_or("Local·CLI", |locale| {
+                locale.named_static_text("welcome.workspace.local_cli", "Local·CLI")
+            }),
+            (Self::LocalWorkspace, false) => locale.map_or("Local", |locale| {
+                locale.named_static_text("welcome.workspace.local_short", "Local")
+            }),
+        }
+    }
+
+    /// Unified-list `kind`: Sandbox → `chat`, Local → `build`.
     pub fn history_kind_filter(self) -> &'static str {
         match self {
             Self::Sandbox => "chat",
@@ -213,6 +242,29 @@ pub fn render_workspace_mode_picker(
     startup_locked: bool,
     ack_pending: bool,
 ) -> WorkspaceModeHitRects {
+    render_workspace_mode_picker_with_locale(
+        area,
+        buf,
+        theme,
+        selected,
+        mouse_pos,
+        startup_locked,
+        ack_pending,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_workspace_mode_picker_with_locale(
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    selected: WelcomeWorkspaceMode,
+    mouse_pos: Option<(u16, u16)>,
+    startup_locked: bool,
+    ack_pending: bool,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> WorkspaceModeHitRects {
     if area.height == 0 || area.width < 20 {
         return WorkspaceModeHitRects::default();
     }
@@ -236,9 +288,19 @@ pub fn render_workspace_mode_picker(
         .add_modifier(Modifier::BOLD);
     let locked_style = Style::default().fg(theme.gray);
 
-    buf.set_span(row.x, row.y, &Span::styled("Workspace  ", label_style), 11);
+    let heading = locale.map_or("Workspace", |locale| {
+        locale.named_static_text("welcome.workspace.heading", "Workspace")
+    });
+    let heading = format!("{heading}  ");
+    let heading_w = UnicodeWidthStr::width(heading.as_str()) as u16;
+    buf.set_span(
+        row.x,
+        row.y,
+        &Span::styled(heading, label_style),
+        heading_w.min(row.width),
+    );
 
-    let mut x = row.x.saturating_add(11);
+    let mut x = row.x.saturating_add(heading_w);
     let mut options = [None; 2];
 
     let modes: &[WelcomeWorkspaceMode] = if startup_locked {
@@ -256,9 +318,9 @@ pub fn render_workspace_mode_picker(
             break;
         }
         let text = if *mode == selected {
-            format!(" • {} ", mode.label())
+            format!(" • {} ", mode.label_with_locale(locale))
         } else {
-            format!(" {} ", mode.label())
+            format!(" {} ", mode.label_with_locale(locale))
         };
         let w = UnicodeWidthStr::width(text.as_str()) as u16;
         if x + w > row.x + row.width {
@@ -293,9 +355,16 @@ pub fn render_workspace_mode_picker(
     }
 
     let trailing = if ack_pending {
-        "  confirm local workspace? y/N"
+        locale.map_or("  confirm local workspace? y/N", |locale| {
+            locale.named_static_text(
+                "welcome.workspace.confirm_local",
+                "  confirm local workspace? y/N",
+            )
+        })
     } else if startup_locked {
-        "  locked by CLI"
+        locale.map_or("  locked by CLI", |locale| {
+            locale.named_static_text("welcome.workspace.locked_cli", "  locked by CLI")
+        })
     } else {
         "  ctrl+e"
     };
@@ -308,22 +377,29 @@ pub fn render_workspace_mode_picker(
     } else {
         key_style
     };
-    if !trailing.is_empty() && x + trailing.len() as u16 <= row.x + row.width {
+    let trailing_w = UnicodeWidthStr::width(trailing) as u16;
+    if !trailing.is_empty() && x + trailing_w <= row.x + row.width {
         buf.set_span(
-            row.x + row.width - trailing.len() as u16,
+            row.x + row.width - trailing_w,
             row.y,
             &Span::styled(trailing, trailing_style),
-            trailing.len() as u16,
+            trailing_w,
         );
     } else if ack_pending && row.width > 20 {
         // Narrow terminals: paint confirm over the right side so it stays visible.
-        let short = "  y/N confirm local";
-        let start = row.x + row.width.saturating_sub(short.len() as u16);
+        let short = locale.map_or("  y/N confirm local", |locale| {
+            locale.named_static_text(
+                "welcome.workspace.confirm_local_short",
+                "  y/N confirm local",
+            )
+        });
+        let short_w = UnicodeWidthStr::width(short) as u16;
+        let start = row.x + row.width.saturating_sub(short_w);
         buf.set_span(
             start,
             row.y,
             &Span::styled(short, trailing_style),
-            short.len() as u16,
+            short_w.min(row.width),
         );
     }
 

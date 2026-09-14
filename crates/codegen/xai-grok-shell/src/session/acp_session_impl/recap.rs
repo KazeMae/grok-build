@@ -568,14 +568,14 @@ impl SessionActor {
             model_override,
             session_model,
             reasoning_is_off,
-            |m| self.models_manager.model_in_catalog(m),
+            |m| self.models_manager.model_selectable_in_catalog(m),
         ) else {
             tracing::debug!(
                 pin = ?pin,
                 client_hint = ?model_override,
                 session_model = ?session_model,
                 reasoning_is_off,
-                "prompt suggest: effective model not in catalog; skipping request"
+                "prompt suggest: effective model is absent or not selectable; skipping request"
             );
             xai_grok_telemetry::session_ctx::log_event(PromptSuggestion {
                 action: PsAction::SkippedCatalog,

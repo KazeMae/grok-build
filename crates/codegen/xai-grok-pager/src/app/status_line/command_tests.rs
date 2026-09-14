@@ -7,7 +7,8 @@ const ROW: RowSize = RowSize {
 };
 
 async fn run_row(command: &str) -> String {
-    row_text(run_status_command(command, &ctx(), ROW, COMMAND_TIMEOUT).await)
+    let locale = crate::locale::LocaleContext::default();
+    row_text(run_status_command(command, &ctx(), ROW, COMMAND_TIMEOUT, &locale).await)
 }
 
 /// What a state-triggered run would paint, which is what these cases assert.
@@ -119,7 +120,8 @@ async fn grandchild_outcome(
     let _ = std::fs::remove_file(&marker);
     let script = script(&marker.display().to_string());
 
-    let row = row_text(run_status_command(&script, &ctx(), ROW, timeout).await);
+    let locale = crate::locale::LocaleContext::default();
+    let row = row_text(run_status_command(&script, &ctx(), ROW, timeout, &locale).await);
     tokio::time::sleep(Duration::from_secs(3)).await;
     let survived = marker.exists();
     let _ = std::fs::remove_file(&marker);
@@ -154,8 +156,17 @@ async fn background_job_holding_stdout_does_not_hold_the_row() {
     // No redirect, so the grandchild inherits stdout and the pipe stays open for five seconds after the shell exits
     // Reading to EOF would wait for it
     let started = Instant::now();
-    let row =
-        row_text(run_status_command("sleep 5 & printf row", &ctx(), ROW, COMMAND_TIMEOUT).await);
+    let locale = crate::locale::LocaleContext::default();
+    let row = row_text(
+        run_status_command(
+            "sleep 5 & printf row",
+            &ctx(),
+            ROW,
+            COMMAND_TIMEOUT,
+            &locale,
+        )
+        .await,
+    );
 
     assert_eq!(row, "row");
     assert!(

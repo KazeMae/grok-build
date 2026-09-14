@@ -146,6 +146,122 @@ impl Lifecycle {
             },
         }
     }
+
+    /// The localized human-readable `plain` line for this lifecycle event.
+    /// Structured output remains canonical and language-neutral.
+    pub(crate) fn plain_message_with_locale(
+        &self,
+        locale: &crate::locale::LocaleContext,
+    ) -> String {
+        match self {
+            Lifecycle::CompactFailed { error } if error.trim().is_empty() => locale
+                .named_text(
+                    "headless.lifecycle.compact_failed_empty",
+                    "Auto-compact failed.",
+                )
+                .into_owned(),
+            Lifecycle::CompactFailed { error } => {
+                let single_line = error.split_whitespace().collect::<Vec<_>>().join(" ");
+                locale
+                    .named_text(
+                        "headless.lifecycle.compact_failed",
+                        "Auto-compact failed - {error}",
+                    )
+                    .replace("{error}", &single_line)
+            }
+            Lifecycle::MemoryFlushStarted => locale
+                .named_text(
+                    "headless.lifecycle.memory_flush.started",
+                    "Memory flush started.",
+                )
+                .into_owned(),
+            Lifecycle::MemoryFlushCompleted { result, path } => {
+                let result = localized_memory_flush_result(locale, result);
+                match path {
+                    Some(path) => replace_lifecycle_placeholders_once(
+                        &locale.named_text(
+                            "headless.lifecycle.memory_flush.completed_path",
+                            "Memory flush {result}: {path}",
+                        ),
+                        &[("{result}", &result), ("{path}", path)],
+                    ),
+                    None => locale
+                        .named_text(
+                            "headless.lifecycle.memory_flush.completed",
+                            "Memory flush {result}.",
+                        )
+                        .replace("{result}", &result),
+                }
+            }
+            _ => self.plain_message(),
+        }
+    }
+}
+
+fn replace_lifecycle_placeholders_once(template: &str, replacements: &[(&str, &str)]) -> String {
+    let mut output = String::with_capacity(template.len());
+    let mut remaining = template;
+    loop {
+        let Some((index, placeholder, value)) = replacements
+            .iter()
+            .filter_map(|(placeholder, value)| {
+                remaining
+                    .find(placeholder)
+                    .map(|index| (index, *placeholder, *value))
+            })
+            .min_by_key(|(index, _, _)| *index)
+        else {
+            output.push_str(remaining);
+            break;
+        };
+        output.push_str(&remaining[..index]);
+        output.push_str(value);
+        remaining = &remaining[index + placeholder.len()..];
+    }
+    output
+}
+
+fn localized_memory_flush_result(locale: &crate::locale::LocaleContext, result: &str) -> String {
+    let text = |id: &str, english: &str| locale.named_text(id, english).into_owned();
+    match result {
+        "written" => text("headless.lifecycle.memory_flush.result.written", "written"),
+        "nothing to store" => text(
+            "headless.lifecycle.memory_flush.result.nothing_to_store",
+            "nothing to store",
+        ),
+        "semantic duplicate" => text(
+            "headless.lifecycle.memory_flush.result.semantic_duplicate",
+            "semantic duplicate",
+        ),
+        "storage not configured" => text(
+            "headless.lifecycle.memory_flush.result.storage_not_configured",
+            "storage not configured",
+        ),
+        _ => [
+            (
+                "write failed: ",
+                "headless.lifecycle.memory_flush.result.write_failed",
+                "write failed: {detail}",
+            ),
+            (
+                "rejected: ",
+                "headless.lifecycle.memory_flush.result.rejected",
+                "rejected: {detail}",
+            ),
+            (
+                "skipped: ",
+                "headless.lifecycle.memory_flush.result.skipped",
+                "skipped: {detail}",
+            ),
+        ]
+        .into_iter()
+        .find_map(|(prefix, id, english)| {
+            result
+                .strip_prefix(prefix)
+                .map(|detail| text(id, english).replace("{detail}", detail))
+        })
+        .unwrap_or_else(|| result.to_owned()),
+    }
 }
 
 /// The `streaming-json` wire token for an ACP [`proto::ToolKind`].

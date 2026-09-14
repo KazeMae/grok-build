@@ -1,12 +1,39 @@
 //! Built-in files extracted to `~/.grok/` on startup.
 
-const BUILTIN_FILES: &[(&str, &str)] = &[("README.md", include_str!("../README.md"))];
+const COMMUNITY_METADATA_MARKER: &str = ".metadata_version.grok-build-zh";
+const COMMUNITY_README: &str = "README.grok-build-zh.md";
+const COMMUNITY_CHANGELOG_MD: &str = "CHANGELOG.grok-build-zh.md";
+const COMMUNITY_CHANGELOG_JSON: &str = "CHANGELOG.grok-build-zh.json";
+
+const BUILTIN_FILES: &[(&str, &str)] = &[
+    (COMMUNITY_README, include_str!("../README.zh-CN.md")),
+    (
+        COMMUNITY_CHANGELOG_MD,
+        include_str!(concat!(
+            "../changelogs/",
+            env!("CARGO_PKG_VERSION"),
+            ".zh-CN.md"
+        )),
+    ),
+    (
+        COMMUNITY_CHANGELOG_JSON,
+        include_str!(concat!(
+            "../changelogs/",
+            env!("CARGO_PKG_VERSION"),
+            ".zh-CN.json"
+        )),
+    ),
+];
 
 /// Extract built-in metadata files to `~/.grok/` on startup.
 /// User skills under `~/.grok/skills/` are never managed here. Platform skills are delivered separately through the bundled skill cache.
 pub fn extract_builtin_files(grok_home: &std::path::Path) {
     let version = xai_grok_version::VERSION;
-    let marker = grok_home.join(".metadata_version");
+    // The community build shares `GROK_HOME` with the official executable,
+    // but its extracted metadata must not share ownership markers or changelog
+    // cache names. Otherwise either executable can suppress or overwrite the
+    // other distribution's metadata when their versions happen to match.
+    let marker = grok_home.join(COMMUNITY_METADATA_MARKER);
 
     if let Ok(existing) = std::fs::read_to_string(&marker)
         && existing.trim() == version
@@ -15,11 +42,6 @@ pub fn extract_builtin_files(grok_home: &std::path::Path) {
     }
 
     let _ = std::fs::create_dir_all(grok_home);
-
-    // Clean up cached changelog files from previous version so /release-notes fetches fresh content for the new version
-    for stale in &["CHANGELOG.json", "CHANGELOG.md"] {
-        let _ = std::fs::remove_file(grok_home.join(stale));
-    }
 
     for &(filename, content) in BUILTIN_FILES {
         if let Err(e) = std::fs::write(grok_home.join(filename), content) {
@@ -172,13 +194,92 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundled_metadata_is_the_community_chinese_release() {
+        assert_eq!(BUILTIN_FILES.len(), 3);
+        assert_eq!(BUILTIN_FILES[0].0, COMMUNITY_README);
+        assert!(BUILTIN_FILES[0].1.contains("grok"));
+        assert!(BUILTIN_FILES[0].1.contains("简体中文社区版"));
+        assert_eq!(BUILTIN_FILES[1].0, COMMUNITY_CHANGELOG_MD);
+        let expected_heading = format!("# {} —", env!("CARGO_PKG_VERSION"));
+        assert!(BUILTIN_FILES[1].1.starts_with(&expected_heading));
+        assert!(
+            [
+                "## 破坏性变更",
+                "## 新功能",
+                "## Bug 修复",
+                "## 性能",
+                "## 性能优化",
+                "## 中文社区版",
+            ]
+            .iter()
+            .any(|heading| BUILTIN_FILES[1].1.contains(heading)),
+            "the bundled changelog must contain a localized section heading"
+        );
+        assert_eq!(BUILTIN_FILES[2].0, COMMUNITY_CHANGELOG_JSON);
+        let entries: Vec<serde_json::Value> = serde_json::from_str(BUILTIN_FILES[2].1).unwrap();
+        let upstream_entries: Vec<serde_json::Value> = serde_json::from_str(include_str!(concat!(
+            "../changelogs/",
+            env!("CARGO_PKG_VERSION"),
+            ".json"
+        )))
+        .unwrap();
+        assert_eq!(entries.len(), upstream_entries.len());
+        assert!(!entries.is_empty());
+        for (translated, upstream) in entries.iter().zip(&upstream_entries) {
+            assert_eq!(translated["category"], upstream["category"]);
+            assert_eq!(translated["breaking_change"], upstream["breaking_change"]);
+            assert!(
+                translated["description"]
+                    .as_str()
+                    .is_some_and(|description| description.chars().any(|ch| {
+                        matches!(ch, '\u{3400}'..='\u{9fff}' | '\u{f900}'..='\u{faff}')
+                    }))
+            );
+        }
+
+        // Community release notes are maintained separately from the translated
+        // upstream JSON. Only that explicit section is outside the comparison.
+        let mut in_community_section = false;
+        let markdown_descriptions: Vec<&str> = BUILTIN_FILES[1]
+            .1
+            .lines()
+            .filter_map(|line| {
+                if let Some(heading) = line.strip_prefix("## ") {
+                    in_community_section = heading == "中文社区版改进";
+                }
+                if in_community_section {
+                    None
+                } else {
+                    line.strip_prefix("- ")
+                }
+            })
+            .collect();
+        let json_descriptions: Vec<&str> = entries
+            .iter()
+            .filter_map(|entry| entry["description"].as_str())
+            .collect();
+        assert_eq!(markdown_descriptions.len(), entries.len());
+        let markdown_descriptions = markdown_descriptions
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        let json_descriptions = json_descriptions
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(markdown_descriptions.len(), entries.len());
+        assert_eq!(json_descriptions.len(), entries.len());
+        assert_eq!(markdown_descriptions, json_descriptions);
+    }
+
+    #[test]
     fn version_bump_reextracts_metadata_without_touching_skills() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
 
         extract_builtin_files(home);
-        std::fs::write(home.join("README.md"), "old").unwrap();
-        std::fs::write(home.join(".metadata_version"), "0.0.0-stale").unwrap();
+        std::fs::write(home.join(COMMUNITY_README), "old").unwrap();
+        std::fs::write(home.join(COMMUNITY_METADATA_MARKER), "0.0.0-stale").unwrap();
 
         let skill_names = [
             "help",
@@ -202,9 +303,11 @@ mod tests {
         extract_builtin_files(home);
 
         assert_ne!(
-            std::fs::read_to_string(home.join("README.md")).unwrap(),
+            std::fs::read_to_string(home.join(COMMUNITY_README)).unwrap(),
             "old"
         );
+        assert!(home.join(COMMUNITY_CHANGELOG_MD).exists());
+        assert!(home.join(COMMUNITY_CHANGELOG_JSON).exists());
         for name in skill_names {
             let dir = home.join("skills").join(name);
             assert_eq!(
@@ -224,7 +327,11 @@ mod tests {
         let home = tmp.path();
         std::fs::create_dir_all(home.join("skills/check")).unwrap();
         std::fs::write(home.join("skills/check/SKILL.md"), "custom check").unwrap();
-        std::fs::write(home.join(".metadata_version"), xai_grok_version::VERSION).unwrap();
+        std::fs::write(
+            home.join(COMMUNITY_METADATA_MARKER),
+            xai_grok_version::VERSION,
+        )
+        .unwrap();
 
         extract_builtin_files(home);
 
@@ -233,6 +340,35 @@ mod tests {
             std::fs::read_to_string(home.join("skills/check/SKILL.md")).unwrap(),
             "custom check"
         );
+    }
+
+    #[test]
+    fn official_metadata_marker_and_changelog_are_not_owned_by_community_build() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::write(home.join(".metadata_version"), xai_grok_version::VERSION).unwrap();
+        std::fs::write(home.join("README.md"), "official readme").unwrap();
+        std::fs::write(home.join("CHANGELOG.md"), "official markdown").unwrap();
+        std::fs::write(home.join("CHANGELOG.json"), "official json").unwrap();
+
+        extract_builtin_files(home);
+
+        assert_eq!(
+            std::fs::read_to_string(home.join("README.md")).unwrap(),
+            "official readme"
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("CHANGELOG.md")).unwrap(),
+            "official markdown"
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("CHANGELOG.json")).unwrap(),
+            "official json"
+        );
+        assert!(home.join(COMMUNITY_METADATA_MARKER).exists());
+        assert!(home.join(COMMUNITY_README).exists());
+        assert!(home.join(COMMUNITY_CHANGELOG_MD).exists());
+        assert!(home.join(COMMUNITY_CHANGELOG_JSON).exists());
     }
 
     const EXTRACTED_BODY: &str = "old platform skill body\n";

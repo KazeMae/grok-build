@@ -92,6 +92,10 @@ impl ExportCopyDetector {
 }
 
 pub fn export_copy_tip() -> EphemeralTip {
+    export_copy_tip_with_locale(None)
+}
+
+pub fn export_copy_tip_with_locale(locale: Option<&crate::locale::LocaleContext>) -> EphemeralTip {
     let theme = Theme::current();
     let dim = Style::default().fg(theme.gray);
     let key_style = Style::default()
@@ -102,11 +106,35 @@ pub fn export_copy_tip() -> EphemeralTip {
         ..EphemeralTip::new(
             EXPORT_COPY_TIP_KEY,
             Line::from(vec![
-                Span::styled("Copying a lot? ", dim),
+                Span::styled(
+                    locale
+                        .map(|locale| {
+                            locale.named_static_text("tip.export_copy.lead", "Copying a lot? ")
+                        })
+                        .unwrap_or("Copying a lot? "),
+                    dim,
+                ),
                 Span::styled("/copy", key_style),
-                Span::styled(" last reply · ", dim),
+                Span::styled(
+                    locale
+                        .map(|locale| {
+                            locale.named_static_text("tip.export_copy.last_reply", " last reply · ")
+                        })
+                        .unwrap_or(" last reply · "),
+                    dim,
+                ),
                 Span::styled("/export", key_style),
-                Span::styled(" full transcript", dim),
+                Span::styled(
+                    locale
+                        .map(|locale| {
+                            locale.named_static_text(
+                                "tip.export_copy.full_transcript",
+                                " full transcript",
+                            )
+                        })
+                        .unwrap_or(" full transcript"),
+                    dim,
+                ),
             ]),
         )
         .with_session_seen_cap(EXPORT_COPY_TIP_SEEN_KEY, EXPORT_COPY_TIP_SEEN_CAP)
@@ -153,6 +181,17 @@ mod tests {
             text,
             "Copying a lot? /copy last reply · /export full transcript"
         );
+    }
+
+    #[test]
+    fn zh_localization_export_copy_tip_preserves_commands() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        let tip = export_copy_tip_with_locale(Some(&locale));
+        let text: String = tip.line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "经常复制？/copy 上一条回复 · /export 完整对话");
     }
 
     // Matches AgentView::show_toast default; production uses CopyDelivery::toast_ticks().

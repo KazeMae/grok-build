@@ -2,7 +2,9 @@
 
 use super::ctx::{NO_SESSION_NOTICE, with_active_agent};
 use super::queue::{maybe_drain_queue, note_peek_page_flip};
-use super::settings::ui::{refresh_open_settings_modals, save_success_toast};
+use super::settings::ui::{
+    refresh_open_settings_modals, save_success_toast, save_success_toast_with_locale,
+};
 use crate::app::actions::Effect;
 use crate::app::app_view::{ActiveView, AppView};
 use agent_client_protocol as acp;
@@ -29,6 +31,13 @@ pub(super) fn dispatch_enter_plan_mode(
     app: &mut AppView,
     description: Option<String>,
 ) -> Vec<Effect> {
+    let already_in_plan = app.locale.named_static_text(
+        "plan.already_active",
+        "Already in plan mode. Use /view-plan to view the current plan.",
+    );
+    let no_session = app
+        .locale
+        .named_static_text("session.no_active", "No active session");
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -38,13 +47,13 @@ pub(super) fn dispatch_enter_plan_mode(
 
     let in_plan = agent.plan_mode_pending.unwrap_or(agent.plan_mode_active);
     if in_plan {
-        app.show_toast("Already in plan mode. Use /view-plan to view the current plan.");
+        app.show_toast(already_in_plan);
         return vec![];
     }
 
     let agent = app.agents.get_mut(&id).unwrap();
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent.show_toast(NO_SESSION_NOTICE);
+        agent.show_toast(no_session);
         return vec![];
     };
 
@@ -112,6 +121,9 @@ pub(super) fn set_plan_mode(
     app: &mut AppView,
     kind: crate::app::actions::PlanModeKind,
 ) -> Vec<Effect> {
+    let no_session = app
+        .locale
+        .named_static_text("session.no_active", "No active session");
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -120,7 +132,7 @@ pub(super) fn set_plan_mode(
     };
 
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent.show_toast(NO_SESSION_NOTICE);
+        agent.show_toast(no_session);
         return vec![];
     };
 
@@ -131,7 +143,8 @@ pub(super) fn set_plan_mode(
 
     // Idempotent: toast but skip the ACP round-trip.
     if prev == new {
-        app.show_toast(&plan_mode_toast(kind));
+        let toast = plan_mode_toast(kind, app.locale.as_ref());
+        app.show_toast(&toast);
         return vec![];
     }
 
@@ -139,7 +152,8 @@ pub(super) fn set_plan_mode(
     // The shell's `CurrentModeUpdate` broadcast will confirm and clear `plan_mode_pending` via `detect_plan_mode_change`
     agent.plan_mode_pending = Some(new);
     refresh_open_settings_modals(app);
-    app.show_toast(&plan_mode_toast(kind));
+    let toast = plan_mode_toast(kind, app.locale.as_ref());
+    app.show_toast(&toast);
 
     tracing::info!(
         target: "settings",
@@ -163,11 +177,13 @@ pub(super) fn set_plan_mode(
     }]
 }
 
-/// Format the `Plan mode` toast.
-/// Non-destructive in both directions (unlike YOLO), so both ON and OFF use the uniform ✓ glyph.
-/// Uses lowercase "on"/"off" via `save_success_toast`.
-fn plan_mode_toast(kind: crate::app::actions::PlanModeKind) -> String {
-    save_success_toast("Plan mode", kind.to_bool())
+/// Format the `Plan mode` toast. Non-destructive in both directions
+/// (unlike YOLO), so both ON and OFF use the uniform ✓ glyph.
+fn plan_mode_toast(
+    kind: crate::app::actions::PlanModeKind,
+    locale: &crate::locale::LocaleContext,
+) -> String {
+    save_success_toast_with_locale(locale, "plan_mode", "Plan mode", kind.to_bool())
 }
 
 /// The single gate for client paths that ENABLE always-approve: `Some(reason)` iff `enabling` and the pin (`app.yolo_policy_block`) is set.
@@ -371,9 +387,17 @@ pub(super) fn set_yolo_mode(app: &mut AppView, new: bool) -> Vec<Effect> {
     // YOLO ON gets a weightier visual; under an active plan mode, say the plan edit gate stays binding
     // "All tool actions auto-run" would overpromise while the shell rejects non-plan-file edits
     if new && effective_plan {
-        app.show_toast(YOLO_ON_UNDER_PLAN_TOAST);
+        let toast = app
+            .locale
+            .named_text(
+                "toast.permission.always_approve_on_under_plan",
+                YOLO_ON_UNDER_PLAN_TOAST,
+            )
+            .into_owned();
+        app.show_toast(&toast);
     } else {
-        app.show_toast(&yolo_toast(new));
+        let toast = yolo_toast_with_locale(new, Some(app.locale.as_ref()));
+        app.show_toast(&toast);
     }
 
     // Forward write is always "ask" or "always-approve" (bool entry point)
@@ -440,9 +464,17 @@ pub(super) fn set_permission_mode(
 
     // Toast on every save (plan-aware for AlwaysApprove, mirroring `set_yolo_mode`; the plan edit gate stays binding under yolo)
     if kind.is_always_approve() && effective_plan {
-        app.show_toast(YOLO_ON_UNDER_PLAN_TOAST);
+        let toast = app
+            .locale
+            .named_text(
+                "toast.permission.always_approve_on_under_plan",
+                YOLO_ON_UNDER_PLAN_TOAST,
+            )
+            .into_owned();
+        app.show_toast(&toast);
     } else {
-        app.show_toast(&permission_mode_toast(kind));
+        let toast = permission_mode_toast_with_locale(kind, Some(app.locale.as_ref()));
+        app.show_toast(&toast);
     }
 
     vec![Effect::PersistPermissionMode {
@@ -456,13 +488,29 @@ pub(super) fn set_permission_mode(
 /// `AlwaysApprove` reuses `yolo_toast(true)` (destructive).
 /// `Ask` and `Default` get dedicated "Permission mode: ..." toasts matching the picker brand.
 pub(super) fn permission_mode_toast(kind: crate::app::actions::PermissionModeKind) -> String {
+    permission_mode_toast_with_locale(kind, None)
+}
+
+fn permission_mode_toast_with_locale(
+    kind: crate::app::actions::PermissionModeKind,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
     use crate::app::actions::PermissionModeKind;
-    match kind {
-        PermissionModeKind::AlwaysApprove => yolo_toast(true),
-        PermissionModeKind::Auto => "\u{2713} Permission mode: Auto (classifier)".to_string(),
-        PermissionModeKind::Ask => "\u{2713} Permission mode: Ask".to_string(),
-        PermissionModeKind::Default => "\u{2713} Permission mode: Default".to_string(),
-    }
+    let (id, english) = match kind {
+        PermissionModeKind::AlwaysApprove => return yolo_toast_with_locale(true, locale),
+        PermissionModeKind::Auto => (
+            "toast.permission.mode_auto",
+            "\u{2713} Permission mode: Auto (classifier)",
+        ),
+        PermissionModeKind::Ask => ("toast.permission.mode_ask", "\u{2713} Permission mode: Ask"),
+        PermissionModeKind::Default => (
+            "toast.permission.mode_default",
+            "\u{2713} Permission mode: Default",
+        ),
+    };
+    locale
+        .map(|locale| locale.named_text(id, english).into_owned())
+        .unwrap_or_else(|| english.to_string())
 }
 
 /// YOLO-ON toast when plan mode is active.
@@ -473,12 +521,33 @@ pub(super) const YOLO_ON_UNDER_PLAN_TOAST: &str =
 
 /// Build the YOLO toast: ⚠ on ON (destructive), ✓ on OFF (safe default).
 fn yolo_toast(new: bool) -> String {
+    yolo_toast_with_locale(new, None)
+}
+
+pub(super) fn yolo_toast_with_locale(
+    new: bool,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
     if new {
-        // Warning glyph and consequence; only post-commit feedback
-        "\u{26A0} Always-approve ON: all tool actions auto-run".to_string()
+        // Warning glyph + consequence — only post-commit feedback.
+        let english = "\u{26A0} Always-approve ON: all tool actions auto-run";
+        locale
+            .map(|locale| {
+                locale
+                    .named_text("toast.permission.always_approve_on", english)
+                    .into_owned()
+            })
+            .unwrap_or_else(|| english.to_string())
     } else {
-        // OFF restores safe default: uniform ✓ glyph
-        save_success_toast("Always-approve", false)
+        // OFF restores safe default — uniform ✓ glyph.
+        let english = save_success_toast("Always-approve", false);
+        locale
+            .map(|locale| {
+                locale
+                    .named_text("toast.permission.always_approve_off", &english)
+                    .into_owned()
+            })
+            .unwrap_or(english)
     }
 }
 

@@ -82,78 +82,78 @@ pub struct PluginArgs {
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum PluginCommand {
-    /// List installed plugins
+    /// 列出已安装的插件
     List {
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
-        /// Include available plugins from marketplace sources. Requires --json.
+        /// 包含插件市场源中的可用插件；需要同时指定 --json。
         #[arg(long, requires = "json")]
         available: bool,
     },
-    /// Install a plugin from a git URL or local path
+    /// 从 Git URL 或本地路径安装插件
     Install {
-        /// Git URL, GitHub shorthand (user/repo), or local path.
-        /// Supports @ref suffix (e.g. user/repo@v1.0) and #subdir.
+        /// Git URL、GitHub 简写（user/repo）或本地路径。
+        /// 支持 @ref 后缀（如 user/repo@v1.0）和 #subdir。
         source: String,
-        /// Trust the plugin immediately (skip confirmation prompt).
+        /// 立即信任插件（跳过确认提示）。
         #[arg(long)]
         trust: bool,
     },
-    /// Uninstall an installed plugin by name
+    /// 按名称卸载已安装的插件
     #[command(visible_alias = "rm", visible_alias = "remove")]
     Uninstall {
-        /// Plugin name (as shown by `grok plugin list`).
+        /// 插件名称（以 `grok plugin list` 显示为准）。
         name: String,
-        /// Skip confirmation for multi-plugin repos.
+        /// 对包含多个插件的仓库跳过确认。
         #[arg(long)]
         confirm: bool,
-        /// Preserve the plugin's persistent data directory.
+        /// 保留插件的持久化数据目录。
         #[arg(long)]
         keep_data: bool,
     },
-    /// Update installed plugin(s)
+    /// 更新已安装的插件
     Update {
-        /// Plugin name to update. Omit to update all.
+        /// 要更新的插件名称；省略时更新全部插件。
         name: Option<String>,
     },
-    /// Enable a disabled plugin
+    /// 启用已禁用的插件
     Enable {
-        /// Plugin name to enable.
+        /// 要启用的插件名称。
         name: String,
     },
-    /// Disable a plugin without uninstalling it
+    /// 禁用插件但不卸载
     Disable {
-        /// Plugin name to disable.
+        /// 要禁用的插件名称。
         name: String,
     },
-    /// Show a plugin's component inventory
+    /// 显示插件的组件清单
     Details {
-        /// Plugin name.
+        /// 插件名称。
         name: String,
     },
-    /// Validate a plugin manifest
+    /// 验证插件清单
     Validate {
-        /// Path to plugin directory (default: current directory).
+        /// 插件目录路径（默认：当前目录）。
         #[arg(default_value = ".")]
         path: String,
     },
-    /// Create a release git tag from the plugin's manifest version
+    /// 根据插件清单中的版本创建发布 Git 标签
     Tag {
-        /// Path to plugin directory (default: current directory).
+        /// 插件目录路径（默认：当前目录）。
         #[arg(default_value = ".")]
         path: String,
-        /// Push the tag to the remote after creating it.
+        /// 创建后将标签推送到远程仓库。
         #[arg(long)]
         push: bool,
-        /// Create the tag even if the working tree is dirty or tag exists.
+        /// 即使工作树有改动或标签已存在，也创建该标签。
         #[arg(long, short = 'f')]
         force: bool,
-        /// Print what would be tagged without creating the tag.
+        /// 仅显示将要创建的标签，不实际创建。
         #[arg(long)]
         dry_run: bool,
     },
-    /// Manage marketplace sources
+    /// 管理插件市场源
     Marketplace(MarketplaceArgs),
 }
 
@@ -165,28 +165,28 @@ pub struct MarketplaceArgs {
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum MarketplaceCommand {
-    /// List configured marketplace sources and their plugins
+    /// 列出已配置的插件市场源及其中的插件
     List {
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
-    /// Add a marketplace source (git URL, GitHub shorthand, or local path)
+    /// 添加插件市场源（Git URL、GitHub 简写或本地路径）
     Add {
-        /// Git URL, GitHub shorthand (e.g. user/repo), or local directory path.
+        /// Git URL、GitHub 简写（如 user/repo）或本地目录路径。
         url: String,
-        /// Skip the reachability probe (e.g. for hosts only reachable on VPN).
+        /// 跳过连通性探测（如仅能通过 VPN 访问的主机）。
         #[arg(long)]
         force: bool,
     },
-    /// Remove a marketplace source and uninstall its plugins
+    /// 移除插件市场源并卸载其中的插件
     Remove {
-        /// Name, git URL, or local path of the source to remove.
+        /// 要移除的源名称、Git URL 或本地路径。
         source: String,
     },
-    /// Refresh marketplace source(s) and sync git caches
+    /// 刷新插件市场源并同步 Git 缓存
     Update {
-        /// Source URL to refresh. Omit to refresh all.
+        /// 要刷新的源 URL；省略时刷新全部源。
         name: Option<String>,
     },
 }

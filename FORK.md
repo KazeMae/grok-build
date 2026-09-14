@@ -14,6 +14,9 @@ The upstream license and notices remain unchanged.
 - `merge/upstream-<version>`: the review branch for one official synchronization.
   When the upstream package version repeats, append the short `SOURCE_REV` of the
   new snapshot, as in `merge/upstream-1.0.24-c4ea71cf`.
+- `merge/grokzen`: Simplified Chinese UI and compile-time privacy ported from
+  [GrokZen](https://github.com/Catapult291/GrokZen). The executable remains `grok`.
+  Official auto-update and GrokZen installers are not part of this overlay.
 
 For a fresh clone:
 

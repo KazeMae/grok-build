@@ -1024,7 +1024,15 @@ impl AgentView {
                 Some(crate::views::question_view::LocalQuestionKind::PromptBlocked { .. })
             )
         }) {
-            self.show_toast("Your prompt is blocked — choose Edit, Resend, or Discard");
+            let message = self
+                .scrollback
+                .locale()
+                .named_text(
+                    "prompt.blocked.toast.choose_action",
+                    "Your prompt is blocked — choose Edit, Resend, or Discard",
+                )
+                .into_owned();
+            self.show_toast(&message);
             return InputOutcome::Changed;
         }
         let follows_skip_submit = self.question_view.as_ref().is_some_and(|qv| {
@@ -1137,6 +1145,7 @@ impl AgentView {
             self.prompt.restore(stashed);
         }
     }
+
     pub(super) fn submit_question_answers(&mut self, skipped: bool) -> InputOutcome {
         use xai_grok_tools::implementations::grok_build::ask_user_question::AskUserQuestionExtResponse;
         self.swap_question_freeform();
@@ -1151,7 +1160,15 @@ impl AgentView {
                 (true, kind @ LocalQuestionKind::PromptBlocked { .. }) => {
                     qv.local_kind = Some(kind);
                     self.question_view = Some(qv);
-                    self.show_toast("Your prompt is blocked — choose Edit, Resend, or Discard");
+                    let message = self
+                        .scrollback
+                        .locale()
+                        .named_text(
+                            "prompt.blocked.toast.choose_action",
+                            "Your prompt is blocked — choose Edit, Resend, or Discard",
+                        )
+                        .into_owned();
+                    self.show_toast(&message);
                     return InputOutcome::Changed;
                 }
                 (true, LocalQuestionKind::DoctorFix { target, .. }) => {

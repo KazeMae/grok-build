@@ -20,6 +20,7 @@ fn context(width: u16, mode: DisplayMode) -> BlockContext {
         appearance: Default::default(),
         is_selected: false,
         cwd: None,
+        locale: Default::default(),
     }
 }
 
@@ -133,6 +134,104 @@ fn sent_block_uses_exact_success_title_and_renders_arguments_as_inert_text() {
     assert!(block.image_references().is_empty());
     assert!(block.video_references().is_empty());
     assert!(block.inline_open_button().is_none());
+}
+
+#[test]
+fn zh_localization_sent_message_translates_fixed_chrome_only() {
+    let block = SentMessageToolCallBlock::new(
+        SentMessagePresentation::Sent,
+        Some("sub-123".into()),
+        Some("literal payload".into()),
+    );
+    let mut ctx = context(120, DisplayMode::Expanded);
+    ctx.locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let output = block.output(&ctx);
+    let rendered = output
+        .lines
+        .iter()
+        .map(|line| line_plain_text(&line.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_eq!(
+        rendered,
+        "已向子智能体发送消息\n\n子智能体 ID：sub-123\n\n消息：\nliteral payload"
+    );
+}
+
+#[test]
+fn zh_localization_translates_only_product_owned_delivery_reasons() {
+    let mut ctx = context(120, DisplayMode::Expanded);
+    ctx.locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let fallback =
+        SentMessageToolCallBlock::new(SentMessagePresentation::RejectedUnavailable, None, None);
+    let fallback_text = fallback
+        .output(&ctx)
+        .lines
+        .iter()
+        .map(|line| line_plain_text(&line.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(fallback_text.contains("消息未被接受，且无法获取送达详情。"));
+
+    let saturated = SentMessageToolCallBlock::new(
+        SentMessagePresentation::Rejected {
+            reason: SentMessageDetail::Delivery(SendSubagentMessageOutput::Saturated {
+                max_in_flight: 7,
+            }),
+        },
+        None,
+        None,
+    );
+    let saturated_text = saturated
+        .output(&ctx)
+        .lines
+        .iter()
+        .map(|line| line_plain_text(&line.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(saturated_text.contains("消息接收已饱和（最多允许 7 条消息同时处理中）。"));
+
+    let limit = SentMessageToolCallBlock::new(
+        SentMessagePresentation::Rejected {
+            reason: SentMessageDetail::Delivery(SendSubagentMessageOutput::Limit {
+                max_bytes: 1024,
+                observed_bytes: 2048,
+            }),
+        },
+        None,
+        None,
+    );
+    let limit_text = limit
+        .output(&ctx)
+        .lines
+        .iter()
+        .map(|line| line_plain_text(&line.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(limit_text.contains("消息大小无效：实际 2048 字节；上限为 1024 字节。"));
+
+    let dynamic = SentMessageToolCallBlock::new(
+        SentMessagePresentation::Rejected {
+            reason: "opaque provider reason".into(),
+        },
+        None,
+        None,
+    );
+    let dynamic_text = dynamic
+        .output(&ctx)
+        .lines
+        .iter()
+        .map(|line| line_plain_text(&line.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(dynamic_text.contains("opaque provider reason"));
 }
 
 #[test]

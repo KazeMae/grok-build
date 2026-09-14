@@ -710,8 +710,118 @@ pub fn prompt_focus_hint() -> HintItem {
         pinned: false,
     }
 }
-/// A pinned one leads the bar and is offered once; an unpinned one is offered only in the selection
-/// states where moving on is the useful next step.
+
+/// Localize the compact footer vocabulary after state-specific hint assembly.
+/// Canonical keys and action IDs remain untouched; unknown/upstream labels
+/// deliberately retain their English fallback.
+pub(crate) fn localize_hint_labels(
+    hints: &mut [HintItem],
+    locale: Option<&crate::locale::LocaleContext>,
+) {
+    let Some(locale) = locale else {
+        return;
+    };
+    for hint in hints {
+        let mapping = match hint.label.as_ref() {
+            "nav" => Some(("shortcut.nav", "nav")),
+            "navigate" => Some(("shortcut.navigate", "navigate")),
+            "accept" => Some(("shortcut.accept", "accept")),
+            "accept / toggle" => Some(("shortcut.accept_toggle", "accept / toggle")),
+            "decline" => Some(("shortcut.decline", "decline")),
+            "next field" => Some(("shortcut.next_field", "next field")),
+            "drill" => Some(("shortcut.drill", "drill")),
+            "dismiss" => Some(("shortcut.dismiss", "dismiss")),
+            "submit" => Some(("shortcut.submit", "submit")),
+            "back" => Some(("shortcut.back", "back")),
+            "next answer" => Some(("shortcut.next_answer", "next answer")),
+            "unselect" => Some(("shortcut.unselect", "unselect")),
+            "send" => Some(("shortcut.send", "send")),
+            "save" => Some(("shortcut.save", "save")),
+            "save comment" => Some(("shortcut.save_comment", "save comment")),
+            "cancel" => Some(("shortcut.cancel", "cancel")),
+            "confirm" => Some(("shortcut.confirm", "confirm")),
+            "select" => Some(("shortcut.select", "select")),
+            "scope" => Some(("shortcut.scope", "scope")),
+            "edit pattern" => Some(("shortcut.edit_pattern", "edit pattern")),
+            "collapse" => Some(("shortcut.collapse", "collapse")),
+            "expand" => Some(("shortcut.expand", "expand")),
+            "always-approve" => Some(("shortcut.always_approve", "always-approve")),
+            "plan" => Some(("shortcut.plan", "plan")),
+            "approve" => Some(("shortcut.approve", "approve")),
+            "copy plan" => Some(("shortcut.copy_plan", "copy plan")),
+            "comment" => Some(("shortcut.comment", "comment")),
+            "fullscreen" => Some(("shortcut.fullscreen", "fullscreen")),
+            "quit plan" => Some(("shortcut.quit_plan", "quit plan")),
+            "search" => Some(("shortcut.search", "search")),
+            "filter" => Some(("shortcut.filter", "filter")),
+            "copy" => Some(("shortcut.copy", "copy")),
+            "delete" => Some(("shortcut.delete", "delete")),
+            "clear" => Some(("shortcut.clear", "clear")),
+            "close" => Some(("shortcut.close", "close")),
+            "question" => Some(("shortcut.question", "question")),
+            "wrap" => Some(("shortcut.wrap", "wrap")),
+            "raw" => Some(("shortcut.raw", "raw")),
+            "filename" => Some(("shortcut.filename", "filename")),
+            "goto" => Some(("shortcut.goto", "goto")),
+            "prompt" => Some(("shortcut.prompt", "prompt")),
+            "hide done" => Some(("shortcut.hide_done", "hide done")),
+            "show done" => Some(("shortcut.show_done", "show done")),
+            "delete row" => Some(("shortcut.delete_row", "delete row")),
+            "edit" => Some(("shortcut.edit", "edit")),
+            "reorder" => Some(("shortcut.reorder", "reorder")),
+            "page" => Some(("shortcut.page", "page")),
+            "queue" => Some(("shortcut.queue", "queue")),
+            "send now" => Some(("shortcut.send_now", "send now")),
+            "newline" => Some(("shortcut.newline", "newline")),
+            "lines" => Some(("shortcut.lines", "lines")),
+            "accept suggestion" => Some(("shortcut.accept_suggestion", "accept suggestion")),
+            "mode" => Some(("shortcut.mode", "mode")),
+            "view" => Some(("shortcut.view", "view")),
+            "copy output" => Some(("shortcut.copy_output", "copy output")),
+            "kill" => Some(("shortcut.kill", "kill")),
+            "go" => Some(("shortcut.go", "go")),
+            "next/prev" => Some(("shortcut.next_prev", "next/prev")),
+            "next option" => Some(("shortcut.next_option", "next option")),
+            "next choice" => Some(("shortcut.next_choice", "next choice")),
+            "prev/next agent" => Some(("shortcut.prev_next_agent", "prev/next agent")),
+            "open" => Some(("shortcut.open", "open")),
+            "turn" => Some(("shortcut.turn", "turn")),
+            "top/btm" => Some(("shortcut.top_bottom", "top/btm")),
+            "copy cmd" => Some(("shortcut.copy_command", "copy cmd")),
+            "copy path" => Some(("shortcut.copy_path", "copy path")),
+            "copy url" => Some(("shortcut.copy_url", "copy url")),
+            "copy query" => Some(("shortcut.copy_query", "copy query")),
+            "copy pattern" => Some(("shortcut.copy_pattern", "copy pattern")),
+            "send to bg" => Some(("shortcut.send_to_background", "send to bg")),
+            "expand thinking" => Some(("shortcut.expand_thinking", "expand thinking")),
+            "collapse thinking" => Some(("shortcut.collapse_thinking", "collapse thinking")),
+            "keep running" => Some(("shortcut.keep_running", "keep running")),
+            "scrollback" => Some(("shortcut.scrollback", "scrollback")),
+            "stop" => Some(("shortcut.stop", "stop")),
+            "agents" => Some(("shortcut.agents", "agents")),
+            "dashboard" => Some(("shortcut.dashboard", "dashboard")),
+            "skip" => Some(("shortcut.skip", "skip")),
+            "permission" => Some(("shortcut.permission", "permission")),
+            "cancel turn" => Some(("shortcut.cancel_turn", "cancel turn")),
+            "elicitation" => Some(("shortcut.elicitation", "elicitation")),
+            _ => None,
+        };
+        if let Some((id, english)) = mapping {
+            hint.label = locale.named_static_text(id, english).into();
+        }
+    }
+}
+/// Build the hints list for the shortcuts bar based on current state.
+///
+/// Each pane contributes its own hints dynamically.
+/// The registry provides the key bindings; the view decides which ones are visible.
+///
+/// `fold_label` is the dynamic label for the fold action based on selected entry state: "expand", "collapse", or "fold" (no foldable entry selected).
+///
+/// `group_header_label` ("expand"/"collapse") marks a selected group header; it replaces the fold and Enter:open hints with a single Enter toggle hint.
+///
+/// `focus_hint` is how the scrollback says the keyboard can leave it: [`prompt_focus_hint`], or a caller-supplied replacement.
+/// A pinned one leads the bar and is offered once; an unpinned one is offered only in the selection states where moving on is the useful next step.
 #[allow(clippy::too_many_arguments)]
 pub fn build_hints(
     active_pane: ActivePane,
@@ -738,6 +848,65 @@ pub fn build_hints(
     selected_is_agent_message: bool,
     shift_enter_unavailable: bool,
     scrollback_search: Option<&ScrollbackSearchState>,
+) -> Vec<HintItem> {
+    build_hints_with_locale(
+        active_pane,
+        focus_hint,
+        prompt,
+        registry,
+        is_editing_queued,
+        fold_label,
+        group_header_label,
+        tab_label,
+        thinking_label,
+        show_done,
+        selected_supports_copy,
+        selected_meta_label,
+        selected_supports_fullscreen,
+        can_demote,
+        selected_can_kill,
+        multiline_mode,
+        vim_mode,
+        is_subagent_view,
+        is_turn_running,
+        false,
+        has_queued_follow_up,
+        selected_is_user_prompt,
+        selected_is_agent_message,
+        shift_enter_unavailable,
+        scrollback_search,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_hints_with_locale(
+    active_pane: ActivePane,
+    focus_hint: HintItem,
+    prompt: &PromptWidget,
+    registry: &ActionRegistry,
+    is_editing_queued: bool,
+    fold_label: Option<&'static str>,
+    group_header_label: Option<&'static str>,
+    tab_label: &'static str,
+    thinking_label: &'static str,
+    show_done: bool,
+    selected_supports_copy: bool,
+    selected_meta_label: Option<&'static str>,
+    selected_supports_fullscreen: bool,
+    can_demote: bool,
+    selected_can_kill: bool,
+    multiline_mode: bool,
+    vim_mode: bool,
+    is_subagent_view: bool,
+    is_turn_running: bool,
+    esc_would_cancel_turn: bool,
+    has_queued_follow_up: bool,
+    selected_is_user_prompt: bool,
+    selected_is_agent_message: bool,
+    shift_enter_unavailable: bool,
+    scrollback_search: Option<&ScrollbackSearchState>,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> Vec<HintItem> {
     let mut hints = match active_pane {
         ActivePane::Todo => {
@@ -772,7 +941,7 @@ pub fn build_hints(
                 HintItem::new(crate::key!('y'), "copy"),
             ];
             if is_turn_running && let Some(def) = registry.find(ActionId::InterjectPrompt) {
-                hints.push(def.hint());
+                hints.push(def.hint_with_locale(locale));
             }
             hints
         }
@@ -844,7 +1013,7 @@ pub fn build_hints(
                 if def.id == ActionId::EnableVoiceMode || def.id == ActionId::VoiceToggle {
                     continue;
                 }
-                hints.push(def.hint());
+                hints.push(def.hint_with_locale(locale));
             }
             hints
         }
@@ -1011,14 +1180,18 @@ pub fn build_hints(
         }
     };
     if is_turn_running && let Some(def) = registry.find(ActionId::CancelTurn) {
-        hints.push(def.hint());
+        let mut hint = def.hint_with_locale(locale);
+        if esc_would_cancel_turn {
+            hint.keys = vec![crate::key!(Esc)];
+        }
+        hints.push(hint);
     }
     let has_composer_payload = !prompt.text().trim().is_empty() || is_editing_queued;
     if matches!(active_pane, ActivePane::Prompt)
         && ActionRegistry::interjection_possible(is_turn_running, has_composer_payload)
         && let Some(def) = registry.find(ActionId::InterjectPrompt)
     {
-        hints.push(def.hint());
+        hints.push(def.hint_with_locale(locale));
     }
     if can_demote
         && !is_subagent_view
@@ -1026,6 +1199,7 @@ pub fn build_hints(
     {
         hints.push(HintItem::new(key, "send to bg"));
     }
+    localize_hint_labels(&mut hints, locale);
     hints
 }
 #[cfg(test)]
@@ -2126,5 +2300,34 @@ mod tests {
         let layout = layout_with_rows(area, 0, 0, 1);
         assert_eq!(layout.follow_ups, Rect::default());
         assert!(layout.scrollback.height >= 5);
+    }
+    #[test]
+    fn chinese_locale_localizes_literal_and_registered_footer_hints() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::ProductDefault,
+        });
+        let mut hints = vec![
+            HintItem::new(crate::key!(Enter), "send"),
+            HintItem::new(crate::key!(' '), "prompt"),
+            HintItem::new(crate::key!(Enter), "accept / toggle"),
+            HintItem::new(crate::key!('d'), "decline"),
+            HintItem::new(crate::key!(Tab), "next field"),
+            HintItem::new(crate::key!(Tab), "elicitation"),
+        ];
+        localize_hint_labels(&mut hints, Some(&locale));
+        assert_eq!(hints[0].label, "发送");
+        assert_eq!(hints[1].label, "提示输入");
+        assert_eq!(hints[2].label, "接受/切换");
+        assert_eq!(hints[3].label, "拒绝");
+        assert_eq!(hints[4].label, "下一字段");
+        assert_eq!(hints[5].label, "MCP 请求");
+
+        let registry = ActionRegistry::defaults();
+        let action_hint = registry
+            .find(ActionId::SendToBackground)
+            .expect("default action exists")
+            .hint_with_locale(Some(&locale));
+        assert_eq!(action_hint.label, "发送到后台");
     }
 }

@@ -581,6 +581,10 @@ impl ModelsManager {
         resolve_catalog_key(models, &acp::ModelId::new(model_id)).is_some()
     }
 
+    pub(crate) fn model_selectable_in_catalog(&self, model_id: &str) -> bool {
+        self.model_in_catalog(model_id)
+    }
+
     #[cfg(test)]
     fn prefetched(&self) -> Option<IndexMap<String, ModelEntry>> {
         self.inner.catalog.read().prefetched.clone()

@@ -6,7 +6,13 @@ use std::time::Instant;
 fn state_with_run(now: Instant) -> StatusLineState {
     let mut state = StatusLineState::default();
     let ctx = Box::new(super::test_context("/tmp"));
-    let effect = state.begin_command_run(now, "true".into(), ctx, RowSize::FALLBACK);
+    let effect = state.begin_command_run(
+        now,
+        "true".into(),
+        ctx,
+        Arc::new(crate::locale::LocaleContext::default()),
+        RowSize::FALLBACK,
+    );
     assert!(effect.is_some(), "the run must start");
     state
 }
@@ -117,6 +123,7 @@ fn begin(state: &mut StatusLineState, now: Instant) -> Option<Effect> {
         now,
         "true".into(),
         Box::new(super::test_context("/tmp")),
+        Arc::new(crate::locale::LocaleContext::default()),
         RowSize::FALLBACK,
     )
 }

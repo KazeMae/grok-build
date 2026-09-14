@@ -104,6 +104,7 @@ pub(crate) fn compute_child_env(
     sandbox: Option<&TestSandbox>,
     env: &[EnvOp<'_>],
 ) -> std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> {
+    let sandboxed = sandbox.is_some();
     let mut map: std::collections::BTreeMap<_, _> = match sandbox {
         Some(sandbox) => sandbox.env().into_iter().collect(),
         None => std::env::vars_os().collect(),
@@ -111,6 +112,12 @@ pub(crate) fn compute_child_env(
     // portable-pty always seeded SHELL. Pin `/bin/sh` when the host lacks it instead of a passwd lookup.
     map.entry(std::ffi::OsString::from("SHELL"))
         .or_insert_with(|| std::ffi::OsString::from("/bin/sh"));
+    if sandboxed {
+        map.insert(
+            std::ffi::OsString::from(xai_grok_product::LOCALE_ENV),
+            std::ffi::OsString::from("en-US"),
+        );
+    }
     apply_child_env(&mut map, env);
     map
 }
@@ -377,6 +384,22 @@ mod tests {
             env.get(OsStr::new("PTY_TEST_EXTRA"))
                 .and_then(|v| v.to_str()),
             Some("1")
+        );
+        assert_eq!(
+            env.get(OsStr::new(xai_grok_product::LOCALE_ENV))
+                .and_then(|v| v.to_str()),
+            Some("en-US")
+        );
+
+        let localized = compute_child_env(
+            Some(&sandbox),
+            &[EnvOp::set(xai_grok_product::LOCALE_ENV, "zh-CN")],
+        );
+        assert_eq!(
+            localized
+                .get(OsStr::new(xai_grok_product::LOCALE_ENV))
+                .and_then(|v| v.to_str()),
+            Some("zh-CN")
         );
 
         // Inherited-mode pollution lands in the same map the hygiene pass

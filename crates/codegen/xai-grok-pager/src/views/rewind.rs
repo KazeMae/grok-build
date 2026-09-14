@@ -7,6 +7,146 @@ use ratatui::text::{Line, Span};
 use crate::theme::Theme;
 use crate::views::prompt_widget::StashedPrompt;
 
+fn rewind_static(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
+fn rewind_text(locale: Option<&crate::locale::LocaleContext>, id: &str, english: &str) -> String {
+    locale
+        .map(|locale| locale.named_text(id, english).into_owned())
+        .unwrap_or_else(|| english.to_owned())
+}
+
+fn localized_checkpoint_replay_error(
+    locale: Option<&crate::locale::LocaleContext>,
+    message: &str,
+) -> String {
+    const SAFETY_SUFFIX: &str = ". Cannot safely rewind past the compaction point.";
+
+    if let Some(path) = message
+        .strip_prefix("Compaction checkpoint file missing: ")
+        .and_then(|value| value.strip_suffix(SAFETY_SUFFIX))
+    {
+        return rewind_text(
+            locale,
+            "rewind.error.checkpoint_missing",
+            "Compaction checkpoint file missing: {path}. Cannot safely rewind past the compaction point.",
+        )
+        .replace("{path}", path);
+    }
+
+    if let Some(path) = message
+        .strip_prefix("Compaction checkpoint file corrupt: ")
+        .and_then(|value| value.strip_suffix(SAFETY_SUFFIX))
+    {
+        return rewind_text(
+            locale,
+            "rewind.error.checkpoint_corrupt",
+            "Compaction checkpoint file corrupt: {path}. Cannot safely rewind past the compaction point.",
+        )
+        .replace("{path}", path);
+    }
+
+    if let Some(schema_version) = message
+        .strip_prefix("Unsupported checkpoint schema version ")
+        .and_then(|value| value.strip_suffix(SAFETY_SUFFIX))
+    {
+        return rewind_text(
+            locale,
+            "rewind.error.checkpoint_schema_unsupported",
+            "Unsupported checkpoint schema version {schema_version}. Cannot safely rewind past the compaction point.",
+        )
+        .replace("{schema_version}", schema_version);
+    }
+
+    message.to_owned()
+}
+
+fn localized_rewind_error(locale: Option<&crate::locale::LocaleContext>, message: &str) -> String {
+    let Some(locale) = locale.filter(|locale| locale.locale() == crate::locale::UiLocale::ZhCn)
+    else {
+        return message.to_owned();
+    };
+    let locale = Some(locale);
+
+    const PROMPT_PREFIX: &str = "Cannot rewind to prompt #";
+    const COMPACTION_MIDDLE: &str = " — compaction checkpoint data is unavailable (";
+    const COMPACTION_SUFFIX: &str =
+        "). Try rewinding to a prompt after the compaction point instead.";
+    const INDEX_MIDDLE: &str = " — current prompt index is ";
+    const TARGETS_MIDDLE: &str = ". Valid targets: 0..";
+
+    if let Some(rest) = message.strip_prefix(PROMPT_PREFIX) {
+        if let Some((prompt_index, detail_with_suffix)) = rest.split_once(COMPACTION_MIDDLE)
+            && let Some(detail) = detail_with_suffix.strip_suffix(COMPACTION_SUFFIX)
+        {
+            let localized_detail = localized_checkpoint_replay_error(locale, detail);
+            return rewind_text(
+                locale,
+                "rewind.error.compaction_unavailable",
+                "Cannot rewind to prompt #{prompt_index} — compaction checkpoint data is unavailable ({detail}). Try rewinding to a prompt after the compaction point instead.",
+            )
+            .replace("{prompt_index}", prompt_index)
+            .replace("{detail}", &localized_detail);
+        }
+
+        if let Some((prompt_index, index_and_targets)) = rest.split_once(INDEX_MIDDLE)
+            && let Some((current_index, last_valid_index)) =
+                index_and_targets.split_once(TARGETS_MIDDLE)
+        {
+            return rewind_text(
+                locale,
+                "rewind.error.invalid_target",
+                "Cannot rewind to prompt #{prompt_index} — current prompt index is {current_index}. Valid targets: 0..{last_valid_index}",
+            )
+            .replace("{prompt_index}", prompt_index)
+            .replace("{current_index}", current_index)
+            .replace("{last_valid_index}", last_valid_index);
+        }
+    }
+
+    match message {
+        "External modifications detected. Confirm to revert anyway." => rewind_text(
+            locale,
+            "rewind.error.external_modifications",
+            "External modifications detected. Confirm to revert anyway.",
+        ),
+        "unknown error" => rewind_text(locale, "rewind.error.unknown", "unknown error"),
+        _ => message.to_owned(),
+    }
+}
+
+fn localized_conflict_label<'a>(
+    locale: Option<&crate::locale::LocaleContext>,
+    label: &'a str,
+) -> &'a str {
+    let Some(locale) = locale else {
+        return label;
+    };
+    let id = match label {
+        "deleted" => "rewind.conflict.deleted",
+        "added" => "rewind.conflict.added",
+        "modified" => "rewind.conflict.modified",
+        "conflict" => "rewind.conflict.conflict",
+        _ => return label,
+    };
+    locale.named_static_text(
+        id,
+        match label {
+            "deleted" => "deleted",
+            "added" => "added",
+            "modified" => "modified",
+            _ => "conflict",
+        },
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct RewindPointInfo {
     #[serde(alias = "promptIndex")]
@@ -318,7 +458,13 @@ pub fn rewind_overlay_height(phase: &RewindPhase, screen_h: u16) -> u16 {
     content + 1
 }
 
-pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, focused: bool) {
+pub fn render_rewind_overlay(
+    buf: &mut Buffer,
+    area: Rect,
+    phase: &RewindPhase,
+    focused: bool,
+    locale: Option<&crate::locale::LocaleContext>,
+) {
     if area.height == 0 || area.width < 10 {
         return;
     }
@@ -350,7 +496,7 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 content_x,
                 y,
                 &Line::from(Span::styled(
-                    "Loading rewind points...",
+                    rewind_static(locale, "rewind.loading_points", "Loading rewind points..."),
                     Style::default().fg(theme.gray),
                 )),
                 content_w,
@@ -363,27 +509,46 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 len: points.len(),
                 selected: *selected,
             }
-            .render(buf, area, "Rewind to which turn?", focused, |i, ctx| {
-                let point = &points[i];
-                let dot_style = Style::default().fg(theme.gray).bg(ctx.row_bg);
-                let preview: String = crate::render::line_utils::truncate_str(
-                    point.prompt_preview.as_deref().unwrap_or("(no preview)"),
-                    ctx.content_width.saturating_sub(8) as usize,
-                );
-                let text_style = Style::default()
-                    .fg(theme.text_primary)
-                    .bg(ctx.row_bg)
-                    .add_modifier(if ctx.is_cursor {
-                        Modifier::BOLD
+            .render(
+                buf,
+                area,
+                rewind_static(locale, "rewind.picker.title", "Rewind to which turn?"),
+                focused,
+                |i, ctx| {
+                    let point = &points[i];
+                    let dot_style = Style::default().fg(theme.gray).bg(ctx.row_bg);
+                    let file_info = if point.has_file_changes {
+                        rewind_text(locale, "rewind.files_count", " · {count} files")
+                            .replace("{count}", &point.num_file_snapshots.to_string())
                     } else {
-                        Modifier::empty()
-                    });
+                        String::new()
+                    };
+                    let preview_width = ctx.content_width.saturating_sub(2).saturating_sub(
+                        unicode_width::UnicodeWidthStr::width(file_info.as_str()) as u16,
+                    );
+                    let preview: String = crate::render::line_utils::truncate_str(
+                        point.prompt_preview.as_deref().unwrap_or_else(|| {
+                            rewind_static(locale, "rewind.no_preview", "(no preview)")
+                        }),
+                        preview_width as usize,
+                    );
+                    let text_style = Style::default()
+                        .fg(theme.text_primary)
+                        .bg(ctx.row_bg)
+                        .add_modifier(if ctx.is_cursor {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        });
+                    let meta_style = Style::default().fg(theme.gray).bg(ctx.row_bg);
 
-                Line::from(vec![
-                    Span::styled("\u{00B7} ", dot_style),
-                    Span::styled(preview, text_style),
-                ])
-            });
+                    Line::from(vec![
+                        Span::styled("\u{00B7} ", dot_style),
+                        Span::styled(preview, text_style),
+                        Span::styled(file_info, meta_style),
+                    ])
+                },
+            );
             return;
         }
         RewindPhase::CancelOffer { active_idx } => {
@@ -391,7 +556,14 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
             buf.set_line(
                 content_x,
                 y,
-                &Line::from(Span::styled("A turn is currently running.", title_style)),
+                &Line::from(Span::styled(
+                    rewind_static(
+                        locale,
+                        "rewind.turn_running",
+                        "A turn is currently running.",
+                    ),
+                    title_style,
+                )),
                 content_w,
             );
             y += 1;
@@ -399,7 +571,11 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 content_x,
                 y,
                 &Line::from(Span::styled(
-                    "Would you like to cancel it before rewinding?",
+                    rewind_static(
+                        locale,
+                        "rewind.cancel_question",
+                        "Would you like to cancel it before rewinding?",
+                    ),
                     Style::default().fg(theme.gray),
                 )),
                 content_w,
@@ -411,7 +587,7 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 y,
                 content_w,
                 'y',
-                "Cancel turn and rewind",
+                rewind_static(locale, "rewind.cancel_and_rewind", "Cancel turn and rewind"),
                 *active_idx == 0,
                 focused,
                 &theme,
@@ -423,7 +599,7 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 y,
                 content_w,
                 'n',
-                "Let it finish",
+                rewind_static(locale, "rewind.let_finish", "Let it finish"),
                 *active_idx == 1,
                 focused,
                 &theme,
@@ -435,7 +611,7 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 content_x,
                 y,
                 &Line::from(Span::styled(
-                    "Rewinding...",
+                    rewind_static(locale, "rewind.executing", "Rewinding..."),
                     Style::default().fg(theme.gray),
                 )),
                 content_w,
@@ -447,20 +623,19 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
             ..
         } => {
             let mut y = area.y + 1;
-            let preview_text = prompt_preview.as_deref().unwrap_or("this turn");
-            let prefix = "Rewind conversation to \u{201C}";
-            let suffix = "\u{201D}?";
-            let chrome = prefix.chars().count() + suffix.chars().count();
-            let max_preview = (content_w as usize).saturating_sub(chrome + 1);
-            let preview_trunc: String = if preview_text.chars().count() > max_preview {
-                let truncated: String = preview_text
-                    .chars()
-                    .take(max_preview.saturating_sub(1))
-                    .collect();
-                format!("{truncated}\u{2026}")
-            } else {
-                preview_text.to_string()
-            };
+            let preview_text = prompt_preview
+                .as_deref()
+                .unwrap_or_else(|| rewind_static(locale, "rewind.this_turn", "this turn"));
+            let prefix = rewind_static(
+                locale,
+                "rewind.confirm.title_prefix",
+                "Rewind conversation to \u{201C}",
+            );
+            let suffix = rewind_static(locale, "rewind.confirm.suffix", "\u{201D}?");
+            let chrome = unicode_width::UnicodeWidthStr::width(prefix)
+                + unicode_width::UnicodeWidthStr::width(suffix);
+            let max_preview = (content_w as usize).saturating_sub(chrome);
+            let preview_trunc = crate::render::line_utils::truncate_str(preview_text, max_preview);
             let title = format!("{prefix}{preview_trunc}{suffix}");
             buf.set_line(
                 content_x,
@@ -475,7 +650,7 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 y,
                 content_w,
                 'y',
-                "Yes",
+                rewind_static(locale, "rewind.confirm.yes", "Yes"),
                 *active_idx == 0,
                 focused,
                 &theme,
@@ -487,7 +662,11 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 y,
                 content_w,
                 'a',
-                "Yes, and don't ask again",
+                rewind_static(
+                    locale,
+                    "rewind.confirm.yes_and_dont_ask",
+                    "Yes, and don't ask again",
+                ),
                 *active_idx == 1,
                 focused,
                 &theme,
@@ -499,7 +678,7 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 y,
                 content_w,
                 'n',
-                "No",
+                rewind_static(locale, "rewind.confirm.no", "No"),
                 *active_idx == 2,
                 focused,
                 &theme,
@@ -511,7 +690,7 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 content_x,
                 y,
                 &Line::from(Span::styled(
-                    "Rewind failed",
+                    rewind_static(locale, "rewind.failed", "Rewind failed"),
                     Style::default()
                         .fg(theme.accent_error)
                         .add_modifier(Modifier::BOLD),
@@ -519,7 +698,9 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
                 content_w,
             );
             y += 1;
-            let truncated: String = message.chars().take(content_w as usize).collect();
+            let localized_message = localized_rewind_error(locale, message);
+            let truncated =
+                crate::render::line_utils::truncate_str(&localized_message, content_w as usize);
             buf.set_line(
                 content_x,
                 y,
@@ -531,7 +712,15 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
             );
             y += 1;
             render_radio_row(
-                buf, content_x, y, content_w, '\x1b', "Dismiss", true, focused, &theme,
+                buf,
+                content_x,
+                y,
+                content_w,
+                '\x1b',
+                rewind_static(locale, "rewind.dismiss", "Dismiss"),
+                true,
+                focused,
+                &theme,
             );
         }
     }
@@ -610,6 +799,13 @@ fn render_radio_row(
 mod tests {
     use super::*;
     use crossterm::event::{KeyEventKind, KeyModifiers};
+
+    fn zh_cn_locale() -> crate::locale::LocaleContext {
+        crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        })
+    }
 
     fn area() -> Rect {
         Rect {
@@ -696,6 +892,104 @@ mod tests {
         };
         assert_eq!(rewind_row_at(&phase, area(), 5, 3), Some(0));
         assert_eq!(rewind_row_at(&phase, area(), 5, 2), None);
+    }
+
+    #[test]
+    fn zh_localization_rewind_errors_translate_client_copy_and_preserve_dynamic_values() {
+        let locale = zh_cn_locale();
+        let checkpoint_path = r"C:\Users\Joy\.grok\sessions\C%3A%5CUsers%5CJoy\checkpoint-493.json";
+        let source = format!(
+            "Cannot rewind to prompt #493 — compaction checkpoint data is unavailable \
+             (Compaction checkpoint file missing: {checkpoint_path}. Cannot safely rewind past \
+             the compaction point.). Try rewinding to a prompt after the compaction point instead."
+        );
+        let localized = localized_rewind_error(Some(&locale), &source);
+
+        assert_eq!(
+            localized,
+            format!(
+                "无法回退到提示 #493——压缩检查点数据不可用（压缩检查点文件缺失：{checkpoint_path}；无法安全回退到压缩点之前）。请改为回退到压缩点之后的提示。"
+            )
+        );
+        assert!(localized.contains(checkpoint_path));
+        assert!(!localized.contains("Cannot rewind"));
+        assert_eq!(localized_rewind_error(None, &source), source);
+
+        assert_eq!(
+            localized_rewind_error(
+                Some(&locale),
+                "Cannot rewind to prompt #9 — current prompt index is 9. Valid targets: 0..8",
+            ),
+            "无法回退到提示 #9——当前提示索引为 9。有效目标范围：0..8"
+        );
+        assert_eq!(
+            localized_rewind_error(
+                Some(&locale),
+                "Cannot rewind to prompt #493 — compaction checkpoint data is unavailable \
+                 (Compaction checkpoint file corrupt: D:\\checkpoints\\broken.json. Cannot safely \
+                 rewind past the compaction point.). Try rewinding to a prompt after the \
+                 compaction point instead.",
+            ),
+            "无法回退到提示 #493——压缩检查点数据不可用（压缩检查点文件已损坏：D:\\checkpoints\\broken.json；无法安全回退到压缩点之前）。请改为回退到压缩点之后的提示。"
+        );
+        assert_eq!(
+            localized_rewind_error(
+                Some(&locale),
+                "Cannot rewind to prompt #493 — compaction checkpoint data is unavailable \
+                 (Unsupported checkpoint schema version 2. Cannot safely rewind past the \
+                 compaction point.). Try rewinding to a prompt after the compaction point \
+                 instead.",
+            ),
+            "无法回退到提示 #493——压缩检查点数据不可用（不支持检查点架构版本 2；无法安全回退到压缩点之前）。请改为回退到压缩点之后的提示。"
+        );
+        assert_eq!(
+            localized_rewind_error(
+                Some(&locale),
+                "External modifications detected. Confirm to revert anyway.",
+            ),
+            "检测到外部修改。请确认仍要回退。"
+        );
+        assert_eq!(
+            localized_rewind_error(Some(&locale), "unknown error"),
+            "未知错误"
+        );
+
+        let opaque_error = "provider-specific reason: session 7 / path D:\\work";
+        assert_eq!(
+            localized_rewind_error(Some(&locale), opaque_error),
+            opaque_error
+        );
+    }
+
+    #[test]
+    fn zh_localization_rewind_error_overlay_uses_localized_message() {
+        let locale = zh_cn_locale();
+        let area = Rect::new(0, 0, 160, 5);
+        let mut buf = Buffer::empty(area);
+        let phase = RewindPhase::Error {
+            message:
+                "Cannot rewind to prompt #493 — current prompt index is 493. Valid targets: 0..492"
+                    .to_owned(),
+        };
+
+        render_rewind_overlay(&mut buf, area, &phase, true, Some(&locale));
+
+        let rendered = (0..area.height)
+            .map(|row| {
+                (0..area.width)
+                    .map(|col| buf[(col, row)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rendered_without_cell_padding = rendered.replace(' ', "");
+        assert!(rendered_without_cell_padding.contains("回退失败"));
+        assert!(
+            rendered_without_cell_padding
+                .contains("无法回退到提示#493——当前提示索引为493。有效目标范围：0..492")
+        );
+        assert!(!rendered.contains("Cannot rewind"));
+        assert!(rendered_without_cell_padding.contains("关闭"));
     }
 
     #[test]

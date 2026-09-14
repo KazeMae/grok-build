@@ -680,6 +680,10 @@ impl AuthManager {
     /// Reads [`Self::current_or_expired`] because neither flag changes on token expiry and `current()` returns `None` during the refresh window. Fail-open: with no credential this returns `false` (not disabled).
     /// Collection paths that must not act on unknown privacy state should use the fail-closed [`Self::allows_data_collection`] instead.
     pub fn is_data_collection_disabled(&self) -> bool {
+        // Privacy build: always true (research uploads hard-off).
+        if xai_grok_version::research_data_collection_forbidden() {
+            return true;
+        }
         self.current_or_expired()
             .is_some_and(|a| a.is_data_collection_disabled())
     }
@@ -687,6 +691,10 @@ impl AuthManager {
     /// Missing or cleared auth (e.g. after a mid-session `/logout`) counts as disabled.
     /// Nothing may leave the machine while the privacy state is unknown.
     pub fn allows_data_collection(&self) -> bool {
+        // Privacy build: always false.
+        if xai_grok_version::research_data_collection_forbidden() {
+            return false;
+        }
         self.current_or_expired()
             .is_some_and(|a| !a.is_data_collection_disabled())
     }

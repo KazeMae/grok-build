@@ -133,6 +133,30 @@ fn unmodified_x_kills_selected_task() {
 }
 
 #[test]
+fn zh_localization_dock_unmodified_x_ignores_task_with_kill_already_pending() {
+    let mut agent = dock_with_task();
+    agent
+        .session
+        .bg_tasks
+        .get_mut("bg-1")
+        .expect("fixture task exists")
+        .pending_kill = true;
+    agent.dock_cursor = agent
+        .dock_items()
+        .iter()
+        .position(|item| {
+            matches!(
+                item,
+                crate::views::dock::DockItem::Row(crate::views::dock::Section::Tasks, 0)
+            )
+        })
+        .expect("expanded Tasks section has a row");
+
+    let outcome = agent.handle_dock_key(&key(KeyCode::Char('x'), KeyModifiers::NONE));
+    assert!(matches!(outcome, InputOutcome::Unchanged));
+}
+
+#[test]
 fn hidden_dock_does_not_navigate_or_kill() {
     let mut agent = dock_with_task();
     agent.dock_shown = false;

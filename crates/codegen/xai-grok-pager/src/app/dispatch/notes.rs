@@ -9,6 +9,18 @@ use crate::scrollback::block::RenderBlock;
 use crate::scrollback::blocks::{SessionEvent, ToolCallBlock};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+fn note_static(
+    locale: &crate::locale::LocaleContext,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale.named_static_text(id, english)
+}
+
+fn note_text(locale: &crate::locale::LocaleContext, id: &str, english: &str) -> String {
+    locale.named_text(id, english).into_owned()
+}
+
 /// Monotonic counter for correlating async rewrite responses with the modal that requested them.
 /// It prevents stale results from populating a different note's review modal when the user closes and re-opens quickly.
 static REWRITE_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -413,15 +425,23 @@ pub(crate) fn commit_feedback(
 
     let trimmed = text.trim().to_string();
     if trimmed.is_empty() && encoded_images.is_empty() {
-        agent.scrollback.push_block(RenderBlock::system(
-            "Please provide feedback text.".to_string(),
-        ));
+        let message = note_static(
+            agent.scrollback.locale(),
+            "feedback.text_required",
+            "Please provide feedback text.",
+        )
+        .to_string();
+        agent.scrollback.push_block(RenderBlock::system(message));
         return None;
     }
 
-    agent
-        .scrollback
-        .push_block(RenderBlock::system(FEEDBACK_THANKS_NOTICE.to_string()));
+    let message = note_static(
+        agent.scrollback.locale(),
+        "feedback.thanks",
+        FEEDBACK_THANKS_NOTICE,
+    )
+    .to_string();
+    agent.scrollback.push_block(RenderBlock::system(message));
 
     Some(feedback_send_effect(
         id,
@@ -447,6 +467,12 @@ pub(super) fn dispatch_send_feedback(
     images: crate::views::prompt_widget::FeedbackImages,
     trace: Option<FeedbackTraceChoice>,
 ) -> Vec<Effect> {
+    let no_session = note_static(
+        app.locale.as_ref(),
+        "session.no_active_period",
+        "No active session.",
+    )
+    .to_string();
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -458,9 +484,7 @@ pub(super) fn dispatch_send_feedback(
     agent.ephemeral_tip.clear_on_submit();
 
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent
-            .scrollback
-            .push_block(RenderBlock::system(NO_SESSION_NOTICE.to_string()));
+        agent.scrollback.push_block(RenderBlock::system(no_session));
         return vec![];
     };
 
@@ -576,9 +600,13 @@ fn send_remember_note(app: &mut AppView, text: String, record_in_history: bool) 
 
     let trimmed = text.trim().to_string();
     if trimmed.is_empty() {
-        agent.scrollback.push_block(RenderBlock::system(
-            "Please provide a memory note.".to_string(),
-        ));
+        let message = note_static(
+            agent.scrollback.locale(),
+            "memory_note.error.empty",
+            "Please provide a memory note.",
+        )
+        .to_string();
+        agent.scrollback.push_block(RenderBlock::system(message));
         return vec![];
     }
 
@@ -666,9 +694,13 @@ pub(super) fn dispatch_save_remember_note_from_modal(app: &mut AppView) -> Vec<E
         .map(|_| agent.memory_mode.unwrap_or_default());
 
     agent.active_modal = None;
-    agent
-        .scrollback
-        .push_block(RenderBlock::system("Saving memory note...".to_string()));
+    let message = note_static(
+        agent.scrollback.locale(),
+        "memory_note.saving",
+        "Saving memory note...",
+    )
+    .to_string();
+    agent.scrollback.push_block(RenderBlock::system(message));
 
     vec![Effect::SaveMemoryNote {
         agent_id: id,
@@ -767,6 +799,11 @@ fn extract_session_context(agent: &AgentView) -> String {
 /// Bypasses the prompt queue, so it works even while the agent is mid-turn.
 /// Fires an ACP ext method and shows a loading overlay.
 pub(super) fn dispatch_send_btw(app: &mut AppView, question: String) -> Vec<Effect> {
+    let no_session = note_static(
+        app.locale.as_ref(),
+        "session.no_active",
+        "No active session",
+    );
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -779,11 +816,9 @@ pub(super) fn dispatch_send_btw(app: &mut AppView, question: String) -> Vec<Effe
             if minimal {
                 agent
                     .scrollback
-                    .push_block(crate::scrollback::block::RenderBlock::system(
-                        NO_SESSION_NOTICE,
-                    ));
+                    .push_block(crate::scrollback::block::RenderBlock::system(no_session));
             } else {
-                agent.show_toast(NO_SESSION_NOTICE);
+                agent.show_toast(no_session);
             }
             return vec![];
         };
@@ -825,9 +860,21 @@ pub(crate) fn recap_unavailable_toast(has_user_messages: bool) -> &'static str {
     }
 }
 
-/// Whether scrollback already has a user prompt.
-/// Scans entries rather than `turn_count` so it stays correct during `begin_batch`/`end_batch` session load.
-/// There `push` defers `rebuild_turns`, so `turn_count` can stay 0 while replayed prompts are already present.
+pub(crate) fn recap_unavailable_toast_with_locale(
+    locale: &crate::locale::LocaleContext,
+    has_user_messages: bool,
+) -> &'static str {
+    if has_user_messages {
+        note_static(locale, "recap.unavailable", "Couldn't generate recap")
+    } else {
+        note_static(locale, "recap.no_messages", "No messages yet")
+    }
+}
+
+/// Whether scrollback already has a user prompt. Scans entries (not
+/// `turn_count`) so it stays correct during `begin_batch`/`end_batch` session
+/// load, when `push` defers `rebuild_turns` and `turn_count` can stay 0 while
+/// replayed prompts are already present.
 pub(crate) fn scrollback_has_user_messages(
     scrollback: &crate::scrollback::state::ScrollbackState,
 ) -> bool {
@@ -840,6 +887,7 @@ pub(crate) fn scrollback_has_user_messages(
 /// Bypasses the prompt queue, so it works even while the agent is mid-turn.
 /// The auto path is best-effort and silently no-ops without an active session.
 pub(super) fn dispatch_send_recap(app: &mut AppView, auto: bool) -> Vec<Effect> {
+    let locale = app.locale.clone();
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -851,14 +899,22 @@ pub(super) fn dispatch_send_recap(app: &mut AppView, auto: bool) -> Vec<Effect> 
     // Skip client requests entirely when the feature is off so we never hit `x.ai/recap`
     if !app.session_recap_available {
         if !auto {
-            agent.show_toast("Session recap is not enabled");
+            agent.show_toast(note_static(
+                locale.as_ref(),
+                "recap.disabled",
+                "Session recap is not enabled",
+            ));
         }
         return vec![];
     }
 
     let Some(session_id) = agent.session.session_id.clone() else {
         if !auto {
-            agent.show_toast(NO_SESSION_NOTICE);
+            agent.show_toast(note_static(
+                locale.as_ref(),
+                "session.no_active",
+                "No active session",
+            ));
         }
         return vec![];
     };
@@ -869,7 +925,7 @@ pub(super) fn dispatch_send_recap(app: &mut AppView, auto: bool) -> Vec<Effect> 
         // Skip the short-circuit while session replay is still loading (prompts may not have arrived yet)
         // Prefer an entry scan over `turn_count()` so mid-batch resume (deferred `rebuild_turns`) still sees history
         if !agent.session.loading_replay && !scrollback_has_user_messages(&agent.scrollback) {
-            agent.show_toast(recap_unavailable_toast(false));
+            agent.show_toast(recap_unavailable_toast_with_locale(locale.as_ref(), false));
             return vec![];
         }
         // Show an immediate loading block with the animated "running" sidebar so the user has feedback that a recap is being generated
@@ -915,18 +971,29 @@ pub(super) fn handle_memory_note_saved(
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         match result {
             Ok(()) => {
+                let message = note_text(
+                    agent.scrollback.locale(),
+                    "memory_note.saved",
+                    "Memory saved to {path}",
+                )
+                .replace(
+                    "{path}",
+                    &crate::util::display_user_grok_path("memory/MEMORY.md"),
+                );
                 agent
                     .scrollback
-                    .push_block(crate::scrollback::block::RenderBlock::system(
-                        "Memory note saved".to_string(),
-                    ));
+                    .push_block(crate::scrollback::block::RenderBlock::system(message));
             }
             Err(error) => {
+                let message = note_text(
+                    agent.scrollback.locale(),
+                    "memory_note.error.save",
+                    "Couldn't save memory note: {error}",
+                )
+                .replace("{error}", &error);
                 agent
                     .scrollback
-                    .push_block(crate::scrollback::block::RenderBlock::system(format!(
-                        "Couldn't save memory note: {error}"
-                    )));
+                    .push_block(crate::scrollback::block::RenderBlock::system(message));
             }
         }
     }

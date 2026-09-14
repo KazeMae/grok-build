@@ -9,6 +9,16 @@ fn render_report(report: &DiskUsageReport, now: i64) -> String {
     String::from_utf8(out).unwrap()
 }
 
+fn render_report_zh(report: &DiskUsageReport, now: i64) -> String {
+    let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let mut out = Vec::new();
+    display::print_report_with_locale(report, now, &mut out, Some(&locale)).unwrap();
+    String::from_utf8(out).unwrap()
+}
+
 fn measured(path: &Path) -> Option<u64> {
     physical_dir_size(path, Volume::of(path)).measure.bytes()
 }
@@ -60,6 +70,25 @@ fn worktrees_report(worktrees: Vec<WorktreeUsage>, total_bytes: u64) -> DiskUsag
         worktrees,
         ..DiskUsageReport::default()
     }
+}
+
+#[test]
+fn localized_report_translates_human_labels_but_keeps_paths_and_commands() {
+    let mut row = untracked_row(1024);
+    row.last_modified_at = Some(1_700_000_000);
+    let report = worktrees_report(vec![row], 1024);
+    let rendered = render_report_zh(&report, 1_700_000_120);
+    assert!(rendered.contains("磁盘占用"));
+    assert!(rendered.contains("工作树"));
+    assert!(rendered.contains("大小"));
+    assert!(rendered.contains("类型"));
+    assert!(rendered.contains("2 分钟前"));
+    assert!(rendered.contains("未跟踪（会话）"));
+    let displayed_path = format!(
+        "{}/worktrees/xai/wt-1",
+        crate::util::display_grok_home_prefix_for(Path::new("/wt-home"))
+    );
+    assert!(rendered.contains(&displayed_path));
 }
 
 #[test]

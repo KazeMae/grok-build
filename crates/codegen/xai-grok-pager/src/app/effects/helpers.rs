@@ -7,6 +7,7 @@ use super::actions::{PermissionModePersist, SubagentKillOutcome, TaskResult};
 use super::agent::AgentId;
 use crate::unified_log as ulog;
 use xai_grok_shell::sampling::error::{
+    FREE_USAGE_USER_MESSAGE, RATE_LIMITED_USER_MESSAGE_API_KEY, RATE_LIMITED_USER_MESSAGE_OAUTH,
     RATE_LIMITED_ERROR_CODE, error_detail_from_data, error_kind_str_from_error,
     format_rate_limited_user_message, http_status_from_error,
 };
@@ -28,6 +29,7 @@ pub(crate) async fn acp_send_bounded<R, T>(
     request: T,
     tx: &tokio::sync::mpsc::UnboundedSender<R>,
     action: &str,
+    locale: &crate::locale::LocaleContext,
 ) -> Result<T::Response, acp::Error>
 where
     T: xai_acp_lib::AcpRequest,
@@ -37,14 +39,33 @@ where
     match tokio::time::timeout(timeout, acp_send(request, tx)).await {
         Ok(result) => result,
         Err(_elapsed) => {
+            let localized_action = match action {
+                "Session creation" => Some(("session.rpc_action.create", "Session creation")),
+                "Worktree session resume" => Some((
+                    "session.rpc_action.worktree_resume",
+                    "Worktree session resume",
+                )),
+                "Worktree session creation" => Some((
+                    "session.rpc_action.worktree_create",
+                    "Worktree session creation",
+                )),
+                "Session loading" => Some(("session.rpc_action.load", "Session loading")),
+                _ => None,
+            };
+            let action = localized_action
+                .map(|(id, english)| locale.named_text(id, english).into_owned())
+                .unwrap_or_else(|| action.to_string());
+            let seconds = timeout.as_secs().to_string();
             Err(
                 acp::Error::new(
                     acp::ErrorCode::InternalError.into(),
-                    format!(
-                "{action} timed out after {}s. It may still finish in the background; \
-                 retrying right away can run into the same delay.",
-                timeout.as_secs()
-            ),
+                    localized_named(
+                        locale,
+                        "error.session_rpc_timeout",
+                        "{action} timed out after {seconds}s. It may still finish in the \
+                         background; retrying right away can run into the same delay.",
+                        &[("action", &action), ("seconds", &seconds)],
+                    ),
                 ),
             )
         }
@@ -55,6 +76,19 @@ where
 pub(crate) struct RestoreProgressMsg {
     pub agent_id: AgentId,
     pub message: String,
+}
+
+pub(super) fn localized_named(
+    locale: &crate::locale::LocaleContext,
+    id: &str,
+    english: &str,
+    arguments: &[(&str, &str)],
+) -> String {
+    let mut output = locale.named_text(id, english).into_owned();
+    for (name, value) in arguments {
+        output = output.replace(&format!("{{{name}}}"), value);
+    }
+    output
 }
 pub(super) fn log_prompt_result(
     session_id: &acp::SessionId,
@@ -89,6 +123,7 @@ pub(super) async fn fetch_plugin_cta_mcps(
     session_id: acp::SessionId,
     plugin_name: String,
     tx: AcpAgentTx,
+    locale: std::sync::Arc<crate::locale::LocaleContext>,
 ) -> TaskResult {
     let params = serde_json::json!({
         "sessionId": session_id.0.to_string(),
@@ -109,10 +144,20 @@ pub(super) async fn fetch_plugin_cta_mcps(
                 crate::views::mcps_modal::McpsListResponse,
             >(inner.clone())
                 .map(crate::views::mcps_modal::convert_list_response)
-                .map_err(|_| "couldn't load server list".to_string())
+                .map_err(|_| {
+                    locale
+                        .named_text(
+                            "extensions.error.server_list",
+                            "couldn't load server list",
+                        )
+                        .into_owned()
+                })
         }
-        Err(e) => Err(sanitize_user_error(&format!(
-            "couldn't load server list: {e}"
+        Err(e) => Err(sanitize_user_error(&localized_named(
+            locale.as_ref(),
+            "extensions.error.server_list_detail",
+            "couldn't load server list: {error}",
+            &[("error", &e.to_string())],
         ))),
     };
     TaskResult::PluginCtaMcpsLoaded {
@@ -125,27 +170,64 @@ pub(super) async fn fetch_plugin_cta_mcps(
 /// Rate-limit errors render the free-usage paywall, else the server detail, else the auth-aware fallback (see [`format_rate_limited_user_message`]).
 /// The server detail is rewritten for API-key auth when the body pushes personal SuperGrok.
 pub(super) fn format_acp_error(err: &acp::Error, is_api_key_auth: bool) -> String {
+    format_acp_error_with_locale(
+        err,
+        is_api_key_auth,
+        &crate::locale::LocaleContext::default(),
+    )
+}
+
+pub(super) fn format_acp_error_with_locale(
+    err: &acp::Error,
+    is_api_key_auth: bool,
+    locale: &crate::locale::LocaleContext,
+) -> String {
     if i32::from(err.code) == RATE_LIMITED_ERROR_CODE {
         let detail = error_data_detail(err);
-        return sanitize_user_error(
-            &format_rate_limited_user_message(detail.as_deref(), is_api_key_auth),
+        return format_rate_limited_user_message_with_locale(
+            detail.as_deref(), is_api_key_auth, locale,
         );
     }
     if err.code == acp::ErrorCode::InvalidParams && let Some(data) = &err.data
         && let Some(msg) = error_detail_from_data(data) && !msg.is_empty()
     {
-        return sanitize_user_error(&msg);
+        let display = crate::scrollback::blocks::localized_model_unavailable_reason(locale, &msg);
+        return sanitize_user_error(&display);
     }
     let raw = error_data_detail(err)
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| err.to_string());
-    crate::app::error_display::format_request_failure(
-            http_status_from_error(err),
-            crate::app::error_display::wire_error_kind(error_kind_str_from_error(err)),
-            &raw,
-        )
-        .message()
+    crate::app::error_display::format_request_failure_with_locale(
+        http_status_from_error(err),
+        crate::app::error_display::wire_error_kind(error_kind_str_from_error(err)),
+        &raw,
+        Some(locale),
+    )
+    .message()
 }
+
+/// Translate only canonical client copy; provider detail and wire codes stay intact.
+pub(crate) fn format_rate_limited_user_message_with_locale(
+    server_detail: Option<&str>,
+    is_api_key_auth: bool,
+    locale: &crate::locale::LocaleContext,
+) -> String {
+    let message = format_rate_limited_user_message(server_detail, is_api_key_auth);
+    let localized = match message.as_str() {
+        RATE_LIMITED_USER_MESSAGE_OAUTH => locale.named_text(
+            "session.rate_limit.oauth", RATE_LIMITED_USER_MESSAGE_OAUTH,
+        ).into_owned(),
+        RATE_LIMITED_USER_MESSAGE_API_KEY => locale.named_text(
+            "session.rate_limit.api_key", RATE_LIMITED_USER_MESSAGE_API_KEY,
+        ).into_owned(),
+        FREE_USAGE_USER_MESSAGE => locale.named_text(
+            "session.rate_limit.free_usage", FREE_USAGE_USER_MESSAGE,
+        ).into_owned(),
+        _ => message,
+    };
+    sanitize_user_error(&localized)
+}
+
 /// Detail string carried in the error's `data` payload, if any.
 fn error_data_detail(err: &acp::Error) -> Option<String> {
     err.data.as_ref().and_then(error_detail_from_data)
@@ -325,6 +407,9 @@ pub(crate) struct SessionFlags {
     /// Startup resume target deferred to the worktree handler after missing local id/title resolution.
     /// Worktree failure messages append the no-match hint only when the failing target equals this value.
     pub resume_local_miss: Option<String>,
+    /// Immutable UI locale captured at the composition boundary. Async effect
+    /// tasks use it to format fixed client-owned copy before returning results.
+    pub locale: std::sync::Arc<crate::locale::LocaleContext>,
 }
 impl SessionFlags {
     /// Resolve the agent profile name from the flags.
@@ -618,6 +703,7 @@ pub(super) fn count_chat_history_stats(history_path: &Path) -> (usize, usize) {
     }
     (turn_count, tool_call_count)
 }
+
 pub(super) async fn send_logout(tx: &AcpAgentTx) {
     let req = acp::ExtRequest::new(
         "x.ai/auth/logout",

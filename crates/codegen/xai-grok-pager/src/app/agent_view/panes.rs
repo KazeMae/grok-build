@@ -308,6 +308,12 @@ impl AgentView {
     /// Running non-workflow subagents in dock display order:
     /// `(child_session_id, subagent_id, row)`.
     pub(crate) fn dock_subagent_rows(&self) -> Vec<(String, String, crate::views::dock::DockRow)> {
+        self.dock_subagent_rows_with_locale(None)
+    }
+    pub(crate) fn dock_subagent_rows_with_locale(
+        &self,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Vec<(String, String, crate::views::dock::DockRow)> {
         let mut infos: Vec<&crate::app::subagent::SubagentInfo> = self
             .subagent_sessions
             .values()
@@ -317,7 +323,8 @@ impl AgentView {
         infos
             .into_iter()
             .map(|info| {
-                let (kind, description) = crate::app::subagent::format_subagent_label(info);
+                let (kind, description) =
+                    crate::app::subagent::format_subagent_label_with_locale(info, locale);
                 let mut meta = String::new();
                 if let Some(model) = info.attempt.model.as_deref().filter(|s| !s.is_empty()) {
                     meta.push_str(model);
@@ -342,6 +349,12 @@ impl AgentView {
     }
     /// Running background commands (non-monitor): `(task_id, row)`.
     pub(crate) fn dock_task_rows(&self) -> Vec<(String, crate::views::dock::DockRow)> {
+        self.dock_task_rows_with_locale(None)
+    }
+    pub(crate) fn dock_task_rows_with_locale(
+        &self,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Vec<(String, crate::views::dock::DockRow)> {
         let mut tasks: Vec<&crate::app::agent::BgTaskState> = self
             .session
             .bg_tasks
@@ -361,7 +374,10 @@ impl AgentView {
                 (
                     t.task_id.clone(),
                     crate::views::dock::DockRow {
-                        kind: "Run".into(),
+                        kind: locale
+                            .map(|locale| locale.named_static_text("dock.kind.run", "Run"))
+                            .unwrap_or("Run")
+                            .into(),
                         description,
                         activity: None,
                         meta: crate::views::dock::fmt_elapsed(elapsed),
@@ -375,6 +391,12 @@ impl AgentView {
     }
     /// Running monitors, then scheduled loops, in dock display order.
     pub(crate) fn dock_watcher_rows(&self) -> Vec<(DockWatcherId, crate::views::dock::DockRow)> {
+        self.dock_watcher_rows_with_locale(None)
+    }
+    pub(crate) fn dock_watcher_rows_with_locale(
+        &self,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Vec<(DockWatcherId, crate::views::dock::DockRow)> {
         let mut monitors: Vec<&crate::app::agent::BgTaskState> = self
             .session
             .bg_tasks
@@ -394,7 +416,10 @@ impl AgentView {
                 (
                     DockWatcherId::Monitor(t.task_id.clone()),
                     crate::views::dock::DockRow {
-                        kind: "Monitor".into(),
+                        kind: locale
+                            .map(|locale| locale.named_static_text("dock.kind.monitor", "Monitor"))
+                            .unwrap_or("Monitor")
+                            .into(),
                         description,
                         activity: None,
                         meta: crate::views::dock::fmt_elapsed(elapsed),
@@ -412,7 +437,10 @@ impl AgentView {
             (
                 DockWatcherId::Loop(s.task_id.clone()),
                 crate::views::dock::DockRow {
-                    kind: "Loop".into(),
+                    kind: locale
+                        .map(|locale| locale.named_static_text("dock.kind.loop", "Loop"))
+                        .unwrap_or("Loop")
+                        .into(),
                     description: s.prompt.clone(),
                     activity: None,
                     meta: s.human_schedule.clone(),
@@ -604,19 +632,25 @@ impl AgentView {
         }
     }
     pub(crate) fn dock_snapshot(&self) -> crate::views::dock::DockData {
+        self.dock_snapshot_with_locale(None)
+    }
+    pub(crate) fn dock_snapshot_with_locale(
+        &self,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> crate::views::dock::DockData {
         crate::views::dock::DockData {
             subagents: self
-                .dock_subagent_rows()
+                .dock_subagent_rows_with_locale(locale)
                 .into_iter()
                 .map(|(_, _, row)| row)
                 .collect(),
             tasks: self
-                .dock_task_rows()
+                .dock_task_rows_with_locale(locale)
                 .into_iter()
                 .map(|(_, row)| row)
                 .collect(),
             watchers: self
-                .dock_watcher_rows()
+                .dock_watcher_rows_with_locale(locale)
                 .into_iter()
                 .map(|(_, row)| row)
                 .collect(),

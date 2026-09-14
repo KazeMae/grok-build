@@ -142,6 +142,7 @@ pub struct StatusLineRun {
     id: RunId,
     command: String,
     ctx: Box<StatusLineContext>,
+    locale: Arc<crate::locale::LocaleContext>,
     term_size: RowSize,
 }
 
@@ -304,6 +305,7 @@ impl StatusLineState {
         now: Instant,
         command: String,
         mut ctx: Box<StatusLineContext>,
+        locale: Arc<crate::locale::LocaleContext>,
         term_size: RowSize,
     ) -> Option<Effect> {
         if self.command_in_flight(now) {
@@ -327,6 +329,7 @@ impl StatusLineState {
             id,
             command,
             ctx,
+            locale,
             term_size,
         }))
     }

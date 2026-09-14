@@ -559,7 +559,67 @@ fn resolve_hunk_tracker_mode(
         .find(|s| !s.is_empty())
         .map(str::to_owned)
 }
-/// A failed connect attempt, classified for telemetry at the point of failure rather than by parsing the error message.
+fn ui_locale_from_toml(value: Option<&toml::Value>) -> Option<&str> {
+    value?
+        .get("ui")?
+        .get("locale")?
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn first_supported_ui_locale<'a>(
+    values: impl IntoIterator<Item = Option<&'a str>>,
+) -> Option<&'a str> {
+    values
+        .into_iter()
+        .flatten()
+        .find(|value| crate::locale::UiLocale::parse(value).is_some())
+}
+
+/// Resolve the UI locale once at the composition boundary.
+///
+/// Precedence is requirements > CLI > env > user config > managed config >
+/// host locale > community-product default. The remote API `locale` fields are
+/// intentionally not consulted because they are service protocol inputs, not a
+/// client UI preference.
+pub fn resolve_locale_context(args: &PagerArgs) -> std::sync::Arc<crate::locale::LocaleContext> {
+    let layers = xai_grok_config::ConfigLayers::load().ok();
+    let requirement = layers.as_ref().and_then(|layers| {
+        first_supported_ui_locale([
+            ui_locale_from_toml(layers.mdm_requirements.as_ref()),
+            ui_locale_from_toml(layers.system_requirements.as_ref()),
+            ui_locale_from_toml(layers.user_requirements.as_ref()),
+        ])
+    });
+    let config = layers
+        .as_ref()
+        .and_then(|layers| ui_locale_from_toml(Some(&layers.user)));
+    let managed = layers.as_ref().and_then(|layers| {
+        first_supported_ui_locale([
+            ui_locale_from_toml(Some(&layers.managed)),
+            ui_locale_from_toml(Some(&layers.system_managed)),
+        ])
+    });
+    let environment = std::env::var(xai_grok_product::LOCALE_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let system = crate::locale::system_locale();
+    let resolved = crate::locale::ResolvedLocale::resolve(crate::locale::LocalePreferences {
+        requirement,
+        cli: args.locale.as_deref(),
+        environment: environment.as_deref(),
+        config,
+        managed,
+        system: system.as_deref(),
+        product_default: Some(xai_grok_product::DEFAULT_UI_LOCALE),
+    });
+    std::sync::Arc::new(crate::locale::LocaleContext::new(resolved))
+}
+/// Run a connect future bounded by cancellation and `timeout`, so a hung leader
+/// or embedded spawn cannot strand the user on a blank screen.
+/// A failed connect attempt, classified for telemetry at the point of failure
+/// rather than by parsing the error message.
 struct ConnectFailure {
     outcome: crate::acp::StartupOutcome,
     error: anyhow::Error,
@@ -663,6 +723,8 @@ pub async fn run(
         tokio::sync::oneshot::Receiver<Option<xai_grok_update::auto_update::UpdateAvailable>>,
     >,
 ) -> anyhow::Result<bool> {
+    xai_tty_utils::redirect_native_stderr();
+    let locale = resolve_locale_context(&args);
     let screen_mode_override = screen_mode_relaunch::take_screen_mode_env_override();
     let cancel = CancellationToken::new();
     let startup_start = std::time::Instant::now();
@@ -680,11 +742,12 @@ pub async fn run(
             }
         };
     if let xai_grok_login::PreTuiLoginOutcome::SignedIn(auth) =
-        xai_grok_login::maybe_run_pre_tui_external_login(
+        xai_grok_login::pre_tui::maybe_run_pre_tui_external_login_with_locale(
             &grok_com_config,
             proxy_base_url.clone(),
             args.force_login,
             io::stdin().is_terminal(),
+            locale.as_ref(),
         )
         .await?
     {
@@ -809,16 +872,23 @@ pub async fn run(
     let mut materialize_ctx = session_startup::MaterializeCtx::from_pager_args(&args);
     materialize_ctx.restore_progress_on_stdout =
         std::io::IsTerminal::is_terminal(&std::io::stdout());
-    let materialized = session_startup::materialize_startup(materialize_ctx, intent).await?;
+    let materialized =
+        session_startup::materialize_startup_with_locale(materialize_ctx, intent, locale.as_ref())
+            .await?;
     if args.chat()
         && let session_startup::MaterializedStartup::Resume { session_id, .. } = &materialized
     {
         let cwd = std::env::current_dir().unwrap_or_default();
         if session_startup::chat_mode_refuses_local_build_load(true, false, session_id, &cwd) {
-            anyhow::bail!(
-                "{} (session id: {session_id})",
-                session_startup::CHAT_MODE_LOCAL_BUILD_REFUSAL
-            );
+            let refusal = session_startup::chat_mode_local_build_refusal(locale.as_ref());
+            let message = locale
+                .named_text(
+                    "session.chat.local_build_refusal_with_id",
+                    "{message} (session id: {session_id})",
+                )
+                .replace("{message}", &refusal)
+                .replace("{session_id}", session_id);
+            anyhow::bail!(message);
         }
     }
     let mut session_title = match &materialized {
@@ -1104,8 +1174,11 @@ pub async fn run(
             return Err(f.error);
         }
     };
-    let agent_guard =
-        crate::acp::spawn::AgentShutdownGuard::new(cancel.clone(), connection.agent_thread.take());
+    let agent_guard = crate::acp::spawn::AgentShutdownGuard::new_with_locale(
+        cancel.clone(),
+        connection.agent_thread.take(),
+        locale.as_ref(),
+    );
     let effective_args = PagerArgs {
         resume_session: None,
         load_session: None,
@@ -1129,6 +1202,7 @@ pub async fn run(
         tracing_handle,
         &mut config_watcher,
         &effective_args,
+        locale,
         session_cwd,
         remote_settings,
         term_state,
@@ -1231,9 +1305,19 @@ fn print_exit_resume_hint(info: &ExitInfo, max_width: usize, w: &mut impl Write)
     }
     let _ = writeln!(w, "Resume this session with:");
     if info.minimal {
-        let _ = writeln!(w, "  grok --minimal --resume {}", info.session_id);
+        let _ = writeln!(
+            w,
+            "  {} --minimal --resume {}",
+            xai_grok_product::CLI_NAME,
+            info.session_id
+        );
     } else {
-        let _ = writeln!(w, "  grok --resume {}", info.session_id);
+        let _ = writeln!(
+            w,
+            "  {} --resume {}",
+            xai_grok_product::CLI_NAME,
+            info.session_id
+        );
     }
 }
 /// Screen-mode relaunch failure fallback (same quit tail as plain resume).
@@ -1778,10 +1862,14 @@ pub(crate) fn set_terminal_title(title: &str) {
 fn terminal_title_string(title: &str) -> String {
     let sanitized: String = title.chars().filter(|c| !c.is_control()).collect();
     if sanitized.is_empty() {
-        "grok".into()
+        xai_grok_product::CLI_NAME.into()
     } else {
-        let truncated: String = sanitized.chars().take(80 - 6).collect();
-        format!("{} - grok", truncated)
+        let suffix_width = xai_grok_product::CLI_NAME.chars().count() + 3;
+        let truncated: String = sanitized
+            .chars()
+            .take(80usize.saturating_sub(suffix_width))
+            .collect();
+        format!("{truncated} - {}", xai_grok_product::CLI_NAME)
     }
 }
 /// Run a best-effort teardown `f` on a helper thread, waiting at most `grace` for it.
@@ -1960,6 +2048,22 @@ mod tests {
     #[test]
     fn hunk_tracker_mode_nothing_set_is_none() {
         assert_eq!(resolve_hunk_tracker_mode(None, None, None), None);
+    }
+    #[test]
+    fn locale_layer_falls_through_invalid_higher_priority_values() {
+        assert_eq!(
+            first_supported_ui_locale([
+                Some("fr-FR"),
+                Some("  "),
+                Some("zh_CN.UTF-8"),
+                Some("en-US"),
+            ]),
+            Some("zh_CN.UTF-8")
+        );
+        assert_eq!(
+            first_supported_ui_locale([Some("fr-FR"), Some("ja-JP")]),
+            None
+        );
     }
     #[test]
     fn hunk_tracker_mode_empty_env_is_none() {
@@ -2472,7 +2576,7 @@ mod tests {
         assert!(!args.no_alt_screen);
     }
     #[test]
-    fn cli_command_name_is_grok() {
+    fn cli_command_name_is_grok_zh() {
         use clap::CommandFactory;
         assert_eq!(PagerArgs::command().get_name(), "grok");
     }
@@ -2484,15 +2588,15 @@ mod tests {
         assert_eq!(
             first_5,
             vec![
-                "Grok Build TUI",
+                "Grok Build 中文社区版 TUI",
                 "",
-                "Usage: grok [OPTIONS] [PROMPT] [COMMAND]",
+                "用法: grok [OPTIONS] [PROMPT] [COMMAND]",
                 "",
-                "Arguments:",
+                "参数:",
             ]
         );
-        assert!(help.find("Arguments:\n").unwrap() < help.find("Options:\n").unwrap());
-        assert!(help.find("Options:\n").unwrap() < help.find("Commands:\n").unwrap());
+        assert!(help.find("参数:\n").unwrap() < help.find("选项:\n").unwrap());
+        assert!(help.find("选项:\n").unwrap() < help.find("命令:\n").unwrap());
     }
     #[test]
     fn cli_completions_parses() {

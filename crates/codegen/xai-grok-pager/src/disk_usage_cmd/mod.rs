@@ -26,38 +26,64 @@ const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, clap::Args)]
 #[command(
-    after_help = "Lists every top-level directory in the grok home, largest first, then every \
-worktree under `worktrees/` and `worktree_pool/` with its size, age, and label. To reclaim space, preview a sweep with \
-`grok worktree gc --max-age 7d --dry-run`: without `--max-age`, gc expires nothing, it \
-visits only worktrees the registry tracks, and it keeps a worktree whose work \
-it cannot find elsewhere."
+    after_help = "按大小降序列出 Grok 主目录中的所有顶层目录，以及 `worktrees/` 和 \
+`worktree_pool/` 下每个工作树的大小、年龄和标签。要回收空间，可先运行 \
+`grok worktree gc --max-age 7d --dry-run` 预览；未指定 `--max-age` 时，gc 不会使任何项过期，
+且只处理注册表跟踪的工作树；如果无法确认工作内容在其他位置仍有副本，gc 会保留该工作树。"
 )]
 pub struct DiskUsageArgs {
-    /// Emit machine-readable JSON output.
+    /// 输出机器可读的 JSON。
     #[arg(long)]
     pub json: bool,
 }
 
 pub fn run(args: DiskUsageArgs) -> Result<()> {
-    // resolve_grok_home resolves the home the way the registry does, unlike xai_grok_config::grok_home()
+    run_with_locale(args, None)
+}
+
+pub fn run_with_locale(
+    args: DiskUsageArgs,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> Result<()> {
+    // The registry's own resolution, unlike xai_grok_config::grok_home().
     let grok_home = resolve_grok_home()?;
     let mut out = std::io::stdout().lock();
-    let present = grok_home
-        .try_exists()
-        .with_context(|| format!("cannot stat {}", grok_home.display()))?;
+    let stat_error = localized(locale, "du.error.cannot_stat", "cannot stat {path}")
+        .replace("{path}", &grok_home.display().to_string());
+    let present = grok_home.try_exists().with_context(|| stat_error)?;
     if !present {
         if args.json {
-            return write_report(&empty_report(&grok_home), args.json, &mut out);
+            return write_report_with_locale(
+                &empty_report(&grok_home),
+                args.json,
+                &mut out,
+                locale,
+            );
         }
-        let written = display::print_missing_home(&grok_home.to_string_lossy(), &mut out);
+        let written =
+            display::print_missing_home_with_locale(&grok_home.to_string_lossy(), &mut out, locale);
         return Ok(crate::util::ignore_broken_pipe(written)?);
     }
     // Rows store canonical paths, so the home must match to strip-prefix.
     let grok_home = dunce::canonicalize(&grok_home).unwrap_or(grok_home);
-    write_report(&collect_report(&grok_home)?, args.json, &mut out)
+    write_report_with_locale(
+        &collect_report_with_locale(&grok_home, locale)?,
+        args.json,
+        &mut out,
+        locale,
+    )
 }
 
 fn write_report(report: &DiskUsageReport, json: bool, out: &mut impl Write) -> Result<()> {
+    write_report_with_locale(report, json, out, None)
+}
+
+fn write_report_with_locale(
+    report: &DiskUsageReport,
+    json: bool,
+    out: &mut impl Write,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> Result<()> {
     let rendered = if json {
         Some(serde_json::to_string_pretty(report)?)
     } else {
@@ -65,9 +91,15 @@ fn write_report(report: &DiskUsageReport, json: bool, out: &mut impl Write) -> R
     };
     let written = match &rendered {
         Some(json) => writeln!(out, "{json}"),
-        None => display::print_report(report, crate::util::unix_now(), out),
+        None => display::print_report_with_locale(report, crate::util::unix_now(), out, locale),
     };
     Ok(crate::util::ignore_broken_pipe(written)?)
+}
+
+fn localized(locale: Option<&crate::locale::LocaleContext>, id: &str, english: &str) -> String {
+    locale
+        .map(|locale| locale.named_text(id, english).into_owned())
+        .unwrap_or_else(|| english.to_string())
 }
 
 fn empty_report(grok_home: &Path) -> DiskUsageReport {
@@ -296,14 +328,22 @@ impl WorktreeUsage {
 }
 
 fn collect_report(grok_home: &Path) -> Result<DiskUsageReport> {
+    collect_report_with_locale(grok_home, None)
+}
+
+fn collect_report_with_locale(
+    grok_home: &Path,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> Result<DiskUsageReport> {
     let mut top_level_dirs = Vec::new();
     let mut root_files_bytes = 0u64;
     let mut issues = WalkIssues::default();
     let mut unfollowed_dir_symlinks = 0u64;
     let volume = Volume::of(grok_home);
     let mut worktree_sizes: HashMap<PathBuf, Measure> = HashMap::new();
-    let children = std::fs::read_dir(grok_home)
-        .with_context(|| format!("cannot read {}", grok_home.display()))?;
+    let read_error = localized(locale, "du.error.cannot_read", "cannot read {path}")
+        .replace("{path}", &grok_home.display().to_string());
+    let children = std::fs::read_dir(grok_home).with_context(|| read_error)?;
     for child in children {
         let child = match child {
             Ok(child) => child,

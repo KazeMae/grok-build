@@ -79,6 +79,7 @@ pub(in crate::app) fn find_user_prompt_entry_for_shell_index(
 }
 
 pub(super) fn dispatch_rewind(app: &mut AppView) -> Vec<Effect> {
+    let locale = app.locale.clone();
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -86,7 +87,7 @@ pub(super) fn dispatch_rewind(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     };
     let Some(session_id) = agent.session.session_id.clone() else {
-        app.show_toast(NO_SESSION_NOTICE);
+        app.show_toast(locale.named_static_text("session.no_active", "No active session"));
         return vec![];
     };
 
@@ -123,6 +124,7 @@ pub(super) fn dispatch_rewind(app: &mut AppView) -> Vec<Effect> {
 }
 
 pub(super) fn dispatch_rewind_show_picker(app: &mut AppView) -> Vec<Effect> {
+    let locale = app.locale.clone();
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -130,7 +132,7 @@ pub(super) fn dispatch_rewind_show_picker(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     };
     let Some(session_id) = agent.session.session_id.clone() else {
-        app.show_toast(NO_SESSION_NOTICE);
+        app.show_toast(locale.named_static_text("session.no_active", "No active session"));
         return vec![];
     };
 
@@ -353,6 +355,7 @@ fn begin_rewind(
 }
 
 pub(super) fn dispatch_inline_edit_submit(app: &mut AppView) -> Vec<Effect> {
+    let locale = app.locale.clone();
     let ActiveView::Agent(id) = app.active_view else {
         return vec![];
     };
@@ -360,7 +363,7 @@ pub(super) fn dispatch_inline_edit_submit(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     };
     let Some(session_id) = agent.session.session_id.clone() else {
-        app.show_toast(NO_SESSION_NOTICE);
+        app.show_toast(locale.named_static_text("session.no_active", "No active session"));
         return vec![];
     };
     let Some(edit) = agent.inline_edit.as_ref() else {
@@ -407,6 +410,7 @@ pub(super) fn dispatch_rewind_success(
     agent_id: crate::app::agent::AgentId,
     response: crate::views::rewind::RewindResponse,
 ) -> Vec<Effect> {
+    let locale = app.locale.clone();
     let Some(agent) = app.agents.get_mut(&agent_id) else {
         return vec![];
     };
@@ -455,14 +459,14 @@ pub(super) fn dispatch_rewind_success(
 
     // An inline resubmit skips the confirmation; the edited prompt re-appearing at the same spot is self-explanatory
     if inline_resubmit.is_none() {
-        const MSG: &str = "Reverted conversation";
+        let msg = locale.named_static_text("rewind.reverted.conversation", "Reverted conversation");
         if app.screen_mode.is_minimal() {
             // Minimal has no toast area and can't erase committed lines, so the confirmation stays in scrollback there
             agent
                 .scrollback
-                .push_block(RenderBlock::system(MSG.to_string()));
+                .push_block(RenderBlock::system(msg.to_string()));
         } else {
-            agent.show_toast(MSG);
+            agent.show_toast(msg);
         }
     }
 
@@ -511,6 +515,7 @@ pub(super) fn handle_rewind_points_loaded(
     agent_id: AgentId,
     points: Vec<crate::views::rewind::RewindPointInfo>,
 ) -> Vec<Effect> {
+    let locale = app.locale.clone();
     let confirm = app.current_ui.confirm_before_rewind_enabled();
     let Some(agent) = app.agents.get_mut(&agent_id) else {
         return vec![];
@@ -527,7 +532,9 @@ pub(super) fn handle_rewind_points_loaded(
         if let Some(stashed) = stashed {
             agent.prompt.restore(stashed);
         }
-        app.show_toast("No undoable prompts");
+        app.show_toast(
+            locale.named_static_text("rewind.no_undoable_prompts", "No undoable prompts"),
+        );
         return vec![];
     }
 

@@ -309,8 +309,9 @@ pub fn discover_plugins(
         }
     }
 
-    // 4-5. User plugins: $GROK_HOME/plugins, legacy ~/.grok/plugins, ~/.claude/plugins.
-    // Gate the grok plugins dir on user_grok_home() so a project's .grok/plugins is never scanned as user-global when no home resolves
+    // 4-5. User plugins: resolved $GROK_HOME/plugins, then ~/.claude/plugins.
+    // Gate the grok plugins dir on user_grok_home() so a project's .grok/plugins
+    // is never scanned as user-global when no home resolves.
     let grok = xai_grok_config::user_grok_home();
     let plugin_dirs = user_plugin_dirs(xai_dirs::home_dir().as_deref(), grok.as_deref());
     for (plugins_dir, origin) in plugin_dirs {
@@ -862,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn user_plugin_dirs_are_grok_and_claude_only_no_legacy() {
+    fn user_plugin_dirs_do_not_add_a_second_default_grok_home() {
         let home = Path::new("/home/u");
         let grok = Path::new("/custom/grokhome");
         let dirs = user_plugin_dirs(Some(home), Some(grok));
@@ -871,7 +872,7 @@ mod tests {
             home.join(".claude").join("plugins"),
             PluginOrigin::UserClaude
         )));
-        // Plugins are not discovered from the legacy ~/.grok tree.
+        // A custom GROK_HOME does not also scan the default ~/.grok tree.
         assert!(
             !dirs
                 .iter()

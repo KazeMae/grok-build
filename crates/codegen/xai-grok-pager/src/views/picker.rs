@@ -26,6 +26,7 @@ use ratatui::widgets::Widget;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::input::line_editor::{LineEditOutcome, LineEditor};
+use crate::locale::LocaleContext;
 use crate::render::line_utils::truncate_str;
 use crate::render::wrapping::word_wrap_line;
 use crate::theme::Theme;
@@ -180,7 +181,18 @@ pub fn compute_scroll_offset(
 // ---------------------------------------------------------------------------
 
 const SEARCH_BAR_LABEL: &str = " search: ";
+const SEARCH_BAR_HINT: &str = " / to search";
 const SEARCH_BAR_TRAILING_GAP: u16 = 1;
+
+fn picker_text<'a>(
+    locale: Option<&LocaleContext>,
+    id: &str,
+    english: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    locale
+        .map(|locale| locale.named_text(id, english))
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed(english))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchBarLayout {
@@ -200,7 +212,20 @@ impl SearchBarLayout {
 }
 
 pub fn search_bar_layout(width: u16, trailing_width: u16) -> SearchBarLayout {
-    let label_width = (SEARCH_BAR_LABEL.len() as u16).min(width);
+    search_bar_layout_for_label(width, trailing_width, SEARCH_BAR_LABEL)
+}
+
+pub fn search_bar_layout_with_locale(
+    width: u16,
+    trailing_width: u16,
+    locale: Option<&LocaleContext>,
+) -> SearchBarLayout {
+    let label = picker_text(locale, "picker.search.label", SEARCH_BAR_LABEL);
+    search_bar_layout_for_label(width, trailing_width, label.as_ref())
+}
+
+fn search_bar_layout_for_label(width: u16, trailing_width: u16, label: &str) -> SearchBarLayout {
+    let label_width = (label.width() as u16).min(width);
     let available_input = width - label_width;
     let trailing_reserved = if trailing_width > 0
         && available_input
@@ -284,6 +309,39 @@ pub fn render_search_bar_with_viewport(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn render_search_bar_with_viewport_and_locale(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    layout: SearchBarLayout,
+    theme: &Theme,
+    query: &str,
+    active: bool,
+    show_hint: bool,
+    bg: Option<ratatui::style::Color>,
+    viewport: xai_ratatui_textarea::SingleLineViewport,
+    locale: Option<&LocaleContext>,
+) {
+    let label = picker_text(locale, "picker.search.label", SEARCH_BAR_LABEL);
+    let hint = picker_text(locale, "picker.search.hint", SEARCH_BAR_HINT);
+    render_search_bar_with_label_viewport_and_hint(
+        buf,
+        x,
+        y,
+        layout.render_width,
+        theme,
+        label.as_ref(),
+        hint.as_ref(),
+        query,
+        active,
+        show_hint,
+        0,
+        bg,
+        Some(viewport),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_picker_search_bar(
     buf: &mut Buffer,
     x: u16,
@@ -296,6 +354,36 @@ pub(crate) fn render_picker_search_bar(
     bg: Option<ratatui::style::Color>,
 ) {
     render_line_editor_search_bar(buf, x, y, width, theme, &state.query, active, show_hint, bg);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_picker_search_bar_with_locale(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    theme: &Theme,
+    state: &PickerState,
+    active: bool,
+    show_hint: bool,
+    bg: Option<ratatui::style::Color>,
+    locale: Option<&LocaleContext>,
+) {
+    let label = picker_text(locale, "picker.search.label", SEARCH_BAR_LABEL);
+    let hint = picker_text(locale, "picker.search.hint", SEARCH_BAR_HINT);
+    render_line_editor_search_bar_with_label_and_hint(
+        buf,
+        x,
+        y,
+        width,
+        theme,
+        label.as_ref(),
+        hint.as_ref(),
+        &state.query,
+        active,
+        show_hint,
+        bg,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -317,6 +405,36 @@ pub(crate) fn render_line_editor_search_bar(
         width,
         theme,
         SEARCH_BAR_LABEL,
+        editor,
+        active,
+        show_hint,
+        bg,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_line_editor_search_bar_with_locale(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    theme: &Theme,
+    editor: &LineEditor,
+    active: bool,
+    show_hint: bool,
+    bg: Option<ratatui::style::Color>,
+    locale: Option<&LocaleContext>,
+) {
+    let label = picker_text(locale, "picker.search.label", SEARCH_BAR_LABEL);
+    let hint = picker_text(locale, "picker.search.hint", SEARCH_BAR_HINT);
+    render_line_editor_search_bar_with_label_and_hint(
+        buf,
+        x,
+        y,
+        width,
+        theme,
+        label.as_ref(),
+        hint.as_ref(),
         editor,
         active,
         show_hint,
@@ -364,15 +482,45 @@ fn render_line_editor_search_bar_with_label(
     show_hint: bool,
     bg: Option<ratatui::style::Color>,
 ) {
-    let input_width = width.saturating_sub(label.len() as u16) as usize;
-    let viewport = editor.viewport(input_width);
-    render_search_bar_with_label_viewport(
+    render_line_editor_search_bar_with_label_and_hint(
         buf,
         x,
         y,
         width,
         theme,
         label,
+        SEARCH_BAR_HINT,
+        editor,
+        active,
+        show_hint,
+        bg,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_line_editor_search_bar_with_label_and_hint(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    theme: &Theme,
+    label: &str,
+    hint: &str,
+    editor: &LineEditor,
+    active: bool,
+    show_hint: bool,
+    bg: Option<ratatui::style::Color>,
+) {
+    let input_width = width.saturating_sub(label.width() as u16) as usize;
+    let viewport = editor.viewport(input_width);
+    render_search_bar_with_label_viewport_and_hint(
+        buf,
+        x,
+        y,
+        width,
+        theme,
+        label,
+        hint,
         editor.text(),
         active,
         show_hint,
@@ -382,8 +530,9 @@ fn render_line_editor_search_bar_with_label(
     );
 }
 
-/// Like [`render_search_bar`] but with a caller-supplied prompt `label` (e.g. `" path: "`) instead of the default `" search: "`.
-/// The label width is measured in bytes (ASCII), matching the input-window math.
+/// Like [`render_search_bar`] but with a caller-supplied prompt `label`
+/// (e.g. `" path: "`) instead of the default `" search: "`. The label
+/// width is measured in terminal cells so localized labels remain aligned.
 #[allow(clippy::too_many_arguments)]
 pub fn render_search_bar_with_label(
     buf: &mut Buffer,
@@ -429,6 +578,39 @@ fn render_search_bar_with_label_viewport(
     bg: Option<ratatui::style::Color>,
     viewport: Option<xai_ratatui_textarea::SingleLineViewport>,
 ) {
+    render_search_bar_with_label_viewport_and_hint(
+        buf,
+        x,
+        y,
+        width,
+        theme,
+        label,
+        SEARCH_BAR_HINT,
+        query,
+        active,
+        show_hint,
+        query_cursor,
+        bg,
+        viewport,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_search_bar_with_label_viewport_and_hint(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    theme: &Theme,
+    label: &str,
+    hint: &str,
+    query: &str,
+    active: bool,
+    show_hint: bool,
+    query_cursor: usize,
+    bg: Option<ratatui::style::Color>,
+    viewport: Option<xai_ratatui_textarea::SingleLineViewport>,
+) {
     // Minimal mode renders every UI element background-free.
     let bg = if crate::views::modal_window::embedded() {
         None
@@ -441,7 +623,7 @@ fn render_search_bar_with_label_viewport(
     let always_active = !active && !show_hint;
 
     if active || !query.is_empty() || always_active {
-        let label_w = label.len() as u16;
+        let label_w = label.width() as u16;
         buf.set_line(
             x,
             y,
@@ -520,7 +702,7 @@ fn render_search_bar_with_label_viewport(
             x,
             y,
             &Line::from(Span::styled(
-                " / to search",
+                hint,
                 bg_style(Style::default().fg(theme.gray_dim)),
             )),
             width,
@@ -1803,6 +1985,7 @@ pub fn render_picker_content(
         loading,
         0,
         None,
+        None,
     )
 }
 
@@ -1823,6 +2006,37 @@ pub fn render_picker_content_with_scrollbar_x(
     loading_tick: u64,
     scrollbar_x: u16,
 ) -> PickerContentHitAreas {
+    render_picker_content_with_scrollbar_x_and_locale(
+        buf,
+        content_area,
+        theme,
+        state,
+        entries,
+        non_selectable,
+        non_selectable_clickable,
+        bg,
+        loading,
+        loading_tick,
+        scrollbar_x,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_picker_content_with_scrollbar_x_and_locale(
+    buf: &mut Buffer,
+    content_area: Rect,
+    theme: &Theme,
+    state: &mut PickerState,
+    entries: &[PickerEntry<'_>],
+    non_selectable: &[bool],
+    non_selectable_clickable: &[bool],
+    bg: Option<ratatui::style::Color>,
+    loading: bool,
+    loading_tick: u64,
+    scrollbar_x: u16,
+    locale: Option<&LocaleContext>,
+) -> PickerContentHitAreas {
     render_picker_content_inner(
         buf,
         content_area,
@@ -1835,6 +2049,7 @@ pub fn render_picker_content_with_scrollbar_x(
         loading,
         loading_tick,
         Some(scrollbar_x),
+        locale,
     )
 }
 
@@ -1850,8 +2065,35 @@ pub fn render_picker_in_modal(
     non_selectable: &[bool],
     loading: bool,
 ) {
+    render_picker_in_modal_with_locale(
+        buf,
+        content_area,
+        inner_x,
+        inner_width,
+        theme,
+        state,
+        entries,
+        non_selectable,
+        loading,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_picker_in_modal_with_locale(
+    buf: &mut Buffer,
+    content_area: Rect,
+    inner_x: u16,
+    inner_width: u16,
+    theme: &Theme,
+    state: &mut PickerState,
+    entries: &[PickerEntry<'_>],
+    non_selectable: &[bool],
+    loading: bool,
+    locale: Option<&LocaleContext>,
+) {
     let search_active = state.search_active;
-    render_picker_in_modal_inner(
+    render_picker_in_modal_inner_with_locale(
         buf,
         content_area,
         inner_x,
@@ -1863,6 +2105,7 @@ pub fn render_picker_in_modal(
         loading,
         search_active,
         true,
+        locale,
     );
 }
 
@@ -1881,7 +2124,38 @@ pub fn render_picker_in_modal_inner(
     search_active: bool,
     show_search_hint: bool,
 ) {
-    render_picker_search_bar(
+    render_picker_in_modal_inner_with_locale(
+        buf,
+        content_area,
+        inner_x,
+        inner_width,
+        theme,
+        state,
+        entries,
+        non_selectable,
+        loading,
+        search_active,
+        show_search_hint,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_picker_in_modal_inner_with_locale(
+    buf: &mut Buffer,
+    content_area: Rect,
+    inner_x: u16,
+    inner_width: u16,
+    theme: &Theme,
+    state: &mut PickerState,
+    entries: &[PickerEntry<'_>],
+    non_selectable: &[bool],
+    loading: bool,
+    search_active: bool,
+    show_search_hint: bool,
+    locale: Option<&LocaleContext>,
+) {
+    render_picker_search_bar_with_locale(
         buf,
         content_area.x,
         content_area.y,
@@ -1891,6 +2165,7 @@ pub fn render_picker_in_modal_inner(
         search_active,
         show_search_hint,
         Some(theme.bg_base),
+        locale,
     );
     let sep_y = content_area.y + 1;
     if sep_y < content_area.y + content_area.height {
@@ -1906,7 +2181,7 @@ pub fn render_picker_in_modal_inner(
             .height
             .saturating_sub(entries_start_y.saturating_sub(content_area.y)),
     };
-    let content_hit = render_picker_content_with_scrollbar_x(
+    let content_hit = render_picker_content_with_scrollbar_x_and_locale(
         buf,
         entries_area,
         theme,
@@ -1918,6 +2193,7 @@ pub fn render_picker_in_modal_inner(
         loading,
         0,
         inner_x + inner_width - 1,
+        locale,
     );
     state.hit_areas = Some(PickerHitAreas {
         close_button: Rect::default(),
@@ -1942,6 +2218,7 @@ fn render_picker_content_inner(
     loading: bool,
     loading_tick: u64,
     scrollbar_x_override: Option<u16>,
+    locale: Option<&LocaleContext>,
 ) -> PickerContentHitAreas {
     // Cleared each paint; set below if a row underlines its last description line.
     state.link_band = None;
@@ -1959,7 +2236,8 @@ fn render_picker_content_inner(
     if loading {
         let spinner_frames = crate::glyphs::dot_spinner_frames();
         let frame = spinner_frames[(loading_tick / 4) as usize % spinner_frames.len()];
-        let msg = format!("{frame} Loading\u{2026}");
+        let loading_label = picker_text(locale, "picker.loading", "Loading\u{2026}");
+        let msg = format!("{frame} {loading_label}");
         let msg_style = Style::default().fg(theme.gray);
         let cx = content_area.x + content_area.width.saturating_sub(msg.width() as u16) / 2;
         let cy = content_area.y + content_area.height / 2;
@@ -1972,7 +2250,13 @@ fn render_picker_content_inner(
         let msg_style = Style::default()
             .fg(theme.gray_dim)
             .bg(picker_base_bg(bg, theme));
-        buf.set_string(content_area.x, content_area.y, "  No matches", msg_style);
+        let no_matches = picker_text(locale, "picker.no_matches", "  No matches");
+        buf.set_string(
+            content_area.x,
+            content_area.y,
+            no_matches.as_ref(),
+            msg_style,
+        );
         return empty_hit;
     }
 
@@ -2148,6 +2432,7 @@ pub fn render_picker(
     config: &PickerConfig<'_>,
     loading: bool,
     loading_tick: u64,
+    locale: Option<&LocaleContext>,
 ) -> PickerHitAreas {
     let empty_hit = PickerHitAreas {
         close_button: Rect::default(),
@@ -2316,9 +2601,8 @@ pub fn render_picker(
             );
         }
     } else {
-        // The cursor tracks focus (`search_active`) for every picker, like the Settings pane
-        // `show_search_hint` is input-only and does not force an always-on cursor
-        render_picker_search_bar(
+        // Cursor tracks focus (`search_active`) for every picker — like the Settings pane; `show_search_hint` is input-only and no longer forces an always-on cursor.
+        render_picker_search_bar_with_locale(
             buf,
             content.x,
             content.y,
@@ -2328,6 +2612,7 @@ pub fn render_picker(
             state.search_active,
             true,
             bg,
+            locale,
         );
     }
 
@@ -2399,6 +2684,7 @@ pub fn render_picker(
         loading,
         loading_tick,
         None,
+        locale,
     );
     let item_rects = content_hit.item_rects;
     let entry_indices = content_hit.entry_indices;
@@ -2456,6 +2742,32 @@ pub fn render_picker(
                         pinned: false,
                     });
                 }
+            }
+        }
+        if let Some(locale) = locale {
+            for hint in &mut all_hints {
+                let english = hint.label.as_ref().to_owned();
+                let catalog_id = match english.as_str() {
+                    "top/btm" => "shortcut.top_bottom".to_string(),
+                    "copy cmd" => "shortcut.copy_command".to_string(),
+                    "send to bg" => "shortcut.send_to_background".to_string(),
+                    _ => {
+                        let catalog_suffix = english
+                            .chars()
+                            .map(|character| {
+                                if character.is_ascii_alphanumeric() {
+                                    character.to_ascii_lowercase()
+                                } else {
+                                    '_'
+                                }
+                            })
+                            .collect::<String>();
+                        let catalog_suffix = catalog_suffix.trim_matches('_').replace("__", "_");
+                        format!("shortcut.{catalog_suffix}")
+                    }
+                };
+                hint.label =
+                    std::borrow::Cow::Owned(locale.named_text(&catalog_id, &english).into_owned());
             }
         }
         if !all_hints.is_empty() {
@@ -3247,7 +3559,17 @@ mod tests {
             let mut state = PickerState::with_mode(PickerMode::FullScreen);
             state.search_active = search_active;
             let mut buf = Buffer::empty(area);
-            let hit = render_picker(&mut buf, area, &theme, &mut state, &[], &config, false, 0);
+            let hit = render_picker(
+                &mut buf,
+                area,
+                &theme,
+                &mut state,
+                &[],
+                &config,
+                false,
+                0,
+                None,
+            );
             let y = hit.search_bar.y;
             let mut has_cursor = false;
             let mut text = String::new();

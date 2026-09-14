@@ -50,7 +50,8 @@ pub fn run(args: &WrapArgs) -> Result<()> {
         match crate::pty_wrap::run_wrapped_command(&wrapped.program, &wrapped.args) {
             Ok(code) => std::process::exit(code),
             Err(e) => {
-                // PTY setup failed; keep the chosen route without our PTY so the command still works (just without clipboard forwarding)
+                // PTY setup failed; keep the chosen route without our PTY so
+                // the command still works (just without clipboard forwarding).
                 eprintln!("grok wrap: wrapped mode failed, running without PTY wrapping: {e}");
                 exec_command(&fallback.program, &fallback.args)
             }

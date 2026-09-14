@@ -36,6 +36,7 @@ fn render_with(
         area,
         &mut buf,
         &Theme::current(),
+        &crate::locale::LocaleContext::default(),
         notice,
         Some(0),
         hovered_link,

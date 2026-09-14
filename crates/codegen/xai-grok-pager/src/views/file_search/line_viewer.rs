@@ -34,6 +34,16 @@ use crate::views::list_pane::{
 
 use xai_ratatui_textarea::ElementId;
 
+fn viewer_static(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
 /// Stable ids for mermaid affordance rows (above source lines and comments).
 const MERMAID_AFFORDANCE_ID_BASE: u64 = 2_000_000;
 
@@ -1416,6 +1426,7 @@ pub fn render_line_viewer(
     cwd: &Path,
     theme: &Theme,
     comment_count: usize,
+    locale: Option<&crate::locale::LocaleContext>,
 ) {
     // Compute the popup area. In enlarge (fullscreen) mode it nearly fills the overlay, leaving 1 row
     // of top and 2 cols of side padding so it doesn't crowd the edges. The caller already excludes the
@@ -1595,7 +1606,10 @@ pub fn render_line_viewer(
     // Render ListPane.
     let style = LineViewerState::list_pane_style();
 
-    let pane = ListPane::new(&viewer.lines).focused(true).style(style);
+    let pane = ListPane::new(&viewer.lines)
+        .focused(true)
+        .style(style)
+        .with_locale(locale);
     StatefulWidget::render(pane, content_area, buf, &mut viewer.list_state);
 
     // Cache the list-rendered area (for ListPane mouse dispatch)
@@ -1653,10 +1667,20 @@ pub fn render_line_viewer(
         let copy_hovered = viewer.plan_ref().is_some_and(|p| p.copy_hovered);
         let is_approval = viewer.feedback_active();
 
-        let comment_spans = build_shortcut_button('c', "comment", comment_hovered, theme);
+        let comment_spans = build_shortcut_button(
+            'c',
+            viewer_static(locale, "shortcut.comment", "comment"),
+            comment_hovered,
+            theme,
+        );
         let comment_w: u16 = comment_spans.iter().map(|s| s.width() as u16).sum();
 
-        let copy_spans = build_shortcut_button('y', "copy plan", copy_hovered, theme);
+        let copy_spans = build_shortcut_button(
+            'y',
+            viewer_static(locale, "shortcut.copy_plan", "copy plan"),
+            copy_hovered,
+            theme,
+        );
         let copy_w: u16 = copy_spans.iter().map(|s| s.width() as u16).sum();
 
         // In approval mode, show `a approve` (or `a approve w/ comments` when inline comments are pending)
@@ -1664,17 +1688,22 @@ pub fn render_line_viewer(
         let (_action_label, action_w, action_spans): (&str, u16, Option<Vec<Span>>) = if is_approval
         {
             let label = if comment_count > 0 {
-                "approve w/ comments"
+                viewer_static(
+                    locale,
+                    "shortcut.approve_with_comments",
+                    "approve w/ comments",
+                )
             } else {
-                "approve"
+                viewer_static(locale, "shortcut.approve", "approve")
             };
             let spans = build_shortcut_button('a', label, approve_hovered, theme);
             let w: u16 = spans.iter().map(|s| s.width() as u16).sum();
             (label, w, Some(spans))
         } else if comment_count > 0 {
-            let spans = build_shortcut_button('s', "send", approve_hovered, theme);
+            let label = viewer_static(locale, "shortcut.send", "send");
+            let spans = build_shortcut_button('s', label, approve_hovered, theme);
             let w: u16 = spans.iter().map(|s| s.width() as u16).sum();
-            ("send", w, Some(spans))
+            (label, w, Some(spans))
         } else {
             ("", 0, None)
         };
@@ -1682,7 +1711,12 @@ pub fn render_line_viewer(
         // `s revise` button, always visible in approval mode so the user can request changes (switches to prompt for revision notes)
         let (revise_w, revise_spans): (u16, Option<Vec<Span>>) = if is_approval {
             let send_hovered = viewer.plan_ref().is_some_and(|p| p.send_hovered);
-            let spans = build_shortcut_button('s', "request changes", send_hovered, theme);
+            let spans = build_shortcut_button(
+                's',
+                viewer_static(locale, "shortcut.request_changes", "request changes"),
+                send_hovered,
+                theme,
+            );
             let w: u16 = spans.iter().map(|s| s.width() as u16).sum();
             (w, Some(spans))
         } else {
@@ -1691,7 +1725,12 @@ pub fn render_line_viewer(
 
         // Quit button only renders in approval mode (casual closes via X).
         let quit_spans = if is_approval {
-            let s = build_shortcut_button('q', "quit plan", abandon_hovered, theme);
+            let s = build_shortcut_button(
+                'q',
+                viewer_static(locale, "shortcut.quit_plan", "quit plan"),
+                abandon_hovered,
+                theme,
+            );
             let w: u16 = s.iter().map(|s| s.width() as u16).sum();
             Some((s, w))
         } else {

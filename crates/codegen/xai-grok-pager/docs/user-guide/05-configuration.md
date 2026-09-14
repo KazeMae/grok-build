@@ -43,7 +43,8 @@ Location: `~/.grok/config.toml`. If the file is missing, Grok uses its built-in 
 
 ```toml
 [cli]
-auto_update = true                     # check for updates on launch
+auto_update = false                    # default: notify only; Ctrl+U downloads
+channel = "stable"                    # stable (default) | alpha (pre-release)
 
 [models]
 default = "grok-4.5"                   # model used for new sessions

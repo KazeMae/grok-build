@@ -1,4 +1,9 @@
-use super::{TabDataState, WorkflowInfo, cmp_str_ci, fuzzy_matches};
+//! Picker rows for the extensions modal's Workflows tab.
+
+use super::{
+    LocaleContext, TabDataState, WorkflowInfo, cmp_str_ci, extension_text, fuzzy_matches,
+    localized_source_display,
+};
 
 /// Placeholder row when the catalog comes back empty (also what a disabled workflows feature looks like on the wire, hence the hedged phrasing).
 pub(super) const WORKFLOWS_EMPTY_PLACEHOLDER: &str =
@@ -33,14 +38,31 @@ pub(super) fn build_workflows_picker_rows(
     data: &TabDataState<Vec<WorkflowInfo>>,
     query: &str,
 ) -> Vec<WorkflowRow> {
+    build_workflows_picker_rows_with_locale(data, query, None)
+}
+
+pub(super) fn build_workflows_picker_rows_with_locale(
+    data: &TabDataState<Vec<WorkflowInfo>>,
+    query: &str,
+    locale: Option<&LocaleContext>,
+) -> Vec<WorkflowRow> {
     let workflows = match data {
         TabDataState::Loaded(workflows) => workflows,
-        TabDataState::Error(msg) => return vec![WorkflowRow::notice(format!("Error: {msg}"))],
-        // The render path never builds entries while the tab loads; it shows a spinner instead
+        TabDataState::Error(msg) => {
+            return vec![WorkflowRow::notice(
+                extension_text(locale, "extensions.error.prefix", "Error: {error}")
+                    .replace("{error}", msg),
+            )];
+        }
+        // The render gate skips entry building while loading.
         TabDataState::Loading => return Vec::new(),
     };
     if workflows.is_empty() {
-        return vec![WorkflowRow::notice(WORKFLOWS_EMPTY_PLACEHOLDER.to_string())];
+        return vec![WorkflowRow::notice(extension_text(
+            locale,
+            "extensions.workflows.empty",
+            WORKFLOWS_EMPTY_PLACEHOLDER,
+        ))];
     }
     let mut visible: Vec<&WorkflowInfo> = workflows
         .iter()
@@ -59,7 +81,7 @@ pub(super) fn build_workflows_picker_rows(
             }
             WorkflowRow {
                 label: wf.name.clone(),
-                right_label: format!("({})", wf.source),
+                right_label: format!("({})", localized_source_display(locale, &wf.source)),
                 desc_lines: if wf.description.is_empty() {
                     Vec::new()
                 } else {

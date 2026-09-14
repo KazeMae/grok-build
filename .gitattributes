@@ -1,0 +1,7 @@
+# `include_str!` preserves checkout bytes; keep embedded docs platform-independent.
+crates/codegen/xai-grok-pager/docs/**/*.md text eol=lf
+packaging/macos/*.sh text eol=lf
+packaging/linux/*.sh text eol=lf
+# GitHub serves repository bytes; catalog digests must match on Windows too.
+community/announcements/**/*.json text eol=lf
+community/announcements/manifest.json text eol=lf

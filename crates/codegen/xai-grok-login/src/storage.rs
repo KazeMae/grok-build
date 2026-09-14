@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::model::{API_KEY_SCOPE, AuthMode, AuthStore, GrokAuth};
+use super::model::{API_KEY_SCOPE, AuthMode, AuthStore, GrokAuth, lookup_auth};
 
 #[must_use]
 pub struct AuthFileLock {
@@ -339,6 +339,18 @@ fn restore_prior_bytes(auth_file: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()?;
     xai_grok_shell_base::util::secure_file::ensure_owner_only_permissions(auth_file)?;
     Ok(())
+}
+
+/// Read a single auth token from `auth.json` by scope key.
+/// Falls back to the legacy `https://accounts.x.ai/sign-in` scope key
+/// when the requested scope is not found (devbox auth.json migration).
+pub fn read_token_by_scope(grok_home: &Path, scope: &str) -> anyhow::Result<String> {
+    let path = grok_home.join("auth.json");
+    let store =
+        read_auth_json(&path).map_err(|_| anyhow::anyhow!("Not logged in. Run `grok login`."))?;
+    lookup_auth(&store, scope).map(|a| a.key).ok_or_else(|| {
+        anyhow::anyhow!("Your auth token is invalid. Run `grok login` to re-authenticate.")
+    })
 }
 
 /// Read the API key from the `xai::api_key` scope in auth.json.

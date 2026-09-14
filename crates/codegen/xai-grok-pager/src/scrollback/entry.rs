@@ -88,7 +88,13 @@ pub struct ScrollbackEntry {
     /// `UserPrompt`). `cwd` is keyed so Expanded tool path paint (relative vs absolute) invalidates.
     cached_output: RefCell<Option<CachedOutput>>,
 
-    /// Cached truncated-mode height. See [`CachedTruncatedHeight`] for why this needs its own cache separate from `cached_output`.
+    /// Display locale used when constructing [`BlockContext`]. The owning
+    /// [`ScrollbackState`](super::state::ScrollbackState) replaces the English
+    /// default when an entry is inserted.
+    locale: crate::locale::LocaleContext,
+
+    /// Cached truncated-mode height. See [`CachedTruncatedHeight`] for why
+    /// this needs its own cache separate from `cached_output`.
     ///
     /// Populated lazily by `ensure_truncated_height_cached`. Cleared by `invalidate_cache` together with `cached_output`.
     cached_truncated_height: RefCell<Option<CachedTruncatedHeight>>,
@@ -160,6 +166,7 @@ impl ScrollbackEntry {
             created_at: Some(Local::now()),
             finished_at: None,
             cached_output: RefCell::new(None),
+            locale: crate::locale::LocaleContext::default(),
             cached_truncated_height: RefCell::new(None),
             cached_estimate_lines: RefCell::new(None),
             cached_line_widths: RefCell::new(None),
@@ -189,6 +196,7 @@ impl ScrollbackEntry {
             created_at: Some(Local::now()),
             finished_at: None,
             cached_output: RefCell::new(None),
+            locale: crate::locale::LocaleContext::default(),
             cached_truncated_height: RefCell::new(None),
             cached_estimate_lines: RefCell::new(None),
             cached_line_widths: RefCell::new(None),
@@ -248,7 +256,22 @@ impl ScrollbackEntry {
         *self.cached_line_widths.borrow_mut() = None;
     }
 
-    /// Invalidate only the caches keyed by terminal width: the resize path.
+    /// Apply the display locale to both context-driven blocks (notably tool
+    /// calls) and blocks that retain their own locale-aware render state.
+    pub(crate) fn set_locale(&mut self, locale: crate::locale::LocaleContext) {
+        if self.locale.locale() == locale.locale() {
+            return;
+        }
+        self.locale = locale.clone();
+        self.block.set_locale(locale);
+        self.invalidate_cache();
+    }
+
+    pub(crate) fn locale(&self) -> &crate::locale::LocaleContext {
+        &self.locale
+    }
+
+    /// Invalidate only the caches keyed by terminal width — the resize path.
     pub fn invalidate_width_caches(&mut self) {
         *self.cached_output.borrow_mut() = None;
         *self.cached_truncated_height.borrow_mut() = None;
@@ -354,6 +377,7 @@ impl ScrollbackEntry {
             appearance: appearance.clone(),
             is_selected: effective_selected,
             cwd: cwd_key.clone(),
+            locale: self.locale.clone(),
         };
         let rendered = self.block.rendered_output(&ctx);
         *self.cached_output.borrow_mut() = Some(CachedOutput {
@@ -476,6 +500,7 @@ impl ScrollbackEntry {
             appearance: appearance.clone(),
             is_selected: false,
             cwd: cwd.map(|p| p.to_path_buf()),
+            locale: self.locale.clone(),
         }
     }
 
@@ -509,6 +534,7 @@ impl ScrollbackEntry {
             appearance: appearance.clone(),
             is_selected: false,
             cwd: cwd.map(|p| p.to_path_buf()),
+            locale: self.locale.clone(),
         }
     }
 
@@ -529,6 +555,7 @@ impl ScrollbackEntry {
             appearance: appearance.clone(),
             is_selected: false,
             cwd: cwd.map(|p| p.to_path_buf()),
+            locale: self.locale.clone(),
         }
     }
 
@@ -552,6 +579,7 @@ impl ScrollbackEntry {
             appearance: appearance.clone(),
             is_selected,
             cwd: cwd.map(|p| p.to_path_buf()),
+            locale: self.locale.clone(),
         }
     }
 }

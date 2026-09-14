@@ -1,5 +1,28 @@
 use super::*;
 
+#[test]
+fn chinese_localizes_status_line_config_problems_but_preserves_dynamic_fields() {
+    let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    assert_eq!(
+        localized_status_line_problem(&locale, "[ui.status_line] must be a table"),
+        "[ui.status_line] 必须是表"
+    );
+    assert_eq!(
+        localized_status_line_problem(
+            &locale,
+            "[ui.status_line] ignored items = \"mystery\", extra_key",
+        ),
+        "[ui.status_line] 已忽略 items = \"mystery\", extra_key"
+    );
+    assert_eq!(
+        localized_status_line_problem(&locale, "dynamic backend warning"),
+        "dynamic backend warning"
+    );
+}
+
 /// One labelled single-field change to the base inputs.
 type Tweak = (&'static str, fn(&mut TickInputs));
 

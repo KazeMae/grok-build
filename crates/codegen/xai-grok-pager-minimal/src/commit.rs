@@ -224,6 +224,7 @@ fn insert_committed(
     width: u16,
     max_rows: u16,
     footer_style: Style,
+    locale: &xai_grok_pager::locale::LocaleContext,
 ) -> std::io::Result<()> {
     let full_h = renderer.desired_height(width);
     if full_h == 0 {
@@ -234,10 +235,24 @@ fn insert_committed(
     } else {
         full_h
     };
-    // Propagated (not swallowed): the caller must NOT mark the entry committed when the terminal write failed
-    // Print-once means a marked-but-unprinted block can never be emitted again
+    // Propagated (not swallowed): the caller must NOT mark the entry committed
+    // when the terminal write failed — print-once means a marked-but-unprinted
+    // block can never be emitted again (bugbot).
+    let footer_template = locale
+        .named_text(
+            "minimal.commit.more_lines",
+            "… {hidden} more lines — /transcript to view",
+        )
+        .into_owned();
     terminal.insert_before(commit_h, move |buf| {
-        paint_committed(buf, renderer, width, full_h, footer_style);
+        paint_committed_with_footer(
+            buf,
+            renderer,
+            width,
+            full_h,
+            footer_style,
+            Some(&footer_template),
+        );
     })?;
     insert_gap(terminal);
     Ok(())
@@ -252,15 +267,30 @@ pub(super) fn insert_gap(terminal: &mut PagerTerminal) {
     let _ = terminal.insert_before(MINIMAL_BLOCK_GAP, |_buf| {});
 }
 
-/// Paint a committed block into `buf` (a `commit_h`-row buffer), laying it out at its full `full_h` so wrapping matches an uncapped commit.
-/// When `buf` is shorter than `full_h` the block is capped: rows past it are clipped and the final row becomes the `… N more lines` footer.
-/// Extracted from [`insert_committed`] so the cap is unit-testable without a live terminal.
+/// Paint a committed block into `buf` (a `commit_h`-row buffer), laying it out at
+/// its full `full_h` so wrapping matches an uncapped commit exactly (K5). When
+/// `buf` is shorter than `full_h` the block is capped: rows past it are clipped
+/// and the final row becomes a `… N more lines · /transcript to view` footer
+/// (§6.15). Extracted from [`insert_committed`] so the cap is unit-testable
+/// without a live terminal.
+#[cfg(test)]
 fn paint_committed(
     buf: &mut ratatui::buffer::Buffer,
     renderer: EntryRenderer<'_>,
     width: u16,
     full_h: u16,
     footer_style: Style,
+) {
+    paint_committed_with_footer(buf, renderer, width, full_h, footer_style, None);
+}
+
+fn paint_committed_with_footer(
+    buf: &mut ratatui::buffer::Buffer,
+    renderer: EntryRenderer<'_>,
+    width: u16,
+    full_h: u16,
+    footer_style: Style,
+    footer_template: Option<&str>,
 ) {
     let commit_h = buf.area.height;
     let area = Rect {
@@ -284,7 +314,11 @@ fn paint_committed(
         let style = footer_style.bg(Color::Reset);
         // Clear any clipped content that landed on the footer row first.
         buf.set_style(row, style);
-        let text = format!("\u{2026} {hidden} more lines \u{00b7} /transcript to view");
+        let text = footer_template
+            .map(|template| template.replace("{hidden}", &hidden.to_string()))
+            .unwrap_or_else(|| {
+                format!("\u{2026} {hidden} more lines \u{00b7} /transcript to view")
+            });
         buf.set_span(buf.area.x, y, &Span::styled(text, style), width);
     }
 }
@@ -298,6 +332,7 @@ pub fn commit_active(app: &mut AppView, terminal: &mut PagerTerminal) {
     };
     // Snapshot the commit appearance before borrowing `agents` mutably.
     let appearance = committed_appearance(&app.appearance);
+    let locale = app.locale.clone();
     let Some(agent) = app.agents.get_mut(&id) else {
         return;
     };
@@ -342,7 +377,8 @@ pub fn commit_active(app: &mut AppView, terminal: &mut PagerTerminal) {
             // a never-printed block. NOTE (print-once contract): from a successful insert on, the entry's content is frozen on
             // the user's terminal.
             let renderer = minimal_renderer(e, &theme, appearance.clone(), cwd, COMMITTED_TICK);
-            if insert_committed(terminal, renderer, width, max_rows, footer_style).is_err() {
+            if insert_committed(terminal, renderer, width, max_rows, footer_style, &locale).is_err()
+            {
                 return false;
             }
         }
@@ -382,6 +418,7 @@ pub fn expand_pending(app: &mut AppView, terminal: &mut PagerTerminal) {
         return;
     }
     let appearance = committed_appearance(&app.appearance);
+    let locale = app.locale.clone();
     // Guards: a missing active agent must leave the IDs queued, so confirm it exists before consuming the queue below.
     // The queue take needs `&mut app`, which can't overlap the agent borrow, hence the check-then-reborrow. An
     // `insert_before` would scroll the popup and the user wouldn't see the re-print.
@@ -414,8 +451,9 @@ pub fn expand_pending(app: &mut AppView, terminal: &mut PagerTerminal) {
             }
             if let Some(e) = sb.get(idx) {
                 let renderer = minimal_renderer(e, &theme, appearance.clone(), cwd, COMMITTED_TICK);
-                if insert_committed(terminal, renderer, width, 0, footer_style).is_err() {
-                    // Terminal write failed: keep this id and the rest queued so the request retries next frame instead of vanishing
+                if insert_committed(terminal, renderer, width, 0, footer_style, &locale).is_err() {
+                    // Terminal write failed: keep this id and the rest queued
+                    // so the request retries next frame instead of vanishing.
                     requeue.push(eid);
                     requeue.extend(iter);
                     break;

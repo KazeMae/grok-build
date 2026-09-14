@@ -39,11 +39,12 @@ pub(crate) use logo::shimmer_frame;
 use logo::{LogoTier, logo_line_count, render_logo, render_logo_tier};
 use menu::render_menu;
 pub(crate) use toast::paint_welcome_toast;
+pub(crate) use top_bar::location_line_at_with_locale;
 use top_bar::render_top_bar;
 #[cfg(feature = "local-workspace")]
 pub use workspace_mode::{
     WelcomeWorkspaceMode, WorkspaceModeHitRects, hit_test_workspace_mode,
-    render_workspace_mode_picker,
+    render_workspace_mode_picker, render_workspace_mode_picker_with_locale,
 };
 
 /// True for VS Code and xterm.js embeds (VS Code-family IDEs and Zed) where quit is `Ctrl+D` (canonical: [`TerminalName::is_vscode_family`]).
@@ -52,7 +53,7 @@ fn welcome_in_vscode_family() -> bool {
 }
 
 /// Build the quit hint spans used in Authenticating sub-screens.
-fn quit_hint_spans(theme: &Theme) -> Vec<Span<'static>> {
+fn quit_hint_spans(theme: &Theme, locale: &crate::locale::LocaleContext) -> Vec<Span<'static>> {
     let key = if welcome_in_vscode_family() {
         "ctrl+d"
     } else {
@@ -65,7 +66,10 @@ fn quit_hint_spans(theme: &Theme) -> Vec<Span<'static>> {
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  quit", Style::default().fg(theme.gray)),
+        Span::styled(
+            format!("  {}", locale.text(crate::locale::TextKey::AuthQuit)),
+            Style::default().fg(theme.gray),
+        ),
     ]
 }
 
@@ -93,15 +97,19 @@ pub(super) fn render_pending_hint(
     buf: &mut Buffer,
     theme: &Theme,
     pending: &crate::views::shortcuts_bar::PendingHint,
+    locale: &crate::locale::LocaleContext,
 ) {
     let key_style = Style::default()
         .fg(theme.text_primary)
         .add_modifier(Modifier::BOLD);
     let action_style = Style::default().fg(theme.gray);
+    let label = locale
+        .named_text("welcome.pending.press_again", "press again to {action}")
+        .replace("{action}", pending.label.as_ref());
     let line = Line::from(vec![
         Span::styled(format!("  {}", pending.shortcut.display()), key_style),
         Span::styled(":", action_style),
-        Span::styled(format!("press again to {}", pending.label), action_style),
+        Span::styled(label, action_style),
     ]);
     buf.set_line(area.x, area.y, &line, area.width);
 }
@@ -308,8 +316,11 @@ struct WelcomeLayoutInput<'a> {
     expanded: bool,
     /// Whether the info slot reserves a promo upgrade CTA (spacer and button).
     has_upgrade_cta: bool,
-    /// Rows reserved for the prompt box.
-    /// `None` keeps the default; the blocking screens that paint no prompt pass 0 to give the rows back to their message.
+    /// Test seam for deterministic layout geometry. Production call sites leave
+    /// this unset so the active terminal decides whether braille is available.
+    logo_hidden: Option<bool>,
+    /// Rows reserved for the prompt box. `None` keeps the default; the blocking screens that paint
+    /// no prompt pass 0 to give the rows back to their message.
     prompt_height: Option<u16>,
 }
 
@@ -503,10 +514,33 @@ pub(super) enum VersionBadgeMode<'a> {
     HeroInline,
 }
 
+fn localized_channel_label(
+    locale: &crate::locale::LocaleContext,
+    channel: Option<&str>,
+) -> Option<String> {
+    let label = match channel? {
+        "alpha" => locale.text(crate::locale::TextKey::WelcomeChannelAlpha),
+        "stable" => locale.text(crate::locale::TextKey::WelcomeChannelStable),
+        other => other,
+    };
+    Some(format!("[{label}]"))
+}
+
+fn localized_subscription_tier(locale: &crate::locale::LocaleContext, tier: &str) -> String {
+    if tier.trim().eq_ignore_ascii_case("free") {
+        locale
+            .named_text("welcome.subscription.free", "Free")
+            .into_owned()
+    } else {
+        tier.to_owned()
+    }
+}
+
 pub(super) fn render_version_badge(
     version_rect: Rect,
     buf: &mut Buffer,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
     team_name: Option<&str>,
     h_margin: u16,
     is_api_key_auth: bool,
@@ -538,45 +572,52 @@ pub(super) fn render_version_badge(
             subscription_tier: Some(tier),
         } = &mode
     {
+        let tier = localized_subscription_tier(locale, tier);
         spans.push(Span::styled(
-            format!("Tier: {tier}"),
+            locale.format(crate::locale::TextKey::WelcomeTier, &[("tier", &tier)]),
             Style::default().fg(theme.gray),
         ));
         spans.push(sep.clone());
     }
     if show_api_key && is_api_key_auth {
         spans.push(Span::styled(
-            "Logged in with API key",
+            locale.text(crate::locale::TextKey::WelcomeApiKeyAuth),
             Style::default().fg(theme.gray),
         ));
         spans.push(sep);
     }
 
-    let channel = xai_grok_update::channel_label();
+    let channel = localized_channel_label(locale, xai_grok_update::channel_name());
     match &mode {
         VersionBadgeMode::Full { .. } => {
             spans.push(Span::styled(
-                "Grok Build  ",
+                format!(
+                    "{}  ",
+                    locale.text(crate::locale::TextKey::WelcomeProductName)
+                ),
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
-                format!("{}{}", xai_grok_version::VERSION, channel),
+                match channel.as_deref() {
+                    Some(channel) => format!("{} {channel}", xai_grok_version::VERSION),
+                    None => xai_grok_version::VERSION.to_string(),
+                },
                 Style::default().fg(theme.gray),
             ));
         }
         VersionBadgeMode::HeroFooter => {
-            if !channel.is_empty() {
-                spans.push(Span::styled(
-                    channel.trim(),
-                    Style::default().fg(theme.gray),
-                ));
+            if let Some(channel) = channel {
+                spans.push(Span::styled(channel, Style::default().fg(theme.gray)));
             }
         }
         VersionBadgeMode::HeroInline => {
             spans.push(Span::styled(
-                "Grok Build  ",
+                format!(
+                    "{}  ",
+                    locale.text(crate::locale::TextKey::WelcomeProductName)
+                ),
                 Style::default()
                     .fg(theme.text_primary)
                     .add_modifier(Modifier::BOLD),
@@ -588,7 +629,8 @@ pub(super) fn render_version_badge(
         }
     }
 
-    // Only alpha and beta builds print a channel, so on stable the spans can end on a separator.
+    // The channel is absent until a stable pointer has been cached, so the spans can end on a
+    // separator on first launch or when the cache is unavailable.
     if spans.last().is_some_and(|s| s.content == SEP) {
         spans.pop();
     }
@@ -605,6 +647,7 @@ fn render_prompt_and_version(
     content_width: u16,
     buf: &mut Buffer,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
     focus: WelcomePromptFocus,
     prompt: &mut PromptWidget,
     info: &PromptInfo<'_>,
@@ -644,17 +687,53 @@ fn render_prompt_and_version(
             width: tip_centered.width.saturating_sub(inset * 2),
             height: tip_centered.height,
         };
-        crate::tips::render::render_tip(tip_inset, buf, tip_text, crate::tips::render::HINT_INSET);
+        crate::tips::render::render_tip_with_locale(
+            tip_inset,
+            buf,
+            tip_text,
+            crate::tips::render::HINT_INSET,
+            Some(locale),
+        );
     }
-    let prompt_result = prompt::render_prompt(prompt_centered, buf, focus, prompt, info, compact);
+    let prompt_result = prompt::render_prompt_with_locale(
+        prompt_centered,
+        buf,
+        focus,
+        prompt,
+        info,
+        2,
+        2,
+        compact,
+        locale.text(crate::locale::TextKey::WelcomePromptPlaceholder),
+        Some(locale),
+    );
 
     if let Some(pending) = &pending_hint {
-        render_pending_hint(layout.version, buf, theme, pending);
+        let key_style = Style::default()
+            .fg(theme.text_primary)
+            .add_modifier(Modifier::BOLD);
+        let action_style = Style::default().fg(theme.gray);
+        let key_text = pending.shortcut.display();
+        let label = locale
+            .named_text("welcome.pending.press_again", "press again to {action}")
+            .replace("{action}", pending.label.as_ref());
+        let line = Line::from(vec![
+            Span::styled(format!("  {key_text}"), key_style),
+            Span::styled(":", action_style),
+            Span::styled(label, action_style),
+        ]);
+        buf.set_line(
+            layout.version.x,
+            layout.version.y,
+            &line,
+            layout.version.width,
+        );
     } else if !skip_version {
         render_version_badge(
             layout.version,
             buf,
             theme,
+            locale,
             team_name,
             h_margin,
             is_api_key_auth,
@@ -667,6 +746,7 @@ fn render_prompt_and_version(
             layout.version,
             buf,
             theme,
+            locale,
             team_name,
             h_margin,
             is_api_key_auth,
@@ -679,6 +759,7 @@ fn render_prompt_and_version(
 
 /// All display state for rendering the welcome screen.
 pub struct WelcomeRenderParams<'a> {
+    pub locale: &'a crate::locale::LocaleContext,
     pub prompt_focus: WelcomePromptFocus,
     pub auth_state: &'a AuthState,
     /// Folder-trust state.
@@ -754,6 +835,81 @@ pub struct WelcomeRenderParams<'a> {
     pub workspace_mode_ack_pending: bool,
 }
 
+/// Project known display text through the current validated catalog. Missing
+/// entries retain the official original, including entries removed by an update.
+pub(crate) fn localized_announcement_for_display<'a>(
+    locale: &crate::locale::LocaleContext,
+    announcement: &'a xai_grok_announcements::RemoteAnnouncement,
+    catalog: &xai_grok_update::announcement_translations::TranslationCatalog,
+) -> std::borrow::Cow<'a, xai_grok_announcements::RemoteAnnouncement> {
+    use xai_grok_update::announcement_translations::TranslationField;
+
+    if locale.locale() != crate::locale::UiLocale::ZhCn {
+        return std::borrow::Cow::Borrowed(announcement);
+    }
+
+    let localized_title = announcement
+        .title
+        .as_deref()
+        .and_then(|title| catalog.lookup(TranslationField::Title, title));
+    let localized_message = announcement
+        .message
+        .as_deref()
+        .and_then(|message| catalog.lookup(TranslationField::Message, message));
+    let localized_cta = announcement.cta.as_ref().and_then(|cta| {
+        let localized_label = cta
+            .label
+            .as_deref()
+            .and_then(|label| catalog.lookup(TranslationField::CtaLabel, label));
+        let localized_caption = cta
+            .caption
+            .as_deref()
+            .and_then(|caption| catalog.lookup(TranslationField::CtaCaption, caption));
+
+        if localized_label.is_none() && localized_caption.is_none() {
+            return None;
+        }
+
+        let mut localized = cta.clone();
+        if let Some(label) = localized_label {
+            localized.label = Some(label.to_owned());
+        }
+        if let Some(caption) = localized_caption {
+            localized.caption = Some(caption.to_owned());
+        }
+        Some(localized)
+    });
+
+    if localized_title.is_none() && localized_message.is_none() && localized_cta.is_none() {
+        return std::borrow::Cow::Borrowed(announcement);
+    }
+
+    let mut localized = announcement.clone();
+    // Id-less announcements are dismissed by a content-derived key. Once the
+    // title or message is localized, deriving that key from the display clone
+    // would resurrect an item the user already hid. Carry the original key as
+    // the display-only id so selection and rendering preserve remote identity.
+    if announcement
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .is_none()
+    {
+        localized.id = Some(xai_grok_announcements::announcement_hide_key(announcement));
+    }
+    if let Some(title) = localized_title {
+        localized.title = Some(title.to_owned());
+    }
+    if let Some(message) = localized_message {
+        localized.message = Some(message.to_owned());
+    }
+    if let Some(cta) = localized_cta {
+        localized.cta = Some(cta);
+    }
+    std::borrow::Cow::Owned(localized)
+}
+
 /// Render the welcome screen.
 pub fn render_welcome(
     area: Rect,
@@ -787,13 +943,19 @@ pub fn render_welcome(
         width: top_bar_area.width.saturating_sub(h_margin * 2),
         height: 1,
     };
-    render_top_bar(top_bar_inner, buf, &theme, None);
+    render_top_bar(top_bar_inner, buf, &theme, None, Some(params.locale));
 
     let mut result = match params.auth_state {
         AuthState::Pending { error } => {
             let label = params.login_label.unwrap_or("grok.com");
-            let login_text = format!("Login with {}", label);
-            let menu = [("l", login_text.as_str()), ("q", "Quit")];
+            let login_text = params.locale.format(
+                crate::locale::TextKey::WelcomeLoginWith,
+                &[("provider", label)],
+            );
+            let menu = [
+                ("l", login_text.as_str()),
+                ("q", params.locale.text(crate::locale::TextKey::WelcomeQuit)),
+            ];
             let msg = error.as_deref().map(|e| (e, theme.accent_error));
             let info = PromptInfo {
                 model_name: params.model_name,
@@ -805,6 +967,7 @@ pub fn render_welcome(
             let (menu_rects, post_flush_escapes) = render_welcome_blocked(
                 content_area,
                 buf,
+                params.locale,
                 msg,
                 &menu,
                 params.selected,
@@ -832,6 +995,7 @@ pub fn render_welcome(
                 params.auth_code_cursor_byte,
                 params.clipboard_delivery,
                 params.show_raw_url,
+                params.locale,
             );
             WelcomeRenderResult {
                 auth_url_rect: url_rect,
@@ -840,12 +1004,23 @@ pub fn render_welcome(
             }
         }
         AuthState::Done if params.is_zdr_blocked => {
-            let menu = [("l", "Switch account"), ("q", "Quit")];
+            let menu = [
+                (
+                    "l",
+                    params
+                        .locale
+                        .text(crate::locale::TextKey::WelcomeSwitchAccount),
+                ),
+                ("q", params.locale.text(crate::locale::TextKey::WelcomeQuit)),
+            ];
             let (menu_rects, post_flush_escapes) = render_welcome_blocked(
                 content_area,
                 buf,
+                params.locale,
                 Some((
-                    "Grok Build is not yet available for this account.",
+                    params
+                        .locale
+                        .text(crate::locale::TextKey::WelcomeUnavailable),
                     theme.gray_bright,
                 )),
                 &menu,
@@ -869,6 +1044,7 @@ pub fn render_welcome(
                     content_area,
                     buf,
                     &theme,
+                    params.locale,
                     notice,
                     params.selected,
                     params.consent_hover_link,
@@ -885,6 +1061,7 @@ pub fn render_welcome(
                     params.selected,
                     h_margin,
                     params.compact,
+                    params.locale,
                 )
             } else {
                 render_welcome_done(
@@ -920,6 +1097,7 @@ pub fn render_welcome(
 fn render_welcome_blocked(
     content_area: Rect,
     buf: &mut Buffer,
+    locale: &crate::locale::LocaleContext,
     message: Option<(&str, ratatui::style::Color)>,
     menu_items: &[(&str, &str)],
     selected: Option<usize>,
@@ -972,13 +1150,17 @@ fn render_welcome_blocked(
         ])
         .flex(Flex::Center)
         .areas(layout.prompt);
-        prompt::render_prompt(
+        prompt::render_prompt_with_locale(
             prompt_centered,
             buf,
             WelcomePromptFocus::Unfocused,
             prompt_widget,
             info,
+            prompt::prompt_inset(compact).max(2),
+            prompt::prompt_inset(compact).max(2),
             compact,
+            locale.text(crate::locale::TextKey::WelcomePromptPlaceholder),
+            Some(locale),
         )
         .1
     } else {
@@ -989,6 +1171,7 @@ fn render_welcome_blocked(
         layout.version,
         buf,
         &theme,
+        locale,
         None,
         h_margin,
         false,
@@ -1009,11 +1192,15 @@ fn render_welcome_trust(
     selected: Option<usize>,
     h_margin: u16,
     compact: bool,
+    locale: &crate::locale::LocaleContext,
 ) -> WelcomeRenderResult {
-    let menu_items = [("y", "Yes, proceed"), ("n", "No, quit")];
+    let menu_items = [
+        ("y", locale.text(crate::locale::TextKey::TrustYesProceed)),
+        ("n", locale.text(crate::locale::TextKey::TrustNoQuit)),
+    ];
     let lines = vec![
         Line::from(Span::styled(
-            "Do you trust the contents of this directory?",
+            locale.text(crate::locale::TextKey::TrustQuestion),
             Style::default().fg(theme.gray_bright),
         ))
         .alignment(Alignment::Center),
@@ -1025,12 +1212,12 @@ fn render_welcome_trust(
         Line::default(),
         // Two lines so the warning never clips at narrow / compact widths (a single ~78-char line would truncate "...posing security risks")
         Line::from(Span::styled(
-            "Grok Build may run or modify contents in this directory,",
+            locale.text(crate::locale::TextKey::TrustWarning1),
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
         Line::from(Span::styled(
-            "posing security risks.",
+            locale.text(crate::locale::TextKey::TrustWarning2),
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
@@ -1046,6 +1233,7 @@ fn render_welcome_trust(
         menu_height,
         compact,
         prompt_compact: compact,
+        prompt_height: Some(0),
         ..Default::default()
     });
 
@@ -1059,6 +1247,7 @@ fn render_welcome_trust(
         layout.version,
         buf,
         theme,
+        locale,
         None,
         h_margin,
         false,
@@ -1075,15 +1264,9 @@ fn render_welcome_trust(
     }
 }
 
-/// Header text shared by Loopback and Command auth modes.
-const AUTH_HEADER: &str = "A browser window will open for authentication.";
-/// Header text for the device-flow auth mode.
-const DEVICE_AUTH_HEADER: &str = "Approve in your browser to finish signing in.";
-/// Caption beneath the device code.
-const DEVICE_CODE_CAPTION: &str = "Make sure your browser shows this code.";
-
-/// Extract `user_code` from a device verification URL (`None` if absent or malformed).
-/// It is shown on-screen so the user can confirm it matches the browser before approving (anti-phishing).
+/// Extract `user_code` from a device verification URL (`None` if absent or
+/// malformed). Shown on-screen so the user can confirm it matches the browser
+/// before approving (anti-phishing).
 fn extract_user_code(url: &str) -> Option<&str> {
     let code = url
         .split('?')
@@ -1093,44 +1276,52 @@ fn extract_user_code(url: &str) -> Option<&str> {
     let valid = !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
     valid.then_some(code)
 }
-/// Clickable copy prompt shared by Loopback and Command auth modes.
-const AUTH_COPY_PREFIX: &str = "If it doesn't open, click ";
-const AUTH_COPY_HERE: &str = "here";
-const AUTH_COPY_SUFFIX: &str = " to copy.";
-
 /// Build the "click here to copy" line with "here" underlined in accent color.
-fn auth_copy_line(theme: &Theme) -> Line<'static> {
+fn auth_copy_line(theme: &Theme, locale: &crate::locale::LocaleContext) -> Line<'static> {
     Line::from(vec![
-        Span::styled(AUTH_COPY_PREFIX, Style::default().fg(theme.gray_bright)),
         Span::styled(
-            AUTH_COPY_HERE,
+            locale.text(crate::locale::TextKey::AuthCopyPrefix),
+            Style::default().fg(theme.gray_bright),
+        ),
+        Span::styled(
+            locale.text(crate::locale::TextKey::AuthCopyLink),
             Style::default()
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::UNDERLINED),
         ),
-        Span::styled(AUTH_COPY_SUFFIX, Style::default().fg(theme.gray_bright)),
+        Span::styled(
+            locale.text(crate::locale::TextKey::AuthCopySuffix),
+            Style::default().fg(theme.gray_bright),
+        ),
     ])
     .alignment(Alignment::Center)
 }
 
 /// Number of physical rows the header and the blank row occupy before the copy line.
 fn auth_copy_preceding_rows(header: &str, inner_width: u16) -> u16 {
-    let header_rows = (header.len() as u16).div_ceil(inner_width);
+    let header_rows =
+        (UnicodeWidthStr::width(header).min(u16::MAX as usize) as u16).div_ceil(inner_width);
     header_rows + 1 // header + blank
 }
 
 /// Number of physical rows the copy line occupies when wrapped.
-fn auth_copy_line_rows(inner_width: u16) -> u16 {
-    let copy_len = AUTH_COPY_PREFIX.len() + AUTH_COPY_HERE.len() + AUTH_COPY_SUFFIX.len();
-    (copy_len as u16).div_ceil(inner_width)
+fn auth_copy_line_rows(locale: &crate::locale::LocaleContext, inner_width: u16) -> u16 {
+    let copy_width = [
+        crate::locale::TextKey::AuthCopyPrefix,
+        crate::locale::TextKey::AuthCopyLink,
+        crate::locale::TextKey::AuthCopySuffix,
+    ]
+    .into_iter()
+    .map(|key| locale.text(key).width())
+    .sum::<usize>()
+    .min(u16::MAX as usize) as u16;
+    copy_width.div_ceil(inner_width)
 }
 
-const AUTH_FALLBACK_TEXT: &str = "Copying not working? Click here to show full URL.";
-
 /// Build the fallback "show full URL" link line.
-fn auth_fallback_line(theme: &Theme) -> Line<'static> {
+fn auth_fallback_line(theme: &Theme, locale: &crate::locale::LocaleContext) -> Line<'static> {
     Line::from(Span::styled(
-        AUTH_FALLBACK_TEXT,
+        locale.text(crate::locale::TextKey::AuthCopyFallback),
         Style::default()
             .fg(theme.gray)
             .add_modifier(Modifier::UNDERLINED),
@@ -1138,38 +1329,49 @@ fn auth_fallback_line(theme: &Theme) -> Line<'static> {
     .alignment(Alignment::Center)
 }
 
+fn auth_fallback_line_rows(locale: &crate::locale::LocaleContext, inner_width: u16) -> u16 {
+    let width = locale
+        .text(crate::locale::TextKey::AuthCopyFallback)
+        .width()
+        .min(u16::MAX as usize) as u16;
+    width.div_ceil(inner_width)
+}
+
 /// Push the shared copy-prompt block, stable feedback slot, and raw-URL fallback.
 fn push_auth_copy_block(
     lines: &mut Vec<Line<'static>>,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
     clipboard_delivery: Option<crate::clipboard::ClipboardDelivery>,
 ) {
     lines.push(Line::default());
-    lines.push(auth_copy_line(theme));
+    lines.push(auth_copy_line(theme, locale));
     lines.push(Line::default());
     lines.push(match clipboard_delivery {
-        Some(crate::clipboard::ClipboardDelivery::Confirmed) => {
-            Line::from(Span::styled("copied!", Style::default().fg(theme.gray)))
-                .alignment(Alignment::Center)
-        }
-        Some(crate::clipboard::ClipboardDelivery::Unverified) => Line::from(Span::styled(
-            "copy sent: verify paste",
+        Some(crate::clipboard::ClipboardDelivery::Confirmed) => Line::from(Span::styled(
+            locale.text(crate::locale::TextKey::AuthCopyConfirmed),
             Style::default().fg(theme.gray),
         ))
         .alignment(Alignment::Center),
-        Some(crate::clipboard::ClipboardDelivery::Failed) => {
-            Line::from(Span::styled("copy failed", Style::default().fg(theme.gray)))
-                .alignment(Alignment::Center)
-        }
+        Some(crate::clipboard::ClipboardDelivery::Unverified) => Line::from(Span::styled(
+            locale.text(crate::locale::TextKey::AuthCopyUnverified),
+            Style::default().fg(theme.gray),
+        ))
+        .alignment(Alignment::Center),
+        Some(crate::clipboard::ClipboardDelivery::Failed) => Line::from(Span::styled(
+            locale.text(crate::locale::TextKey::AuthCopyFailed),
+            Style::default().fg(theme.gray),
+        ))
+        .alignment(Alignment::Center),
         None => Line::default(),
     });
     lines.push(Line::default());
-    lines.push(auth_fallback_line(theme));
+    lines.push(auth_fallback_line(theme, locale));
 }
 
 /// Rows occupied by [`push_auth_copy_block`].
-fn auth_copy_block_rows(inner_width: u16) -> u16 {
-    auth_copy_line_rows(inner_width) + 5
+fn auth_copy_block_rows(locale: &crate::locale::LocaleContext, inner_width: u16) -> u16 {
+    auth_copy_line_rows(locale, inner_width) + auth_fallback_line_rows(locale, inner_width) + 4
 }
 
 /// Click hit-rects for the copy line and fallback link. `header`'s wrapped row count sets the copy line's vertical offset.
@@ -1179,9 +1381,11 @@ fn auth_hit_rects(
     inner_width: u16,
     header: &str,
     preceding_extra: u16,
+    locale: &crate::locale::LocaleContext,
 ) -> (Option<Rect>, Option<Rect>) {
     let preceding = auth_copy_preceding_rows(header, inner_width) + preceding_extra;
-    let copy_rows = auth_copy_line_rows(inner_width);
+    let copy_rows = auth_copy_line_rows(locale, inner_width);
+    let fallback_rows = auth_fallback_line_rows(locale, inner_width);
     let copy_rect = Rect {
         x: msg_area.x + h_pad,
         y: msg_area.y + preceding,
@@ -1194,7 +1398,7 @@ fn auth_hit_rects(
         x: msg_area.x + h_pad,
         y: fallback_y,
         width: inner_width,
-        height: 1,
+        height: fallback_rows,
     };
     (Some(copy_rect), Some(fb_rect))
 }
@@ -1204,16 +1408,19 @@ fn render_raw_url_mode(
     content_area: Rect,
     buf: &mut Buffer,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
     top_pad: u16,
     logo_line_count: u16,
     auth_url: Option<&str>,
 ) -> (Option<Rect>, Option<Rect>) {
     // Use full terminal width for the URL so the terminal wraps it naturally without inserting spaces (important for copy-paste)
     let full_width = content_area.width.max(1);
+    let raw_url_hint = locale.text(crate::locale::TextKey::AuthRawUrlHint);
+    let hint_rows = (raw_url_hint.width().min(u16::MAX as usize) as u16).div_ceil(full_width);
     let url_lines = auth_url
         .map(|u| (u.len() as u16).div_ceil(full_width))
         .unwrap_or(0);
-    let msg_height = 1 + 1 + url_lines; // hint + blank + URL
+    let msg_height = hint_rows + 1 + url_lines; // hint + blank + URL
     let [_, logo_area, _, msg_area, _, hint_area, _] = Layout::vertical([
         Constraint::Length(top_pad),
         Constraint::Length(logo_line_count),
@@ -1228,14 +1435,11 @@ fn render_raw_url_mode(
     render_logo(logo_area, buf, theme, content_area.height);
 
     // Render hint above the URL.
-    let hint = Line::from(Span::styled(
-        "Select the URL below with your mouse and copy manually.",
-        Style::default().fg(theme.gray),
-    ))
-    .alignment(Alignment::Center);
-    Paragraph::new(hint).render(
+    let hint = Line::from(Span::styled(raw_url_hint, Style::default().fg(theme.gray)))
+        .alignment(Alignment::Center);
+    Paragraph::new(hint).wrap(Wrap { trim: false }).render(
         Rect {
-            height: 1,
+            height: hint_rows,
             ..msg_area
         },
         buf,
@@ -1245,8 +1449,9 @@ fn render_raw_url_mode(
     // the screen edge.
     if let Some(url) = auth_url {
         let url_style = Style::default().fg(theme.accent_user);
-        let url_y = msg_area.y + 2; // after hint + blank
-        // Control characters are skipped below to prevent terminal escape injection, so measure the URL without them
+        let url_y = msg_area.y + hint_rows + 1; // after hint + blank
+        // Control characters are skipped below to prevent terminal escape
+        // injection, so measure the URL without them.
         let url_len = url.chars().filter(|c| !c.is_control()).count() as u16;
         let x_offset = if url_len <= full_width {
             (full_width - url_len) / 2
@@ -1277,7 +1482,10 @@ fn render_raw_url_mode(
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  go back", Style::default().fg(theme.gray)),
+        Span::styled(
+            format!("  {}", locale.text(crate::locale::TextKey::AuthGoBack)),
+            Style::default().fg(theme.gray),
+        ),
     ];
     let hints = Line::from(hint_spans).alignment(Alignment::Center);
     Paragraph::new(hints).render(hint_area, buf);
@@ -1308,33 +1516,50 @@ fn render_browser_status_arm(
     show_raw_url: bool,
     clipboard_delivery: Option<crate::clipboard::ClipboardDelivery>,
     kind: BrowserStatusKind,
+    locale: &crate::locale::LocaleContext,
 ) -> (Option<Rect>, Option<Rect>) {
     let h_pad: u16 = content_area.width / 6;
     let inner_width = content_area.width.saturating_sub(h_pad * 2).max(1);
 
     if show_raw_url {
-        return render_raw_url_mode(content_area, buf, theme, top_pad, logo_line_count, auth_url);
+        return render_raw_url_mode(
+            content_area,
+            buf,
+            theme,
+            locale,
+            top_pad,
+            logo_line_count,
+            auth_url,
+        );
     }
 
     // Device also parses the user code from the verification URL.
     let (header, waiting_text, user_code) = match kind {
-        BrowserStatusKind::Command => (AUTH_HEADER, "Waiting for login to complete...", None),
+        BrowserStatusKind::Command => (
+            locale.text(crate::locale::TextKey::AuthHeader),
+            locale.text(crate::locale::TextKey::AuthWaitLogin),
+            None,
+        ),
         BrowserStatusKind::Device => (
-            DEVICE_AUTH_HEADER,
-            "Waiting for approval...",
+            locale.text(crate::locale::TextKey::AuthDeviceHeader),
+            locale.text(crate::locale::TextKey::AuthWaitApproval),
             auth_url.and_then(extract_user_code),
         ),
     };
+    let device_code_caption = locale.text(crate::locale::TextKey::AuthDeviceCaption);
 
-    let header_rows = (header.len() as u16).div_ceil(inner_width);
+    let header_rows =
+        (UnicodeWidthStr::width(header).min(u16::MAX as usize) as u16).div_ceil(inner_width);
     let code_extra = if user_code.is_some() {
-        let caption_rows = (DEVICE_CODE_CAPTION.len() as u16).div_ceil(inner_width);
+        let caption_rows = (UnicodeWidthStr::width(device_code_caption).min(u16::MAX as usize)
+            as u16)
+            .div_ceil(inner_width);
         1 + 1 + 1 + caption_rows // blank + code + blank + caption
     } else {
         0
     };
     let copy_extra = if auth_url.is_some() {
-        auth_copy_block_rows(inner_width)
+        auth_copy_block_rows(locale, inner_width)
     } else {
         0
     };
@@ -1371,14 +1596,14 @@ fn render_browser_status_arm(
         lines.push(Line::default());
         lines.push(
             Line::from(Span::styled(
-                DEVICE_CODE_CAPTION,
+                device_code_caption,
                 Style::default().fg(theme.gray),
             ))
             .alignment(Alignment::Center),
         );
     }
     if auth_url.is_some() {
-        push_auth_copy_block(&mut lines, theme, clipboard_delivery);
+        push_auth_copy_block(&mut lines, theme, locale, clipboard_delivery);
     }
     lines.push(Line::default());
     lines.push(
@@ -1391,12 +1616,12 @@ fn render_browser_status_arm(
         .render(msg_area, buf);
 
     let (click_rect, fallback_rect) = if auth_url.is_some() {
-        auth_hit_rects(msg_area, h_pad, inner_width, header, code_extra)
+        auth_hit_rects(msg_area, h_pad, inner_width, header, code_extra, locale)
     } else {
         (None, None)
     };
 
-    let hints = Line::from(quit_hint_spans(theme)).alignment(Alignment::Center);
+    let hints = Line::from(quit_hint_spans(theme, locale)).alignment(Alignment::Center);
     Paragraph::new(hints).render(hint_area, buf);
 
     (click_rect, fallback_rect)
@@ -1415,6 +1640,7 @@ fn render_welcome_authenticating(
     auth_code_cursor_byte: usize,
     clipboard_delivery: Option<crate::clipboard::ClipboardDelivery>,
     show_raw_url: bool,
+    locale: &crate::locale::LocaleContext,
 ) -> (Option<Rect>, Option<Rect>) {
     let top_pad = content_area.height.saturating_sub(logo_line_count) / 10;
 
@@ -1429,15 +1655,19 @@ fn render_welcome_authenticating(
                     content_area,
                     buf,
                     theme,
+                    locale,
                     top_pad,
                     logo_line_count,
                     auth_url,
                 );
             }
 
+            let auth_header = locale.text(crate::locale::TextKey::AuthHeader);
             let msg_height = if auth_url.is_some() {
-                let header_rows = (AUTH_HEADER.len() as u16).div_ceil(inner_width);
-                header_rows + auth_copy_block_rows(inner_width)
+                let header_rows = (UnicodeWidthStr::width(auth_header).min(u16::MAX as usize)
+                    as u16)
+                    .div_ceil(inner_width);
+                header_rows + auth_copy_block_rows(locale, inner_width)
             } else {
                 1u16
             };
@@ -1461,16 +1691,16 @@ fn render_welcome_authenticating(
             if auth_url.is_some() {
                 lines.push(
                     Line::from(Span::styled(
-                        AUTH_HEADER,
+                        auth_header,
                         Style::default().fg(theme.gray_bright),
                     ))
                     .alignment(Alignment::Center),
                 );
-                push_auth_copy_block(&mut lines, theme, clipboard_delivery);
+                push_auth_copy_block(&mut lines, theme, locale, clipboard_delivery);
             } else {
                 lines.push(
                     Line::from(Span::styled(
-                        "Waiting for auth URL...",
+                        locale.text(crate::locale::TextKey::AuthWaitUrl),
                         Style::default().fg(theme.gray),
                     ))
                     .alignment(Alignment::Center),
@@ -1482,7 +1712,7 @@ fn render_welcome_authenticating(
                 .render(msg_area, buf);
 
             let (click_rect, fallback_rect) = if auth_url.is_some() {
-                auth_hit_rects(msg_area, h_pad, inner_width, AUTH_HEADER, 0)
+                auth_hit_rects(msg_area, h_pad, inner_width, auth_header, 0, locale)
             } else {
                 (None, None)
             };
@@ -1502,6 +1732,7 @@ fn render_welcome_authenticating(
                 theme,
                 auth_code_input,
                 auth_code_cursor_byte,
+                locale,
             );
 
             // Hints
@@ -1512,9 +1743,12 @@ fn render_welcome_authenticating(
                         .fg(theme.accent_user)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("  submit    ", Style::default().fg(theme.gray)),
+                Span::styled(
+                    format!("  {}    ", locale.text(crate::locale::TextKey::AuthSubmit)),
+                    Style::default().fg(theme.gray),
+                ),
             ];
-            hint_spans.extend(quit_hint_spans(theme));
+            hint_spans.extend(quit_hint_spans(theme, locale));
             let hints = Line::from(hint_spans).alignment(Alignment::Center);
             Paragraph::new(hints).render(hint_area, buf);
 
@@ -1531,6 +1765,7 @@ fn render_welcome_authenticating(
             show_raw_url,
             clipboard_delivery,
             BrowserStatusKind::Command,
+            locale,
         ),
 
         AuthMode::Device => render_browser_status_arm(
@@ -1543,6 +1778,7 @@ fn render_welcome_authenticating(
             show_raw_url,
             clipboard_delivery,
             BrowserStatusKind::Device,
+            locale,
         ),
 
         AuthMode::Pending => {
@@ -1561,13 +1797,13 @@ fn render_welcome_authenticating(
             render_logo(logo_area, buf, theme, content_area.height);
 
             let msg = Line::from(Span::styled(
-                "Connecting...",
+                locale.text(crate::locale::TextKey::AuthConnecting),
                 Style::default().fg(theme.gray_bright),
             ))
             .alignment(Alignment::Center);
             Paragraph::new(msg).render(msg_area, buf);
 
-            let hints = Line::from(quit_hint_spans(theme)).alignment(Alignment::Center);
+            let hints = Line::from(quit_hint_spans(theme, locale)).alignment(Alignment::Center);
             Paragraph::new(hints).render(hint_area, buf);
 
             (None, None)
@@ -1591,6 +1827,7 @@ fn render_changelog_section(
     area: Rect,
     buf: &mut Buffer,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
     bullets: &[String],
     min_width_hint: u16,
     content_height: u16,
@@ -1622,7 +1859,7 @@ fn render_changelog_section(
             .fg(theme.gray_bright)
             .add_modifier(Modifier::DIM),
     );
-    let title = "Changelog";
+    let title = locale.text(crate::locale::TextKey::WelcomeChangelog);
     buf.set_span(
         centered.x,
         centered.y,
@@ -1716,10 +1953,10 @@ fn render_welcome_done(
     // Plain compact mode keeps the normal welcome layout
     let welcome_compact = show_picker;
 
-    let cta = p
-        .gate
-        .and_then(|g| g.label.as_deref())
-        .unwrap_or("Upgrade Subscription");
+    let cta = p.gate.and_then(|g| g.label.as_deref()).unwrap_or_else(|| {
+        p.locale
+            .text(crate::locale::TextKey::WelcomeUpgradeSubscription)
+    });
     let in_vscode_family = welcome_in_vscode_family();
     let (key_g, key_l, key_q) = (
         "ctrl+g",
@@ -1744,13 +1981,16 @@ fn render_welcome_done(
         } else if p.privacy_banner {
             // Same inset the banner paint below uses, so the reserved rows and the wrapped row count can't drift
             let inset = prompt::prompt_inset(p.compact);
-            crate::views::privacy_banner::height(content_area.width.saturating_sub(inset * 2))
+            crate::views::privacy_banner::height_with_locale(
+                content_area.width.saturating_sub(inset * 2),
+                Some(p.locale),
+            )
         } else if has_resume_tip {
             1u16
         } else if let Some(tip_text) = p.tip {
             let inset = prompt::prompt_inset(welcome_compact);
             let tip_width = content_area.width.saturating_sub(inset * 2);
-            crate::tips::render::tip_height(tip_width, tip_text)
+            crate::tips::render::tip_height_with_locale(tip_width, tip_text, Some(p.locale))
         } else {
             0
         }
@@ -1768,7 +2008,11 @@ fn render_welcome_done(
     let gate_menu;
     let owned_menu;
     let menu_items: &[(&str, &str)] = if !p.has_access {
-        gate_menu = [(key_g, cta), (key_l, "Logout"), (key_q, "Quit")];
+        gate_menu = [
+            (key_g, cta),
+            (key_l, p.locale.text(crate::locale::TextKey::WelcomeLogout)),
+            (key_q, p.locale.text(crate::locale::TextKey::WelcomeQuit)),
+        ];
         &gate_menu
     } else {
         let (key_w, key_resume, key_q, key_i_with_x) = (
@@ -1780,18 +2024,30 @@ fn render_welcome_done(
         // Insert the import row at the top when there are pending `.claude/` settings to import; it's the most actionable item right now
         let mut items: Vec<(&str, &str)> = Vec::with_capacity(5);
         if p.has_claude_import {
-            // The trailing "[x]" is a clickable dismiss control
-            // The welcome screen mouse handler treats clicks on the rightmost 3 cells of this row as dismiss instead of open. Keyboard: ctrl-shift-i.
-            // The key string is right-aligned by render_menu, so [x] sits at the very end of the row
-            items.push((key_i_with_x, "Import Claude settings"));
+            // The trailing "[x]" is a clickable dismiss affordance — the
+            // welcome screen mouse handler treats clicks on the rightmost
+            // 3 cells of this row as dismiss instead of open. Keyboard:
+            // ctrl-shift-i. The key string is right-aligned by render_menu,
+            // so [x] sits at the very end of the row.
+            items.push((
+                key_i_with_x,
+                p.locale
+                    .text(crate::locale::TextKey::WelcomeImportClaudeSettings),
+            ));
         }
-        items.push((key_w, "New worktree"));
-        items.push((key_resume, "Resume session"));
-        // "Changelog" above Quit; no shortcut, opened by click (row or block)
+        items.push((
+            key_w,
+            p.locale.text(crate::locale::TextKey::SessionNewWorktree),
+        ));
+        items.push((
+            key_resume,
+            p.locale.text(crate::locale::TextKey::SessionResume),
+        ));
+        // "Changelog" above Quit; no shortcut — opened by click (row or block).
         if show_changelog_action {
-            items.push(("", "Changelog"));
+            items.push(("", p.locale.text(crate::locale::TextKey::WelcomeChangelog)));
         }
-        items.push((key_q, "Quit"));
+        items.push((key_q, p.locale.text(crate::locale::TextKey::WelcomeQuit)));
         owned_menu = items;
         owned_menu.as_slice()
     };
@@ -1850,6 +2106,7 @@ fn render_welcome_done(
         announcement: p.announcement,
         expanded: p.welcome_announcement_expanded,
         has_upgrade_cta: p.upgrade_cta.is_some(),
+        logo_hidden: None,
         prompt_height: None,
     };
     // The picker and the access gate paint no composer
@@ -1864,7 +2121,8 @@ fn render_welcome_done(
     let layout = WelcomeLayout::compute(layout_input);
 
     // Render startup warning in the error area (same slot as auth errors).
-    let import_banner_rect = render_startup_warnings(layout.error, buf, theme, p.startup_warnings);
+    let import_banner_rect =
+        render_startup_warnings(layout.error, buf, theme, p.startup_warnings, p.locale);
 
     // Hit-rects / truncation flag, set by whichever layout draws each block.
     let mut changelog_cta_rect: Option<Rect> = None;
@@ -1902,6 +2160,7 @@ fn render_welcome_done(
                 pending_delete: p.session_picker_pending_delete,
                 chat_mode: p.chat_mode,
                 cwd: p.cwd,
+                locale: Some(p.locale),
             },
         );
         (vec![], Some(hit_areas))
@@ -1919,6 +2178,7 @@ fn render_welcome_done(
             p.changelog_bullets,
             p.changelog_has_full_notes,
             p.upgrade_cta,
+            p.locale,
             #[cfg(feature = "local-workspace")]
             show_workspace_picker.then_some((
                 p.workspace_mode,
@@ -1943,7 +2203,7 @@ fn render_welcome_done(
         #[cfg(feature = "local-workspace")]
         let menu_area = if show_workspace_picker {
             let picker_rect = workspace_mode::picker_area(menu_area);
-            workspace_mode_rects = render_workspace_mode_picker(
+            workspace_mode_rects = render_workspace_mode_picker_with_locale(
                 picker_rect,
                 buf,
                 theme,
@@ -1951,6 +2211,7 @@ fn render_welcome_done(
                 p.mouse_pos,
                 p.workspace_mode_startup_locked,
                 p.workspace_mode_ack_pending,
+                Some(p.locale),
             );
             Rect {
                 y: menu_area.y + workspace_mode::WORKSPACE_MODE_MENU_ROWS,
@@ -2000,6 +2261,7 @@ fn render_welcome_done(
                 info_area,
                 buf,
                 theme,
+                p.locale,
                 p.changelog_bullets,
                 MENU_MIN_WIDTH,
                 content_area.height,
@@ -2027,13 +2289,19 @@ fn render_welcome_done(
         ])
         .flex(Flex::Center)
         .areas(layout.prompt);
-        // Show the user's current tier and a clickable refresh button above the gate message
-        let tier_label = p.subscription_tier.unwrap_or("Free");
-        let tier_prefix = format!("Tier: {tier_label}  ");
-        let refresh_text = "[Refresh]";
-        let total_width = tier_prefix.len() + refresh_text.len();
+        // Show the user's current tier + clickable refresh button above the gate message.
+        let tier_label_raw = p.subscription_tier.unwrap_or("Free");
+        let tier_label = localized_subscription_tier(p.locale, tier_label_raw);
+        let tier_prefix_label = p
+            .locale
+            .named_static_text("welcome.subscription.tier_prefix", "Tier: ");
+        let refresh_text = p
+            .locale
+            .named_static_text("welcome.subscription.refresh", "[Refresh]");
+        let tier_prefix = format!("{tier_prefix_label}{tier_label}  ");
+        let total_width = tier_prefix.width() + refresh_text.width();
         let tier_line = Line::from(vec![
-            Span::styled("Tier: ", Style::default().fg(theme.gray)),
+            Span::styled(tier_prefix_label, Style::default().fg(theme.gray)),
             Span::styled(
                 tier_label,
                 Style::default()
@@ -2058,18 +2326,30 @@ fn render_welcome_done(
         // Compute the click rect for "[Refresh]" within the centered line.
         let line_start_x = tier_area.x + tier_area.width.saturating_sub(total_width as u16) / 2;
         refresh_hit_rect = Some(Rect {
-            x: line_start_x + tier_prefix.len() as u16,
+            x: line_start_x + tier_prefix.width().min(u16::MAX as usize) as u16,
             y: tier_area.y,
-            width: refresh_text.len() as u16,
+            width: refresh_text.width().min(u16::MAX as usize) as u16,
             height: 1,
         });
 
-        let gate_text = p
-            .gate
-            .map(|g| g.message.as_str())
-            .unwrap_or("SuperGrok subscription required");
+        let gate_text = p.gate.map_or_else(
+            || {
+                p.locale.named_text(
+                    "welcome.subscription.required",
+                    "SuperGrok subscription required",
+                )
+            },
+            |g| {
+                if g.message == "SuperGrok subscription required" {
+                    p.locale
+                        .named_text("welcome.subscription.required", g.message.as_str())
+                } else {
+                    std::borrow::Cow::Borrowed(g.message.as_str())
+                }
+            },
+        );
         let msg = Line::from(Span::styled(
-            gate_text,
+            gate_text.into_owned(),
             Style::default().fg(theme.gray_bright),
         ))
         .alignment(Alignment::Center);
@@ -2116,6 +2396,7 @@ fn render_welcome_done(
             layout.version,
             buf,
             theme,
+            p.locale,
             p.team_name,
             h_margin,
             p.is_api_key_auth,
@@ -2141,7 +2422,13 @@ fn render_welcome_done(
                 width: tip_centered.width.saturating_sub(inset * 2),
                 height: tip_centered.height,
             };
-            let rects = crate::views::privacy_banner::render(tip_inset, buf, theme, p.mouse_pos);
+            let rects = crate::views::privacy_banner::render_with_locale(
+                tip_inset,
+                buf,
+                theme,
+                p.mouse_pos,
+                Some(p.locale),
+            );
             privacy_banner_opt_in_rect = Some(rects.opt_in);
             privacy_banner_opt_out_rect = Some(rects.opt_out);
             privacy_banner_terms_rect = Some(rects.terms);
@@ -2165,17 +2452,24 @@ fn render_welcome_done(
                 height: tip_centered.height,
             };
             let key_name = "ctrl+u";
+            let update_prefix = p
+                .locale
+                .named_static_text("welcome.update.prefix", "Update: ");
+            let update_template = p.locale.named_text(
+                "welcome.update.available",
+                "v{version} available — press {key} to download and install",
+            );
+            let update_text = update_template
+                .replace("{version}", ver)
+                .replace("{key}", key_name);
             let line = Line::from(vec![
                 Span::styled(
-                    "Update: ",
+                    update_prefix,
                     Style::default()
                         .fg(theme.accent_user)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!("v{ver} available, press {key_name} to restart"),
-                    Style::default().fg(theme.accent_user),
-                ),
+                Span::styled(update_text, Style::default().fg(theme.accent_user)),
             ]);
             Paragraph::new(line)
                 .style(Style::default().bg(theme.bg_base))
@@ -2204,17 +2498,29 @@ fn render_welcome_done(
             };
             let mins = hint.age.as_secs() / 60;
             let when = if mins == 0 {
-                "moments ago".to_string()
+                p.locale
+                    .named_text("welcome.resume.moments_ago", "moments ago")
+                    .into_owned()
             } else {
-                format!("{mins}m ago")
+                p.locale
+                    .named_text("welcome.resume.minutes_ago", "{minutes}m ago")
+                    .replace("{minutes}", &mins.to_string())
             };
             let accent = Style::default().fg(theme.accent_user);
             let accent_bold = accent.add_modifier(Modifier::BOLD);
             let tool = crate::app::foreign_tool_display_label(hint.tool);
+            let coming_from = p
+                .locale
+                .named_static_text("welcome.resume.coming_from", "Coming from ");
+            let resume_template = p.locale.named_text(
+                "welcome.resume.question",
+                "? Resume your session from {when} using ",
+            );
+            let resume_text = resume_template.replace("{when}", &when);
             let line = Line::from(vec![
-                Span::styled("Coming from ", accent),
+                Span::styled(coming_from, accent),
                 Span::styled(tool, accent_bold),
-                Span::styled(format!("? Resume your session from {when} using "), accent),
+                Span::styled(resume_text, accent),
                 Span::styled("ctrl+u", accent_bold),
             ]);
             Paragraph::new(line)
@@ -2223,7 +2529,12 @@ fn render_welcome_done(
         }
 
         let warning = p.credit_balance.and_then(|bal| {
-            crate::views::credit_bar::usage_warning(bal, p.auto_topup, p.usage_visible)
+            crate::views::credit_bar::usage_warning_with_locale(
+                bal,
+                p.auto_topup,
+                p.usage_visible,
+                Some(p.locale),
+            )
         });
         let (usage_warning_text, usage_warning_critical) = match warning {
             Some((text, critical)) => (Some(text), critical),
@@ -2242,6 +2553,7 @@ fn render_welcome_done(
             content_area.width,
             buf,
             theme,
+            p.locale,
             p.prompt_focus,
             prompt,
             &usage_info,
@@ -2302,7 +2614,7 @@ pub(crate) fn render_session_picker_body(
 ) -> crate::views::picker::PickerHitAreas {
     use crate::views::picker::{self, PickerConfig, PickerEntry, PickerField, PickerRow};
     use crate::views::session_picker::{
-        SessionEntryData, build_grouped_picker_entries, build_session_entry_data,
+        SessionEntryData, build_grouped_picker_entries, build_session_entry_data_with_locale,
     };
 
     let entries_data = match ctx.sessions {
@@ -2319,7 +2631,13 @@ pub(crate) fn render_session_picker_body(
         crate::app::app_view::filter_session_entries(ctx.sessions, filter_query, ctx.source_filter);
 
     let content_width = area.width; // approximate for truncation
-    let built = build_session_entry_data(entries_data, &filtered_indices, ctx.state, content_width);
+    let built = build_session_entry_data_with_locale(
+        entries_data,
+        &filtered_indices,
+        ctx.state,
+        content_width,
+        ctx.locale,
+    );
 
     // Build PickerEntry refs that borrow from `built`.
     let fields_vecs: Vec<Vec<PickerField>> = built
@@ -2370,19 +2688,22 @@ pub(crate) fn render_session_picker_body(
     };
 
     // Append content search result rows (shared helper handles dedup).
-    use crate::views::session_picker::{build_content_entry_data, build_content_header_label};
+    use crate::views::session_picker::{
+        build_content_entry_data_with_locale, build_content_header_label_with_locale,
+    };
     // Content rows will start after fuzzy rows + 1 header row.
     let content_start = picker_entries.len() + 1;
     let content_entry_data: Vec<SessionEntryData> = if let Some(hits) = ctx.content_results
         && !ctx.source_filter.is_content_search_disabled()
         && !filter_query.is_empty()
     {
-        build_content_entry_data(
+        build_content_entry_data_with_locale(
             hits,
             entries_data,
             &filtered_indices,
             ctx.state,
             content_start,
+            ctx.locale,
         )
     } else {
         Vec::new()
@@ -2391,7 +2712,12 @@ pub(crate) fn render_session_picker_body(
     // Show header only if there are actual deduped content rows to display.
     let has_content_rows = !content_entry_data.is_empty();
     let content_loading = ctx.content_loading && !ctx.source_filter.is_content_search_disabled();
-    let spinner_label = build_content_header_label(content_loading, has_content_rows, ctx.tick);
+    let spinner_label = build_content_header_label_with_locale(
+        content_loading,
+        has_content_rows,
+        ctx.tick,
+        ctx.locale,
+    );
     // Only show the header when content results exist or when content search is in progress with a
     // non-empty query. This must match the header condition inside `build_entry_map` as called from
     // `handle_welcome_input` (app_view.rs).
@@ -2438,7 +2764,13 @@ pub(crate) fn render_session_picker_body(
             summary_lines: &[],
             dimmed: false,
             indent: 1,
-            badge: if has_snippet { "match" } else { "" },
+            badge: if has_snippet {
+                ctx.locale
+                    .map(|locale| locale.named_static_text("session.badge.match", "match"))
+                    .unwrap_or("match")
+            } else {
+                ""
+            },
             badge_color: Some(theme.accent_user),
             collapsible: true,
             underline_last_desc: false,
@@ -2449,7 +2781,11 @@ pub(crate) fn render_session_picker_body(
     let hidden_hint = if controls_hidden {
         None
     } else {
-        crate::views::session_picker::hidden_external_hint(ctx.sessions, ctx.source_filter)
+        crate::views::session_picker::hidden_external_hint_with_locale(
+            ctx.sessions,
+            ctx.source_filter,
+            ctx.locale,
+        )
     };
 
     // Build shortcuts for fullscreen mode. Chat mode drops the worktree / deep-search / filter hints (local-Build-row actions).
@@ -2508,8 +2844,12 @@ pub(crate) fn render_session_picker_body(
         });
     }
 
+    let title = ctx
+        .locale
+        .map(|locale| locale.named_static_text("picker.title.resume_session", "Resume session"))
+        .unwrap_or("Resume session");
     let config = PickerConfig {
-        title: Some("Resume session"),
+        title: Some(title),
         show_search_hint: true,
         expandable: true,
         esc_clears_query: true,
@@ -2520,7 +2860,7 @@ pub(crate) fn render_session_picker_body(
         shortcuts_area: ctx.shortcuts_area,
         tabs: None,
         active_tab: 0,
-        filter_label: (!controls_hidden).then(|| ctx.source_filter.label()),
+        filter_label: (!controls_hidden).then(|| ctx.source_filter.localized_label(ctx.locale)),
         filter_key_hint: (!controls_hidden).then_some("f"),
         filter_active: !controls_hidden && ctx.source_filter.is_active(),
         header_note: hidden_hint.as_deref(),
@@ -2544,6 +2884,7 @@ pub(crate) fn render_session_picker_body(
         &config,
         ctx.loading,
         ctx.tick,
+        ctx.locale,
     )
 }
 
@@ -2554,6 +2895,7 @@ fn render_auth_input_box(
     theme: &Theme,
     input: &str,
     cursor_byte: usize,
+    locale: &crate::locale::LocaleContext,
 ) {
     let prompt_block = Block::default()
         .borders(Borders::ALL)
@@ -2571,8 +2913,12 @@ fn render_auth_input_box(
         let prompt = crate::glyphs::prompt_arrow();
         let prompt_width = prompt.width() as u16;
         let input_width = inner.width.saturating_sub(prompt_width);
-        let (display, cursor_column) =
-            masked_auth_token_view(input, cursor_byte, input_width as usize);
+        let (display, cursor_column) = masked_auth_token_view(
+            input,
+            cursor_byte,
+            input_width as usize,
+            locale.text(crate::locale::TextKey::AuthTokenPlaceholder),
+        );
 
         let style = if input.is_empty() {
             Style::default().fg(theme.gray_dim)
@@ -2601,6 +2947,7 @@ fn render_startup_warnings(
     buf: &mut Buffer,
     theme: &Theme,
     warnings: &[StartupWarning],
+    locale: &crate::locale::LocaleContext,
 ) -> Option<Rect> {
     let w = crate::startup::banner_warning(warnings)?;
 
@@ -2618,13 +2965,46 @@ fn render_startup_warnings(
     };
     let style = Style::default().fg(color);
 
-    let mut lines: Vec<Line<'_>> = w
-        .message
+    let localized_message = match w.message.as_str() {
+        "Project sandbox settings conflict with your settings." => locale
+            .named_text(
+                "startup.warning.sandbox_conflict",
+                "Project sandbox settings conflict with your settings.",
+            ),
+        "Copies need this terminal to stay focused." => locale.named_text(
+            "startup.warning.copy_focus",
+            "Copies need this terminal to stay focused.",
+        ),
+        "Shift+Enter can't insert newlines in WezTerm." => locale.named_text(
+            "startup.warning.wezterm_newline",
+            "Shift+Enter can't insert newlines in WezTerm.",
+        ),
+        "Shift+Enter can't insert a newline in WezTerm over SSH" => locale.named_text(
+            "startup.warning.wezterm_ssh_newline",
+            "Shift+Enter can't insert a newline in WezTerm over SSH",
+        ),
+        "Shift+Enter can't insert a newline because WezTerm's Kitty keyboard protocol is off" => {
+            locale.named_text(
+                "startup.warning.wezterm_kitty_off",
+                "Shift+Enter can't insert a newline because WezTerm's Kitty keyboard protocol is off",
+            )
+        }
+        _ => std::borrow::Cow::Borrowed(w.message.as_str()),
+    };
+    let mut lines: Vec<Line<'_>> = localized_message
         .lines()
         .map(|l| Line::from(Span::styled(l, style)).alignment(Alignment::Center))
         .collect();
     if let Some(ref action) = w.action {
-        lines.push(Line::from(Span::styled(action.as_str(), style)).alignment(Alignment::Center));
+        let action = if action == "Run /doctor for details and fixes." {
+            locale.named_text(
+                "startup.warning.doctor_action",
+                "Run /doctor for details and fixes.",
+            )
+        } else {
+            std::borrow::Cow::Borrowed(action.as_str())
+        };
+        lines.push(Line::from(Span::styled(action, style)).alignment(Alignment::Center));
     }
 
     Paragraph::new(lines).render(area, buf);
@@ -2661,9 +3041,14 @@ fn build_masked_auth_token(input: &str, cursor_byte: usize) -> MaskedAuthToken {
     }
 }
 
-fn masked_auth_token_view(input: &str, cursor_byte: usize, width: usize) -> (String, usize) {
+fn masked_auth_token_view(
+    input: &str,
+    cursor_byte: usize,
+    width: usize,
+    empty_placeholder: &str,
+) -> (String, usize) {
     if input.is_empty() {
-        return ("Paste your token here...".to_string(), 0);
+        return (empty_placeholder.to_owned(), 0);
     }
     let masked = build_masked_auth_token(input, cursor_byte);
     let buffer =
@@ -2678,6 +3063,16 @@ fn masked_auth_token_view(input: &str, cursor_byte: usize, width: usize) -> (Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static TEST_LOCALE: std::sync::LazyLock<crate::locale::LocaleContext> =
+        std::sync::LazyLock::new(crate::locale::LocaleContext::default);
+    static ZH_TEST_LOCALE: std::sync::LazyLock<crate::locale::LocaleContext> =
+        std::sync::LazyLock::new(|| {
+            crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+                locale: crate::locale::UiLocale::ZhCn,
+                source: crate::locale::LocaleSource::Cli,
+            })
+        });
     use crate::app::app_view::SessionPickerEntry;
     use crate::views::picker::PickerState;
     use crate::views::session_picker::{build_grouped_picker_entries, build_session_entry_data};
@@ -2685,7 +3080,16 @@ mod tests {
     fn badge_text(mode: VersionBadgeMode<'_>, team: Option<&str>) -> String {
         let area = Rect::new(0, 0, 80, 1);
         let mut buf = Buffer::empty(area);
-        render_version_badge(area, &mut buf, &Theme::current(), team, 0, false, mode);
+        render_version_badge(
+            area,
+            &mut buf,
+            &Theme::current(),
+            &TEST_LOCALE,
+            team,
+            0,
+            false,
+            mode,
+        );
         (0..area.width)
             .map(|x| buf.cell((x, 0)).map_or(" ", |c| c.symbol()).to_string())
             .collect::<String>()
@@ -2694,7 +3098,7 @@ mod tests {
     }
 
     /// The badge carries the product name, the version, and the channel, and never a release label.
-    /// The hero footer prints a channel only on alpha and beta builds, so on stable it must not end on a separator.
+    /// The hero footer prints a channel only when a stable pointer is cached, so it must not end on a separator otherwise.
     #[test]
     fn version_badge_carries_no_release_label() {
         let full = badge_text(
@@ -2722,32 +3126,70 @@ mod tests {
     }
 
     #[test]
+    fn release_channel_labels_are_localized_for_welcome_display_only() {
+        assert_eq!(
+            localized_channel_label(&ZH_TEST_LOCALE, Some("stable")).as_deref(),
+            Some("[稳定版]")
+        );
+        assert_eq!(
+            localized_channel_label(&ZH_TEST_LOCALE, Some("alpha")).as_deref(),
+            Some("[测试版]")
+        );
+        assert_eq!(
+            localized_channel_label(&TEST_LOCALE, Some("stable")).as_deref(),
+            Some("[stable]")
+        );
+        assert_eq!(localized_channel_label(&ZH_TEST_LOCALE, None), None);
+    }
+
+    #[test]
     fn auth_copy_feedback_covers_delivery_states() {
         let theme = Theme::current();
-        for (delivery, expected) in [
-            (crate::clipboard::ClipboardDelivery::Confirmed, "copied!"),
+        for (locale, confirmed, unverified, failed) in [
             (
-                crate::clipboard::ClipboardDelivery::Unverified,
-                "copy sent: verify paste",
+                &*TEST_LOCALE,
+                "copied!",
+                "copy sent—verify paste",
+                "copy failed",
             ),
-            (crate::clipboard::ClipboardDelivery::Failed, "copy failed"),
+            (
+                &*ZH_TEST_LOCALE,
+                "已复制！",
+                "已发送复制请求，请粘贴确认",
+                "复制失败",
+            ),
         ] {
-            let mut lines = Vec::new();
-            push_auth_copy_block(&mut lines, &theme, Some(delivery));
-            let feedback = lines[3]
-                .spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>();
-            assert_eq!(feedback, expected);
+            for (delivery, expected) in [
+                (crate::clipboard::ClipboardDelivery::Confirmed, confirmed),
+                (crate::clipboard::ClipboardDelivery::Unverified, unverified),
+                (crate::clipboard::ClipboardDelivery::Failed, failed),
+            ] {
+                let mut lines = Vec::new();
+                push_auth_copy_block(&mut lines, &theme, locale, Some(delivery));
+                let feedback = lines[3]
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>();
+                assert_eq!(feedback, expected);
+            }
         }
     }
 
     #[test]
     fn masked_auth_token_preserves_reveal_policy() {
         assert_eq!(
-            masked_auth_token_view("", 0, 24),
+            masked_auth_token_view("", 0, 24, "Paste your token here..."),
             ("Paste your token here...".to_string(), 0)
+        );
+        assert_eq!(
+            masked_auth_token_view(
+                "",
+                0,
+                24,
+                ZH_TEST_LOCALE.text(crate::locale::TextKey::AuthTokenPlaceholder),
+            ),
+            ("请在此粘贴令牌…".to_string(), 0)
         );
         assert_eq!(build_masked_auth_token("12345678", 8).display, "12345678");
         assert_eq!(build_masked_auth_token("123456789", 9).display, "•••••6789");
@@ -2788,7 +3230,7 @@ mod tests {
 
         for width in [1, 2, 5] {
             for cursor in [before, inside, after] {
-                let (view, cursor_column) = masked_auth_token_view(&token, cursor, width);
+                let (view, cursor_column) = masked_auth_token_view(&token, cursor, width, "");
                 assert!(view.width() <= width);
                 assert!(cursor_column < width);
                 assert!(!view.contains('\u{200b}'));
@@ -2800,7 +3242,7 @@ mod tests {
 
         let wide_prefix = "中bcdefgh";
         let wide_token = format!("{wide_prefix}HIDDEN{suffix}");
-        let (_, cursor_column) = masked_auth_token_view(&wide_token, wide_prefix.len(), 40);
+        let (_, cursor_column) = masked_auth_token_view(&wide_token, wide_prefix.len(), 40, "");
         assert_eq!(cursor_column, wide_prefix.graphemes(true).count());
     }
 
@@ -2811,7 +3253,7 @@ mod tests {
         let area = Rect::new(0, 0, 9, 3);
         let theme = Theme::current();
         let mut buffer = Buffer::empty(area);
-        render_auth_input_box(area, &mut buffer, &theme, token, cursor);
+        render_auth_input_box(area, &mut buffer, &theme, token, cursor, &TEST_LOCALE);
         assert!((0..area.width).any(|x| buffer[(x, 1)].bg == theme.text_primary));
     }
 
@@ -2843,6 +3285,7 @@ mod tests {
         session_picker: Option<&'a [SessionPickerEntry]>,
     ) -> WelcomeRenderParams<'a> {
         WelcomeRenderParams {
+            locale: &TEST_LOCALE,
             prompt_focus: WelcomePromptFocus::Unfocused,
             auth_state,
             trust_state,
@@ -2906,6 +3349,385 @@ mod tests {
         let mut picker = PickerState::default();
         render_welcome(area, &mut buf, params, &mut prompt, &mut picker);
         buffer_text(&buf)
+    }
+
+    #[test]
+    fn simplified_chinese_catalog_reaches_login_and_trust_screens() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+
+        let auth = AuthState::Pending { error: None };
+        let trust = TrustState::Done;
+        let mut params = render_params(&auth, &trust, None);
+        params.locale = &locale;
+        params.login_label = Some("grok.com");
+        let login = render_done_text(&params);
+        assert!(login.contains("使用 grok.com 登录"), "{login}");
+        assert!(login.contains("退出"), "{login}");
+
+        let auth = AuthState::Done;
+        let trust = TrustState::Pending {
+            workspace: std::path::PathBuf::from("/repo"),
+        };
+        let mut params = render_params(&auth, &trust, None);
+        params.locale = &locale;
+        let trust_screen = render_done_text(&params);
+        assert!(
+            trust_screen.contains("你信任此目录中的内容吗？"),
+            "{trust_screen}"
+        );
+        assert!(
+            trust_screen.contains("这可能带来安全风险。"),
+            "{trust_screen}"
+        );
+    }
+
+    #[test]
+    fn simplified_chinese_catalog_reaches_welcome_menus_and_prompt() {
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+
+        let mut params = render_params(&auth, &trust, None);
+        params.locale = &ZH_TEST_LOCALE;
+        params.is_zdr_blocked = true;
+        let zdr = render_done_text(&params);
+        assert!(zdr.contains("切换账户"), "{zdr}");
+        assert!(zdr.contains("退出"), "{zdr}");
+
+        let mut params = render_params(&auth, &trust, None);
+        params.locale = &ZH_TEST_LOCALE;
+        params.has_access = false;
+        let gate = render_done_text(&params);
+        assert!(gate.contains("升级订阅"), "{gate}");
+        assert!(gate.contains("退出登录"), "{gate}");
+        assert!(gate.contains("订阅等级：免费"), "{gate}");
+        assert!(gate.contains("[刷新]"), "{gate}");
+        assert!(gate.contains("需要 SuperGrok 订阅"), "{gate}");
+
+        for raw_tier in ["free", " FREE "] {
+            let mut params = render_params(&auth, &trust, None);
+            params.locale = &ZH_TEST_LOCALE;
+            params.has_access = false;
+            params.subscription_tier = Some(raw_tier);
+            let gate = render_done_text(&params);
+            assert!(gate.contains("订阅等级：免费"), "{raw_tier:?}: {gate}");
+            assert!(!gate.contains(raw_tier), "{raw_tier:?}: {gate}");
+        }
+
+        let mut params = render_params(&auth, &trust, None);
+        params.locale = &ZH_TEST_LOCALE;
+        params.has_claude_import = true;
+        let ready = render_done_text(&params);
+        assert!(ready.contains("导入 Claude 设置"), "{ready}");
+        assert!(ready.contains("新建工作树"), "{ready}");
+        assert!(ready.contains("恢复会话"), "{ready}");
+        assert!(ready.contains("更新日志"), "{ready}");
+        assert!(ready.contains("输入消息…"), "{ready}");
+        assert!(ready.contains("感谢试用 Grok Build"), "{ready}");
+        assert!(ready.contains("Grok Build"), "{ready}");
+        assert!(!ready.contains("中文社区版"), "{ready}");
+        assert!(!ready.contains("Beta"), "{ready}");
+    }
+
+    #[test]
+    fn zh_localization_welcome_tip_translates_known_body_and_keeps_command() {
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+
+        let mut params = render_params(&auth, &trust, None);
+        params.locale = &ZH_TEST_LOCALE;
+        params.tip = Some("Try out workflows using /workflows.");
+        let localized = render_done_text(&params);
+        assert!(
+            localized.contains("提示：输入 /workflows 即可体验工作流。"),
+            "{localized}"
+        );
+
+        params.locale = &TEST_LOCALE;
+        let english = render_done_text(&params);
+        assert!(
+            english.contains("Tip: Try out workflows using /workflows."),
+            "{english}"
+        );
+    }
+
+    #[test]
+    fn simplified_chinese_update_prompt_describes_download() {
+        let auth = AuthState::Done;
+        let trust = TrustState::Done;
+        let mut params = render_params(&auth, &trust, None);
+        params.locale = &ZH_TEST_LOCALE;
+        params.pending_update_version = Some("9.9.9");
+
+        let update = render_done_text(&params);
+        assert!(update.contains("更新："), "{update}");
+        assert!(
+            update.contains("v9.9.9 已可用 — 按 ctrl+u 下载并安装"),
+            "{update}"
+        );
+    }
+
+    #[test]
+    fn known_workflows_announcement_is_localized_but_unknown_content_is_opaque() {
+        let workflows = xai_grok_announcements::RemoteAnnouncement {
+            title: Some("Workflows are here!".to_string()),
+            message: Some("Try them out using /workflows.".to_string()),
+            ..Default::default()
+        };
+        let localized = localized_announcement_for_display(
+            &ZH_TEST_LOCALE,
+            &workflows,
+            &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+        );
+        assert_eq!(localized.title.as_deref(), Some("工作流功能现已上线！"));
+        assert_eq!(
+            localized.message.as_deref(),
+            Some("输入 /workflows 即可体验。")
+        );
+
+        let unknown = xai_grok_announcements::RemoteAnnouncement {
+            title: Some("Security notice".to_string()),
+            message: Some("Review the current policy.".to_string()),
+            ..Default::default()
+        };
+        let untouched = localized_announcement_for_display(
+            &ZH_TEST_LOCALE,
+            &unknown,
+            &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+        );
+        assert!(matches!(untouched, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(untouched.as_ref(), &unknown);
+    }
+
+    #[test]
+    fn localization_regression_grok_announcements_cover_4_5_and_4_6() {
+        for (version, expected_title, expected_message) in [
+            (
+                "4.5",
+                "Grok 4.5 现已上线！",
+                "请在 /model 中选择“Grok 4.5”。",
+            ),
+            (
+                "4.6",
+                "Grok 4.6 现已上线！",
+                "请在 /model 中选择“Grok 4.6”。",
+            ),
+        ] {
+            let announcement = xai_grok_announcements::RemoteAnnouncement {
+                title: Some(format!("Grok {version} is here!")),
+                message: Some(format!("Select 'Grok {version}' under /model.")),
+                ..Default::default()
+            };
+            let localized = localized_announcement_for_display(
+                &ZH_TEST_LOCALE,
+                &announcement,
+                &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+            );
+            assert_eq!(localized.title.as_deref(), Some(expected_title));
+            assert_eq!(localized.message.as_deref(), Some(expected_message));
+        }
+
+        for version in ["4.5", "4.6"] {
+            let near_miss = xai_grok_announcements::RemoteAnnouncement {
+                title: Some(format!("Grok {version} is here.")),
+                message: Some(format!("Select Grok {version} under /model.")),
+                ..Default::default()
+            };
+            let untouched = localized_announcement_for_display(
+                &ZH_TEST_LOCALE,
+                &near_miss,
+                &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+            );
+            assert!(matches!(untouched, std::borrow::Cow::Borrowed(_)));
+            assert_eq!(untouched.as_ref(), &near_miss);
+        }
+    }
+
+    #[test]
+    fn known_degraded_performance_notice_is_localized_but_near_misses_are_opaque() {
+        let announcement = xai_grok_announcements::RemoteAnnouncement {
+            title: Some("Degraded performance".to_string()),
+            message: Some(
+                "Elevated latency on some requests. Follow status.x.ai for updates.".to_string(),
+            ),
+            severity: Some("warning".to_string()),
+            ..Default::default()
+        };
+        let localized = localized_announcement_for_display(
+            &ZH_TEST_LOCALE,
+            &announcement,
+            &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+        );
+        assert_eq!(localized.title.as_deref(), Some("性能下降"));
+        assert_eq!(
+            localized.message.as_deref(),
+            Some("部分请求的延迟升高。请关注 status.x.ai 获取最新信息。")
+        );
+        assert_eq!(localized.severity, announcement.severity);
+
+        let near_miss = xai_grok_announcements::RemoteAnnouncement {
+            title: Some("Degraded performance!".to_string()),
+            message: Some(
+                "Elevated latency on requests. Follow status.x.ai for updates.".to_string(),
+            ),
+            severity: Some("warning".to_string()),
+            ..Default::default()
+        };
+        let untouched = localized_announcement_for_display(
+            &ZH_TEST_LOCALE,
+            &near_miss,
+            &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+        );
+        assert!(matches!(untouched, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(untouched.as_ref(), &near_miss);
+    }
+
+    #[test]
+    fn known_grok_4_6_free_trial_announcement_localizes_message_and_cta() {
+        let announcement = xai_grok_announcements::RemoteAnnouncement {
+            message: Some(
+                "Grok 4.6 is here, try it out for free for a limited time! Upgrade for more usage."
+                    .to_string(),
+            ),
+            severity: Some("promo".to_string()),
+            cta: Some(xai_grok_announcements::AnnouncementCta {
+                label: Some("Click here to Upgrade".to_string()),
+                url: Some("https://x.ai/subscribe".to_string()),
+                caption: Some("or use Ctrl+O".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        let localized = localized_announcement_for_display(
+            &ZH_TEST_LOCALE,
+            &announcement,
+            &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+        );
+        assert_eq!(
+            xai_grok_announcements::announcement_hide_key(localized.as_ref()),
+            xai_grok_announcements::announcement_hide_key(&announcement),
+            "localization must not change the identity of an id-less announcement"
+        );
+        let hidden =
+            std::collections::BTreeSet::from([xai_grok_announcements::announcement_hide_key(
+                &announcement,
+            )]);
+        assert!(
+            crate::views::announcements::first_session_announcement(
+                std::slice::from_ref(localized.as_ref()),
+                &hidden,
+            )
+            .is_none(),
+            "a localized id-less announcement must remain hidden"
+        );
+        assert_eq!(
+            localized.message.as_deref(),
+            Some("Grok 4.6 现已上线，限时免费体验！升级可获得更多用量。")
+        );
+        let cta = localized.cta.as_ref().expect("localized CTA");
+        assert_eq!(cta.label.as_deref(), Some("点击此处升级"));
+        assert_eq!(cta.caption.as_deref(), Some("或按 Ctrl+O"));
+        assert_eq!(cta.url.as_deref(), Some("https://x.ai/subscribe"));
+
+        let mut blank_id = announcement.clone();
+        blank_id.id = Some("   ".to_string());
+        let localized_blank_id = localized_announcement_for_display(
+            &ZH_TEST_LOCALE,
+            &blank_id,
+            &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+        );
+        assert_eq!(
+            xai_grok_announcements::announcement_hide_key(localized_blank_id.as_ref()),
+            xai_grok_announcements::announcement_hide_key(&blank_id),
+            "a whitespace-only remote id must retain its content-derived identity"
+        );
+
+        let near_miss = xai_grok_announcements::RemoteAnnouncement {
+            cta: Some(xai_grok_announcements::AnnouncementCta {
+                label: Some("Click here to upgrade".to_string()),
+                url: Some("https://x.ai/subscribe".to_string()),
+                caption: Some("Or use Ctrl+O".to_string()),
+            }),
+            ..Default::default()
+        };
+        let untouched = localized_announcement_for_display(
+            &ZH_TEST_LOCALE,
+            &near_miss,
+            &xai_grok_update::announcement_translations::TranslationCatalog::bundled(),
+        );
+        assert!(matches!(untouched, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(untouched.as_ref(), &near_miss);
+    }
+
+    #[test]
+    fn simplified_chinese_catalog_reaches_auth_copy_and_manual_token_flow() {
+        let area = Rect::new(0, 0, 80, 40);
+        let theme = Theme::current();
+        let url = "https://accounts.x.ai/oauth2/device?user_code=ABCD-EFGH";
+
+        let mut buf = Buffer::empty(area);
+        render_welcome_authenticating(
+            area,
+            &mut buf,
+            &theme,
+            logo_line_count(area.height),
+            Some(url),
+            AuthMode::Device,
+            "",
+            0,
+            Some(crate::clipboard::ClipboardDelivery::Confirmed),
+            false,
+            &ZH_TEST_LOCALE,
+        );
+        let copied = buffer_text(&buf);
+        assert!(
+            copied.contains("若浏览器未打开，请点击此处复制网址。"),
+            "{copied}"
+        );
+        assert!(copied.contains("已复制！"), "{copied}");
+        assert!(
+            copied.contains("无法复制？点击此处显示完整网址。"),
+            "{copied}"
+        );
+
+        let mut buf = Buffer::empty(area);
+        render_welcome_authenticating(
+            area,
+            &mut buf,
+            &theme,
+            logo_line_count(area.height),
+            Some(url),
+            AuthMode::Device,
+            "",
+            0,
+            None,
+            true,
+            &ZH_TEST_LOCALE,
+        );
+        let raw = buffer_text(&buf);
+        assert!(raw.contains("请用鼠标选择下方网址并手动复制。"), "{raw}");
+        assert!(raw.contains("返回"), "{raw}");
+
+        let mut buf = Buffer::empty(area);
+        render_welcome_authenticating(
+            area,
+            &mut buf,
+            &theme,
+            logo_line_count(area.height),
+            None,
+            AuthMode::Loopback,
+            "",
+            0,
+            None,
+            false,
+            &ZH_TEST_LOCALE,
+        );
+        let loopback = buffer_text(&buf);
+        assert!(loopback.contains("请在此粘贴令牌…"), "{loopback}");
+        assert!(loopback.contains("提交"), "{loopback}");
+        assert!(loopback.contains("退出"), "{loopback}");
     }
 
     #[test]
@@ -3062,6 +3884,7 @@ mod tests {
                     source_filter: crate::views::session_picker::SourceFilter::default(),
                     pending_delete: false,
                     chat_mode: true,
+                    locale: None,
                 },
             );
             (0..area.height)
@@ -3135,6 +3958,7 @@ mod tests {
                 source_filter: crate::views::session_picker::SourceFilter::Headless,
                 pending_delete: false,
                 chat_mode: false,
+                locale: None,
             },
         );
         let screen = (0..area.height)
@@ -3473,6 +4297,7 @@ mod tests {
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 4,
+            logo_hidden: Some(false),
             ..Default::default()
         });
         assert!(layout.has_hero_box(), "hero box should be active at 90x50");
@@ -3482,7 +4307,10 @@ mod tests {
         assert_eq!(layout.logo.width, 0);
         assert_eq!(layout.menu.width, 0);
         // Sub-rects inside the hero box are valid.
-        assert!(layout.hero_logo.height > 0);
+        assert_eq!(
+            layout.hero_logo.height,
+            logo::full_logo_line_count_for(false)
+        );
         assert!(layout.hero_menu.height > 0);
         assert_eq!(layout.hero_version.height, 1);
     }
@@ -3889,14 +4717,16 @@ mod tests {
 
     #[test]
     fn hero_box_inactive_when_warning_would_overflow() {
-        // Regression: the box is forced to the full 7-row logo, so even a 3-item menu needs 11 box rows
-        // A startup warning (error_height = 2) pushes the total past height 19
-        // The gate must therefore fall back to the stacked layout instead of overflowing by a row
+        // Regression: a startup warning (error_height = 2) must make the gate
+        // fall back instead of overflowing. Height 19 is the exact boundary for
+        // the full 7-row logo, so pin visibility instead of inheriting the test
+        // host's terminal capabilities.
         let area = Rect::new(0, 0, 90, 19);
         let with_warning = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             error_height: 2,
             menu_height: 3,
+            logo_hidden: Some(false),
             ..Default::default()
         });
         assert!(!with_warning.has_hero_box());
@@ -3904,6 +4734,7 @@ mod tests {
         let no_warning = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
+            logo_hidden: Some(false),
             ..Default::default()
         });
         assert!(no_warning.has_hero_box());
@@ -3919,6 +4750,7 @@ mod tests {
             WelcomeLayout::compute(WelcomeLayoutInput {
                 content_area: area,
                 menu_height: 2,
+                logo_hidden: Some(false),
                 ..Default::default()
             })
             .has_hero_box(),
@@ -3927,12 +4759,13 @@ mod tests {
         let blocked = WelcomeLayout::compute_stacked(WelcomeLayoutInput {
             content_area: area,
             menu_height: 2,
+            logo_hidden: Some(false),
             ..Default::default()
         });
         assert!(!blocked.has_hero_box());
-        assert!(
-            blocked.logo.height > 0,
-            "logo must be painted on the login screen"
+        assert_eq!(
+            blocked.logo.height,
+            logo::logo_line_count_for(area.height, false)
         );
         assert!(
             blocked.menu.height > 0,
@@ -3978,6 +4811,7 @@ mod tests {
         let layout = WelcomeLayout::compute(WelcomeLayoutInput {
             content_area: area,
             menu_height: 3,
+            logo_hidden: Some(false),
             ..Default::default()
         });
         assert!(layout.has_hero_box());
@@ -4122,13 +4956,51 @@ mod tests {
     fn buffer_text(buf: &Buffer) -> String {
         let area = *buf.area();
         let mut out = String::new();
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                out.push_str(buf[(x, y)].symbol());
+        for y in area.y..area.y.saturating_add(area.height) {
+            let mut skip = 0usize;
+            for x in area.x..area.x.saturating_add(area.width) {
+                let symbol = buf[(x, y)].symbol();
+                if skip == 0 {
+                    out.push_str(symbol);
+                }
+                // Mirrors Ratatui's visual buffer representation: a wide glyph
+                // owns its first cell and hides the following continuation cells.
+                skip = skip.max(symbol.width()).saturating_sub(1);
             }
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn buffer_text_skips_wide_continuations_but_preserves_real_spaces() {
+        let area = Rect::new(0, 0, 20, 1);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "切换账户", Style::default());
+        let visual = buffer_text(&buf);
+        assert!(visual.contains("切换账户"), "{visual:?}");
+
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "切 换账户", Style::default());
+        let visual = buffer_text(&buf);
+        assert!(visual.contains("切 换账户"), "{visual:?}");
+        assert!(!visual.contains("切换账户"), "{visual:?}");
+    }
+
+    #[test]
+    fn buffer_text_does_not_join_wrapped_or_clipped_text() {
+        let area = Rect::new(0, 0, 8, 2);
+        let mut buf = Buffer::empty(area);
+        buf.set_string(0, 0, "切换", Style::default());
+        buf.set_string(0, 1, "账户", Style::default());
+        let visual = buffer_text(&buf);
+        assert!(!visual.contains("切换账户"), "{visual:?}");
+
+        let narrow = Rect::new(0, 0, 2, 1);
+        let mut buf = Buffer::empty(narrow);
+        buf.set_string(0, 0, "切换账户", Style::default());
+        let visual = buffer_text(&buf);
+        assert!(!visual.contains("切换账户"), "{visual:?}");
     }
 
     #[test]
@@ -4171,6 +5043,7 @@ mod tests {
             0,
             None,  // clipboard_delivery
             false, // show_raw_url
+            &TEST_LOCALE,
         );
 
         let text = buffer_text(&buf);
@@ -4226,6 +5099,7 @@ mod tests {
             0,
             None,
             true, // show_raw_url
+            &TEST_LOCALE,
         );
 
         let text = buffer_text(&buf);
@@ -4253,6 +5127,7 @@ mod tests {
             0,
             None,
             true, // show_raw_url
+            &TEST_LOCALE,
         );
 
         let text = buffer_text(&buf);
@@ -4290,6 +5165,7 @@ mod tests {
             0,
             None,
             true, // show_raw_url
+            &TEST_LOCALE,
         );
 
         let text = buffer_text(&buf);
@@ -4329,6 +5205,7 @@ mod tests {
             0,
             None,  // clipboard_delivery
             false, // show_raw_url
+            &TEST_LOCALE,
         );
 
         let text = buffer_text(&buf);
@@ -4570,7 +5447,7 @@ the usual channels. "
             hero_box::min_content_height(
                 &short_input,
                 short_expanded.hero_info.height,
-                PROMPT_HEIGHT
+                PROMPT_HEIGHT,
             ) <= short.height
         );
     }

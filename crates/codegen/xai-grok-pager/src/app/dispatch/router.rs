@@ -63,8 +63,8 @@ use super::session::lifecycle::{
     clear_startup_actions, dispatch_accept_consent, dispatch_agent_type_mismatch_answered,
     dispatch_delete_current_session_answered, dispatch_exit_session, dispatch_new_session,
     dispatch_new_session_inner, dispatch_new_session_with_id, dispatch_new_worktree_session,
-    dispatch_trust_folder, leave_welcome_for_session, open_delete_current_session_question,
-    open_new_session_question,
+    dispatch_trust_folder, leave_welcome_for_session, localized_welcome_workspace_error,
+    open_delete_current_session_question, open_new_session_question,
 };
 use super::session::load::{
     dispatch_cycle_session_source_filter, dispatch_load_session, dispatch_pick_content_session,
@@ -100,8 +100,9 @@ use super::settings::ui::{
 use super::status::{
     dispatch_copy_session_id, dispatch_manage_billing, dispatch_open_gboom, dispatch_open_tutorial,
     dispatch_privacy_banner_opt_in, dispatch_privacy_banner_opt_out, dispatch_share_session,
-    dispatch_show_context_info, dispatch_show_queue, dispatch_show_release_notes,
-    dispatch_show_session_info, dispatch_show_tasks, dispatch_show_usage, set_coding_data_sharing,
+    dispatch_show_context_info, dispatch_show_howto_doc, dispatch_show_queue,
+    dispatch_show_release_notes, dispatch_show_session_info, dispatch_show_tasks,
+    dispatch_show_usage, set_coding_data_sharing,
 };
 use super::task_result::{dispatch_task_result, unregister_all_active_sessions};
 use super::transcript::{
@@ -246,7 +247,14 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 }
                 Err(err) => {
                     tracing::warn!("welcome local-workspace ack: {err}");
-                    app.show_toast(&format!("Local workspace: {err}"));
+                    let raw_error = err.to_string();
+                    let display_error =
+                        localized_welcome_workspace_error(app.locale.as_ref(), &raw_error);
+                    let message = app
+                        .locale
+                        .named_text("local_workspace.error", "Local workspace: {error}")
+                        .replace("{error}", &display_error);
+                    app.show_toast(&message);
                     vec![]
                 }
             }
@@ -1040,6 +1048,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::ShowReleaseNotes { title, content } => {
             dispatch_show_release_notes(app, title, content)
         }
+        Action::ShowHowtoDoc { id } => dispatch_show_howto_doc(app, id),
         Action::OpenTutorial => dispatch_open_tutorial(app),
         Action::RenameSession { title } => dispatch_rename_session(app, title),
         Action::ResetSessionTitleToAuto => dispatch_reset_session_title(app),
@@ -1168,11 +1177,15 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                     .ok()
                     .and_then(|u| u.to_file_path().ok())
                     .is_some_and(|path| crate::app::link_opener::open_path(&path));
-                app.show_toast(if opened {
-                    "Opening in default app\u{2026}"
+                let message = if opened {
+                    app.locale
+                        .named_static_text("media.toast.opening", "Opening in default app\u{2026}")
                 } else {
-                    "Could not open file"
-                });
+                    app.locale
+                        .named_static_text("media.toast.open_failed", "Could not open file")
+                }
+                .to_string();
+                app.show_toast(&message);
             } else {
                 open_url_or_show(app, &url);
             }
@@ -1183,11 +1196,17 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             match crate::render::osc8::resolve_link_open_target(&target) {
                 Some(LinkTarget::File(path)) => {
                     let opened = crate::app::link_opener::open_path(&path);
-                    app.show_toast(if opened {
-                        "Opening in default app\u{2026}"
+                    let message = if opened {
+                        app.locale.named_static_text(
+                            "media.toast.opening",
+                            "Opening in default app\u{2026}",
+                        )
                     } else {
-                        "Could not open file"
-                    });
+                        app.locale
+                            .named_static_text("media.toast.open_failed", "Could not open file")
+                    }
+                    .to_string();
+                    app.show_toast(&message);
                 }
                 Some(LinkTarget::Url(url)) => {
                     crate::app::link_opener::open_url(&url);
@@ -1258,11 +1277,19 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 return vec![];
             }
             if crate::app::foreign_sessions::is_foreign_picker_source(&source) {
-                app.show_toast("External sessions can't be deleted");
+                let message = app.locale.named_static_text(
+                    "session.delete_external_unsupported",
+                    "External sessions can't be deleted",
+                );
+                app.show_toast(message);
                 return vec![];
             }
             if source == "conversation" {
-                app.show_toast("Deleting chat conversations isn't supported yet");
+                let message = app.locale.named_static_text(
+                    "session.delete_chat_unsupported",
+                    "Deleting chat conversations isn't supported yet",
+                );
+                app.show_toast(message);
                 return vec![];
             }
             if !matches!(source.as_str(), "local" | "remote" | "both")
@@ -1271,10 +1298,17 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 return vec![];
             }
             if crate::app::workspace_sync::permanent_delete_blocked(app, &session_id) {
-                app.show_toast("Cannot delete session: dashboard workspace is read-only");
+                let message = app.locale.named_static_text(
+                    "session.delete.workspace_read_only",
+                    "Cannot delete session: dashboard workspace is read-only",
+                );
+                app.show_toast(message);
                 return vec![];
             }
-            app.show_toast("Deleting session\u{2026}");
+            let message = app
+                .locale
+                .named_static_text("session.deleting", "Deleting session\u{2026}");
+            app.show_toast(message);
             vec![Effect::DeleteSession {
                 source,
                 session_id,
@@ -1316,30 +1350,35 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::DoctorFixConfirmed { target, plan } => {
             let Some(target) = super::task_result::current_doctor_target(app, &target) else {
+                let message = app.locale.named_text(
+                    "doctor.fix.session_changed",
+                    "This fix was cancelled because the session changed. Run `/doctor fix` again.",
+                );
                 super::task_result::deliver_doctor_message(
                     app,
                     target.agent_id,
-                    "This fix was cancelled because the session changed. Run `/doctor fix` again."
-                        .to_owned(),
+                    message.into_owned(),
                 );
                 return vec![];
             };
+            let fix_id = plan.id().to_string();
+            let message = app
+                .locale
+                .named_text("doctor.fix.applying", "Applying {fix}…")
+                .replace("{fix}", &fix_id);
             if let Some(agent) = app.agents.get_mut(&target.agent_id) {
                 agent
                     .scrollback
-                    .push_block(crate::scrollback::block::RenderBlock::system(format!(
-                        "Applying {}…",
-                        plan.id()
-                    )));
+                    .push_block(crate::scrollback::block::RenderBlock::system(message));
             }
             vec![Effect::ApplyDoctorFix { target, plan }]
         }
         Action::DoctorFixCancelled(target) => {
-            super::task_result::deliver_doctor_message(
-                app,
-                target.agent_id,
-                "Fix cancelled.".to_owned(),
-            );
+            let message = app
+                .locale
+                .named_text("doctor.fix.cancelled", "Fix cancelled.")
+                .into_owned();
+            super::task_result::deliver_doctor_message(app, target.agent_id, message);
             vec![]
         }
         Action::AgentTypeMismatchAnswered {
@@ -1567,6 +1606,7 @@ pub(super) fn dispatch_action_result(
     app: &mut AppView,
     agent_id: crate::app::agent::AgentId,
     result: Result<xai_hooks_plugins_types::ActionOutcome, String>,
+    origin: crate::views::extensions_modal::ActionResultOrigin,
 ) -> Vec<Effect> {
     use xai_hooks_plugins_types::OutcomeStatus;
     let Some(agent) = app.agents.get_mut(&agent_id) else {
@@ -1586,13 +1626,20 @@ pub(super) fn dispatch_action_result(
                 let mut effects = Vec::new();
                 if let Some(ref mut modal) = agent.extensions_modal {
                     if !outcome.message.trim().is_empty() && modal.result_notice.is_none() {
-                        let entry_index = match modal.last_plugins_action {
-                            Some(xai_hooks_plugins_types::PluginsAction::Uninstall { .. }) => None,
-                            _ => modal.pending_entry_index,
+                        let entry_index = if origin
+                            == crate::views::extensions_modal::ActionResultOrigin::Plugins
+                            && matches!(
+                                modal.last_plugins_action,
+                                Some(xai_hooks_plugins_types::PluginsAction::Uninstall { .. })
+                            ) {
+                            None
+                        } else {
+                            modal.pending_entry_index
                         };
                         modal.result_notice =
                             Some(crate::views::extensions_modal::ActionResultNotice {
                                 message: outcome.message.clone(),
+                                origin,
                                 entry_index,
                                 ticks_remaining:
                                     crate::views::extensions_modal::RESULT_NOTICE_TICKS,
@@ -1634,17 +1681,21 @@ pub(super) fn dispatch_action_result(
             }
             OutcomeStatus::ConfirmationRequired => {
                 if let Some(ref mut modal) = agent.extensions_modal {
-                    let confirmed_action = modal.last_plugins_action.as_ref().map(|a| {
-                        let mut action = a.clone();
-                        if let xai_hooks_plugins_types::PluginsAction::Uninstall {
-                            ref mut confirmed,
-                            ..
-                        } = action
-                        {
-                            *confirmed = true;
-                        }
-                        action
-                    });
+                    let confirmed_action = (origin
+                        == crate::views::extensions_modal::ActionResultOrigin::Plugins)
+                        .then_some(modal.last_plugins_action.as_ref())
+                        .flatten()
+                        .map(|a| {
+                            let mut action = a.clone();
+                            if let xai_hooks_plugins_types::PluginsAction::Uninstall {
+                                ref mut confirmed,
+                                ..
+                            } = action
+                            {
+                                *confirmed = true;
+                            }
+                            action
+                        });
                     if let Some(action) = confirmed_action {
                         let pending_entry_index = modal
                             .pending_entry_index

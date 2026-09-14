@@ -430,6 +430,7 @@ pub struct HookRunEntryDto {
 }
 
 /// What a `HookAnnotation` is, so the pager can pick the row bullet (the message itself carries none).
+/// Shell-owned template variants also let clients localize fixed chrome without mistaking arbitrary hook text for built-in copy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookAnnotationKind {
@@ -438,6 +439,14 @@ pub enum HookAnnotationKind {
     Note,
     /// A hook's verdict on the tool call above it (a deny): the pager gives it the tool-row bullet.
     ToolOutcome,
+    PromptBlockRequestedNotEnforced,
+    PromptBlocked,
+    QueuedPromptsHeld,
+    InterjectionsJoined,
+    /// Forward-compatible fallback for a shell-generated template introduced
+    /// by a newer peer. Older clients preserve its message verbatim.
+    #[serde(other)]
+    Unknown,
 }
 
 impl HookAnnotationKind {
@@ -565,6 +574,8 @@ pub enum SessionUpdate {
     HookAnnotation {
         /// The hook message, text only: the pager draws the row bullet from `kind`.
         message: String,
+        /// Present only for shell-generated templates. Missing on older replays
+        /// and arbitrary hook-provided messages serializes as the default `Note`.
         #[serde(default, skip_serializing_if = "HookAnnotationKind::is_default")]
         kind: HookAnnotationKind,
     },
@@ -2112,6 +2123,34 @@ mod tests {
         let json_str = serde_json::to_string(&full).unwrap();
         let parsed: SessionUpdate = serde_json::from_str(&json_str).unwrap();
         assert_eq!(full, parsed);
+    }
+
+    #[test]
+    fn hook_annotation_kind_is_backward_and_forward_compatible() {
+        let old_json = serde_json::json!({
+            "sessionUpdate": "hook_annotation",
+            "message": "legacy hook text"
+        });
+        assert_eq!(
+            serde_json::from_value::<SessionUpdate>(old_json).unwrap(),
+            SessionUpdate::HookAnnotation {
+                message: "legacy hook text".into(),
+                kind: HookAnnotationKind::Note,
+            }
+        );
+
+        let future_json = serde_json::json!({
+            "sessionUpdate": "hook_annotation",
+            "message": "future hook text",
+            "kind": "future_shell_template"
+        });
+        assert_eq!(
+            serde_json::from_value::<SessionUpdate>(future_json).unwrap(),
+            SessionUpdate::HookAnnotation {
+                message: "future hook text".into(),
+                kind: HookAnnotationKind::Unknown,
+            }
+        );
     }
 
     #[test]

@@ -12,6 +12,18 @@ use std::path::PathBuf;
 /// CDN base for all changelogs (proxies to GCS, cache-friendly).
 const CHANGELOG_BASE: &str = "https://x.ai/cli/changelogs";
 const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const OFFICIAL_CHANGELOG_MD: &str = "CHANGELOG.md";
+const OFFICIAL_CHANGELOG_JSON: &str = "CHANGELOG.json";
+const COMMUNITY_CHANGELOG_MD: &str = "CHANGELOG.grok-build-zh.md";
+const COMMUNITY_CHANGELOG_JSON: &str = "CHANGELOG.grok-build-zh.json";
+
+fn changelog_cache_names() -> (&'static str, &'static str) {
+    if xai_grok_product::OFFICIAL_CHANGELOG_SOURCE_ALLOWED {
+        (OFFICIAL_CHANGELOG_MD, OFFICIAL_CHANGELOG_JSON)
+    } else {
+        (COMMUNITY_CHANGELOG_MD, COMMUNITY_CHANGELOG_JSON)
+    }
+}
 
 /// A single structured changelog entry from the published JSON changelog. Shape must match the output of `render_external_json` in `changelog.sh`: `{category, description, breaking_change}`
 /// If you change fields here, update `changelog.sh:render_external_json` too. All fields use `#[serde(default)]` so a single malformed entry doesn't kill the entire array parse.
@@ -53,21 +65,16 @@ impl Default for ChangelogManager {
 
 impl ChangelogManager {
     pub fn new() -> Self {
-        // Prefer the live `$GROK_HOME` over the `grok_home()` OnceLock
-        // A home injected by the PTY e2e harness must beat a path some earlier init cached in the same process
-        Self::from_env_home()
+        Self::from_product_home()
     }
 
-    /// Resolve cache paths from the live process environment (not the `grok_home()` OnceLock).
-    /// A seeded `$GROK_HOME` set on the pager process is always honoured even if some earlier init path cached a different home.
-    fn from_env_home() -> Self {
-        let home = std::env::var_os("GROK_HOME")
-            .map(std::path::PathBuf::from)
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(crate::util::grok_home::grok_home);
+    /// Resolve cache paths through the shared Grok home resolver.
+    fn from_product_home() -> Self {
+        let home = crate::util::grok_home::grok_home();
+        let (md_name, json_name) = changelog_cache_names();
         Self {
-            md_cache: home.join("CHANGELOG.md"),
-            json_cache: home.join("CHANGELOG.json"),
+            md_cache: home.join(md_name),
+            json_cache: home.join(json_name),
         }
     }
 
@@ -75,8 +82,10 @@ impl ChangelogManager {
     /// Either field may be `None` if offline with no cache. When `GROK_CHANGELOG_OFFLINE` is set (PTY / integration tests), the CDN is skipped and only the disk cache is read.
     /// JSON is cached only after a successful parse; the markdown cache is write-through since it's consumed as raw text.
     pub fn fetch(&self) -> Changelog {
-        // Always re-resolve from env so a caller holding an older manager (or a stale OnceLock) still reads the live harness home
-        Self::from_env_home().fetch_with(changelog_offline(), CHANGELOG_BASE)
+        // Community releases must not fall back to the official changelog CDN.
+        // A locally seeded community changelog remains available offline.
+        let offline = changelog_offline() || !xai_grok_product::OFFICIAL_CHANGELOG_SOURCE_ALLOWED;
+        Self::from_product_home().fetch_with(offline, CHANGELOG_BASE)
     }
 
     /// Fetch using this manager's already-resolved cache paths, an explicit offline flag, and an explicit CDN base. Split out of [`fetch`] so unit tests can drive it against a temp home without touching process-global env.
@@ -215,6 +224,15 @@ mod tests {
             md_cache: home.join("CHANGELOG.md"),
             json_cache: home.join("CHANGELOG.json"),
         }
+    }
+
+    #[test]
+    fn official_changelog_cdn_stays_enabled() {
+        assert!(xai_grok_product::OFFICIAL_CHANGELOG_SOURCE_ALLOWED);
+        assert_eq!(
+            changelog_cache_names(),
+            (OFFICIAL_CHANGELOG_MD, OFFICIAL_CHANGELOG_JSON)
+        );
     }
 
     #[test]

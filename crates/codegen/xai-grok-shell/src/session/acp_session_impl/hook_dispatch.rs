@@ -134,6 +134,16 @@ impl SessionActor {
         .await;
     }
 
+    /// Send fixed shell-owned hook chrome with provenance so clients may
+    /// localize it without mistaking arbitrary hook output for built-in text.
+    pub(super) async fn send_hook_annotation_with_kind(
+        &self,
+        kind: crate::extensions::notification::HookAnnotationKind,
+        message: &str,
+    ) {
+        self.send_hook_annotation_of(message, kind).await;
+    }
+
     /// Announces an awaited batch before its dispatch; silent when nothing would run, and a non-zero count guarantees a
     /// `send_hook_execution` that ends it. Live-only: replayed on reload it would arm a phase nothing ends.
     pub(super) fn announce_hook_run(

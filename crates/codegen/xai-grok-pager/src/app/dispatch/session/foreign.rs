@@ -165,6 +165,30 @@ pub(in crate::app::dispatch) fn handle_session_list_loaded(
             .unwrap_or_default();
         sessions.retain(|entry| !workspace_session_ids.contains(entry.id.as_str()));
     }
+    if let Some(partial) = partial.as_ref() {
+        crate::unified_log::warn(
+            "session.list.partial",
+            None,
+            Some(serde_json::json!({ "reason": format!("{partial:?}") })),
+        );
+    }
+    let empty_notice = partial.map_or_else(
+        || {
+            app.locale
+                .named_text(
+                    "session_picker.no_sessions_directory",
+                    "No sessions found for this directory",
+                )
+                .into_owned()
+        },
+        |partial| {
+            partial
+                .picker_notice_with_locale(Some(&app.locale))
+                .to_owned()
+        },
+    );
+    let partial_notice =
+        partial.map(|partial| partial.picker_notice_with_locale(Some(&app.locale)));
     let chat_mode = app.chat_mode && !dashboard_request;
     let is_browse = query.is_none();
     let notice;
@@ -174,18 +198,6 @@ pub(in crate::app::dispatch) fn handle_session_list_loaded(
         else {
             return vec![];
         };
-        if let Some(partial) = partial {
-            crate::unified_log::warn(
-                "session.list.partial",
-                None,
-                Some(serde_json::json!({ "reason": format!("{partial:?}") })),
-            );
-        }
-        let empty_notice = partial.map_or_else(
-            || "No sessions found for this directory".to_owned(),
-            |partial| partial.picker_notice().to_owned(),
-        );
-        let partial_notice = partial.map(ConversationsPartial::picker_notice);
         notice = target.native_loaded(sessions, query, chat_mode, empty_notice, partial_notice);
         *target.detail_seq += 1;
     }
@@ -200,10 +212,14 @@ pub(in crate::app::dispatch) fn handle_session_list_loaded(
         // Notify once per directory; the browse is scoped to `app.cwd`.
         app.session_picker_relaxed_notified_for = Some(app.cwd.clone());
         let message = match scope {
-            ListScope::Repo => {
-                "No sessions in this directory. Showing other sessions from this repository."
-            }
-            _ => "No sessions in this directory. Showing sessions from other directories.",
+            ListScope::Repo => app.locale.named_static_text(
+                "session_picker.relaxed_repository",
+                "No sessions in this directory. Showing other sessions from this repository.",
+            ),
+            _ => app.locale.named_static_text(
+                "session_picker.relaxed_directories",
+                "No sessions in this directory. Showing sessions from other directories.",
+            ),
         };
         app.show_toast(message);
     }
@@ -220,9 +236,17 @@ pub(in crate::app::dispatch) fn handle_session_list_failed(
     error: String,
     query: Option<String>,
 ) -> Vec<Effect> {
+    tracing::warn!(error = %error, "session list fetch failed");
+    let error_notice = app
+        .locale
+        .named_text(
+            "session_picker.load_failed",
+            "Couldn't load sessions: {error}",
+        )
+        .replace("{error}", &error);
+    let is_search = query.is_some();
     let chat_mode = app.chat_mode
         && request.host != crate::views::session_picker_surface::SessionPickerHost::Dashboard;
-    let is_search = query.is_some();
     let notice;
     {
         let Some(mut target) =
@@ -230,8 +254,6 @@ pub(in crate::app::dispatch) fn handle_session_list_failed(
         else {
             return vec![];
         };
-        tracing::warn!(error = %error, "session list fetch failed");
-        let error_notice = format!("Couldn't load sessions: {error}");
         notice = target.native_failed(error_notice, is_search, chat_mode);
         *target.detail_seq += 1;
     }

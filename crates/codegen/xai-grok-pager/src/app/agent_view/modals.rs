@@ -274,10 +274,11 @@ impl AgentView {
         &mut self,
         key: &crossterm::event::KeyEvent,
     ) -> InputOutcome {
+        let locale = self.scrollback.locale();
         let Some(ref mut state) = self.agents_modal else {
             return InputOutcome::Unchanged;
         };
-        match crate::views::agents_modal::handle_agents_key(state, key) {
+        match crate::views::agents_modal::handle_agents_key_with_locale(state, key, Some(locale)) {
             crate::views::agents_modal::AgentsModalOutcome::Close => {
                 self.agents_modal = None;
                 InputOutcome::Changed
@@ -317,8 +318,15 @@ impl AgentView {
                 if detail.is_none()
                     && let Some(ref mut modal) = self.agents_modal
                 {
+                    let message = locale
+                        .named_text(
+                            "agents.error.load_persona",
+                            "Failed to load persona '{name}'",
+                        )
+                        .into_owned()
+                        .replace("{name}", &name);
                     modal.message = Some(crate::views::agents_modal::AgentsModalMessage::error(
-                        format!("Failed to load persona '{name}'"),
+                        message,
                     ));
                 }
                 self.persona_detail = detail;
@@ -374,11 +382,14 @@ impl AgentView {
         &mut self,
         key: &crossterm::event::KeyEvent,
     ) -> InputOutcome {
+        let locale = self.scrollback.locale();
         let Some(ref mut detail) = self.persona_detail else {
             return InputOutcome::Unchanged;
         };
-        use crate::views::persona_detail::{PersonaDetailOutcome, handle_persona_detail_key};
-        match handle_persona_detail_key(detail, key) {
+        use crate::views::persona_detail::{
+            PersonaDetailOutcome, handle_persona_detail_key_with_locale,
+        };
+        match handle_persona_detail_key_with_locale(detail, key, Some(locale)) {
             PersonaDetailOutcome::Close => {
                 self.persona_detail = None;
                 // Refresh the personas list in case edits were made.
@@ -1930,9 +1941,15 @@ impl AgentView {
                 // Refuse up front with the covering view instead of a confirm that can only fail
                 if source_pinned || !removable {
                     let message = if source_pinned {
-                        "This hook source is enforced by managed policy and cannot be removed."
+                        self.scrollback.locale().named_static_text(
+                            "extensions.hooks.remove.managed_policy",
+                            "This hook source is enforced by managed policy and cannot be removed.",
+                        )
                     } else {
-                        "Only user-added hook directories can be removed here."
+                        self.scrollback.locale().named_static_text(
+                            "extensions.hooks.remove.user_only",
+                            "Only user-added hook directories can be removed here.",
+                        )
                     };
                     if let Some(ref mut state) = self.extensions_modal {
                         state.modal_message = Some(
@@ -1942,8 +1959,16 @@ impl AgentView {
                     InputOutcome::Changed
                 } else {
                     let (label, _) = crate::views::extensions_modal::derive_source_label(&path);
+                    let template = self
+                        .scrollback
+                        .locale()
+                        .named_text(
+                            "extensions.hooks.remove.confirm",
+                            "Remove hook source \"{label}\"?",
+                        )
+                        .into_owned();
                     self.prompt_extensions_confirm(
-                        format!("Remove hook source \"{label}\"?"),
+                        template.replacen("{label}", &label, 1),
                         crate::views::extensions_modal::ConfirmationAction::Hooks(
                             xai_hooks_plugins_types::HooksAction::Remove { path },
                         ),

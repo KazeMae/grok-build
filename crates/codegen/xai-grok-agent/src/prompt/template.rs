@@ -50,7 +50,8 @@ pub(crate) fn subagent_template() -> Zeroizing<String> {
 
 /// The compact system prompt used after conversation compaction.
 pub const COMPACT_SYSTEM_PROMPT: &str = "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
-     Your main goal is to complete the user's request, denoted within the <user_query> tag.";
+     Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
+     Write natural-language plan and task-list content in the same language as the user's request. For Chinese requests, use concise Simplified Chinese. Preserve code identifiers, tool names, commands, paths, URLs, configuration keys, protocol fields and status values, symbols, proper names, and task IDs; keep canonical values such as pending, in_progress, completed, and cancelled verbatim.";
 
 #[cfg(test)]
 mod tests {
@@ -63,6 +64,25 @@ mod tests {
     /// If this fails, run: `python3 scripts/encrypt_templates.py`
     #[test]
     fn test_encrypted_templates_not_stale() {
+        fn normalize_newlines(data: &[u8]) -> Vec<u8> {
+            let mut normalized = Vec::with_capacity(data.len());
+            let mut index = 0;
+            while index < data.len() {
+                if data[index] == b'\r' {
+                    normalized.push(b'\n');
+                    index += if data.get(index + 1) == Some(&b'\n') {
+                        2
+                    } else {
+                        1
+                    };
+                } else {
+                    normalized.push(data[index]);
+                    index += 1;
+                }
+            }
+            normalized
+        }
+
         fn xor_encrypt(data: &[u8], seed: u8) -> Vec<u8> {
             data.iter()
                 .enumerate()
@@ -75,17 +95,17 @@ mod tests {
 
         assert_eq!(
             BASE_PROMPT_ENC,
-            &xor_encrypt(base_raw, PROMPT_SEEDS[0]),
+            &xor_encrypt(&normalize_newlines(base_raw), PROMPT_SEEDS[0]),
             "prompt.md encrypted bytes are stale — run scripts/encrypt_templates.py"
         );
         assert_eq!(
             CODEX_PROMPT_ENC,
-            &xor_encrypt(apply_patch_raw, PROMPT_SEEDS[1]),
+            &xor_encrypt(&normalize_newlines(apply_patch_raw), PROMPT_SEEDS[1]),
             "apply_patch_prompt.md encrypted bytes are stale — run scripts/encrypt_templates.py"
         );
         assert_eq!(
             SUBAGENT_PROMPT_ENC,
-            &xor_encrypt(subagent_raw, PROMPT_SEEDS[2]),
+            &xor_encrypt(&normalize_newlines(subagent_raw), PROMPT_SEEDS[2]),
             "subagent_prompt.md encrypted bytes are stale — run scripts/encrypt_templates.py"
         );
     }
@@ -286,6 +306,25 @@ mod tests {
             !prompt.contains("todo_write"),
             "plan tool name must not render when the Plan tool is absent"
         );
+        assert!(
+            !prompt.contains("<planning_language>"),
+            "Planning language guidance should be omitted when plan tool is absent"
+        );
+    }
+
+    #[test]
+    fn test_base_template_plan_present_includes_language_guidance() {
+        let prompt = render_base(&default_renderer(), &default_placeholders());
+        assert!(prompt.contains("<planning_language>"));
+        assert!(prompt.contains("plan and task-list content"));
+        assert!(prompt.contains("When using `todo_write`"));
+        assert!(prompt.contains("If the user's request contains Chinese"));
+        for status in ["`pending`", "`in_progress`", "`completed`", "`cancelled`"] {
+            assert!(
+                prompt.contains(status),
+                "Canonical plan status {status} must remain verbatim"
+            );
+        }
     }
 
     #[test]
@@ -310,6 +349,20 @@ mod tests {
             prompt.contains(crate::prompt::context::DEFAULT_SYSTEM_PROMPT_LABEL),
             "Must contain agent identity"
         );
+        assert!(
+            prompt.contains("user_query"),
+            "Must reference user_query tag"
+        );
+    }
+
+    #[test]
+    fn test_compact_prompt_matches_expected() {
+        assert_eq!(
+            COMPACT_SYSTEM_PROMPT,
+            "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
+             Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
+             Write natural-language plan and task-list content in the same language as the user's request. For Chinese requests, use concise Simplified Chinese. Preserve code identifiers, tool names, commands, paths, URLs, configuration keys, protocol fields and status values, symbols, proper names, and task IDs; keep canonical values such as pending, in_progress, completed, and cancelled verbatim.",
+        );
     }
 
     // ── Mid-session mode switching ──────────────────────────────────
@@ -317,6 +370,10 @@ mod tests {
     #[test]
     fn test_mid_session_switch_concise_to_full() {
         let compact = COMPACT_SYSTEM_PROMPT;
+        assert!(compact.contains("For Chinese requests, use concise Simplified Chinese"));
+        for status in ["pending", "in_progress", "completed", "cancelled"] {
+            assert!(compact.contains(status));
+        }
         assert!(!compact.contains("read_file"), "Compact has no tool names");
         assert!(
             !compact.contains("<tool_calling>"),
@@ -482,6 +539,25 @@ mod tests {
             !prompt.contains("update_plan"),
             "update_plan references should be omitted"
         );
+    }
+
+    #[test]
+    fn test_apply_patch_template_plan_present_includes_planning() {
+        let prompt = render_apply_patch(&default_renderer(), &default_placeholders());
+        assert!(
+            prompt.contains("## Planning"),
+            "Planning section should be present when plan tool exists"
+        );
+        assert!(
+            prompt.contains("If the user's request contains Chinese"),
+            "Planning section should ask for Chinese plan content on Chinese requests"
+        );
+        for status in ["`pending`", "`in_progress`", "`completed`", "`cancelled`"] {
+            assert!(
+                prompt.contains(status),
+                "Canonical plan status {status} must remain verbatim"
+            );
+        }
     }
 
     #[test]

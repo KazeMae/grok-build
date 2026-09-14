@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+//! Filesystem locations for grok config files and binaries.
+
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 
 pub use xai_dirs::{default_grok_home, grok_home, user_grok_home};
 
@@ -8,18 +11,18 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-/// Canonical grok application path: `$GROK_HOME/bin/grok` (Unix) or `grok.exe` (Windows).
+/// Canonical application path: `<grok-home>/bin/grok` (Unix) or
+/// `grok.exe` (Windows).
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())
 }
 
 /// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
 pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
-    let name = if cfg!(windows) { "grok.exe" } else { "grok" };
-    home.join("bin").join(name)
+    home.join("bin").join(xai_grok_product::executable_name())
 }
 
-/// System-wide config directory: `/etc/grok/` on Unix, `None` on Windows.
+/// Shared system-wide Grok config directory: `/etc/grok/` on Unix, `None` on Windows.
 pub fn system_config_dir() -> Option<PathBuf> {
     if cfg!(unix) {
         Some(PathBuf::from("/etc/grok"))
@@ -81,15 +84,29 @@ pub fn decode_cwd_from_dirname(dir: &std::path::Path) -> Option<String> {
     let name = dir.file_name()?.to_str()?;
     if let Ok(decoded) = urlencoding::decode(name) {
         let s = decoded.into_owned();
-        // URL-decoded absolute CWDs always start with `/` (Unix) or a drive letter (Windows)
-        // The slug-hash form never does, so this distinguishes the two encodings unambiguously
-        if s.starts_with('/') || (cfg!(windows) && s.chars().nth(1) == Some(':')) {
+        // Accept Unix-rooted paths even when a Windows build is reading a
+        // portable fixture, plus native drive-letter and UNC paths. The
+        // slug-hash form is never absolute, so the encodings stay unambiguous.
+        if s.starts_with('/') || Path::new(&s).is_absolute() {
             return Some(s);
         }
     }
-    std::fs::read_to_string(dir.join(".cwd"))
-        .ok()
-        .map(|s| s.trim().to_string())
+    const MAX_CWD_MARKER_BYTES: u64 = 64 * 1024;
+    let marker = dir.join(".cwd");
+    let metadata = std::fs::symlink_metadata(&marker).ok()?;
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > MAX_CWD_MARKER_BYTES
+    {
+        return None;
+    }
+    let mut value = String::new();
+    std::fs::File::open(marker)
+        .ok()?
+        .take(MAX_CWD_MARKER_BYTES + 1)
+        .read_to_string(&mut value)
+        .ok()?;
+    (value.len() as u64 <= MAX_CWD_MARKER_BYTES).then(|| value.trim().to_string())
 }
 
 /// Best-effort chmod 0700 on Unix, no-op elsewhere: session dirs hold chat history, and creators re-run on every touch so the mode self-heals.
@@ -265,6 +282,27 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn short_unc_cwd_uses_url_encoding_and_roundtrips() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = r"\\server\share\project";
+        let encoded = encode_cwd_dirname(cwd);
+        assert_eq!(encoded, urlencoding::encode(cwd).into_owned());
+        let dir = tmp.path().join(encoded);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(decode_cwd_from_dirname(&dir).as_deref(), Some(cwd));
+    }
+
+    #[test]
+    fn default_grok_home_has_no_verbatim_prefix() {
+        // On Windows, std::fs::canonicalize returns `\\?\C:\...` verbatim
+        // paths that external tools (notably `git clone`) reject. The dunce
+        // canonicalization must yield a plain path. No-op assertion on Unix.
+        let home = default_grok_home();
+        assert!(!home.to_string_lossy().starts_with(r"\\?\"));
+        assert!(home.ends_with(xai_grok_product::DATA_DIR_NAME));
+    }
     #[cfg(unix)]
     fn unix_mode(path: &std::path::Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;

@@ -18,6 +18,8 @@ pub struct DiscoveredTool {
     pub server: String,
     pub description: String,
     pub score: f64,
+    /// ACP-only identity for a result sourced from the managed gateway.
+    pub managed_gateway_tool: Option<xai_grok_tools::types::resources::ManagedGatewayToolIdentity>,
 }
 
 /// A search_tool call: discovers MCP integration tools by keyword.
@@ -114,7 +116,13 @@ impl SearchToolCallBlock {
     }
 
     /// Render the header line: **Search Tools** `query` `(N results)`
-    fn header_line(&self, theme: &Theme, muted: bool, max_width: Option<usize>) -> Line<'static> {
+    fn header_line(
+        &self,
+        theme: &Theme,
+        muted: bool,
+        max_width: Option<usize>,
+        locale: &crate::locale::LocaleContext,
+    ) -> Line<'static> {
         let text_style = if muted {
             theme.muted()
         } else {
@@ -127,19 +135,27 @@ impl SearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = "Search Tools ";
+        let prefix = locale
+            .named_text("scrollback.tool.search_tools.label", "Search Tools ")
+            .into_owned();
 
         match max_width {
             Some(w) => {
-                let s = if self.result_count == 1 { "" } else { "s" };
-                let suffix = format!(" ({} result{s})", self.result_count);
+                let suffix = if locale.locale() == crate::locale::UiLocale::ZhCn {
+                    format!("（{} 个结果）", self.result_count)
+                } else {
+                    let s = if self.result_count == 1 { "" } else { "s" };
+                    format!(" ({} result{s})", self.result_count)
+                };
 
-                let suffix_fits = prefix.len() + suffix.len() < w;
+                let prefix_width = unicode_width::UnicodeWidthStr::width(prefix.as_str());
+                let suffix_fits =
+                    prefix_width + unicode_width::UnicodeWidthStr::width(suffix.as_str()) < w;
                 let effective_suffix = if suffix_fits { &suffix } else { "" };
 
                 let query_budget = w
-                    .saturating_sub(prefix.len())
-                    .saturating_sub(effective_suffix.len());
+                    .saturating_sub(prefix_width)
+                    .saturating_sub(unicode_width::UnicodeWidthStr::width(effective_suffix));
                 let display_query = truncate_str(&self.query, query_budget);
 
                 let mut spans = vec![
@@ -183,10 +199,11 @@ impl BlockContent for SearchToolCallBlock {
                     &theme,
                     muted_collapsed,
                     Some(ctx.content_width()),
+                    &ctx.locale,
                 ))],
             },
             DisplayMode::Truncated | DisplayMode::Expanded => {
-                let header = self.header_line(&theme, false, None);
+                let header = self.header_line(&theme, false, None, &ctx.locale);
                 let wrapped = crate::render::wrapping::wrap_header_flush(
                     header,
                     ctx.width as usize,
@@ -218,24 +235,45 @@ impl BlockContent for SearchToolCallBlock {
                     for (i, tool) in self.results.iter().enumerate() {
                         let idx_span = Span::styled(format!("  {}. ", i + 1), theme.muted());
 
-                        // Strip the trusted server prefix from tool_name and title-case both halves
-                        // Show the action bold and the server name dimmed on the right
-                        let action = mcp_titleize_segment(discovered_tool_action(tool));
-                        let server_label = mcp_titleize_segment(&tool.server);
-
-                        let name_span =
-                            Span::styled(action, theme.primary().add_modifier(Modifier::BOLD));
-
-                        let mut spans = vec![idx_span, name_span];
-                        if !server_label.is_empty() {
-                            spans.push(Span::styled(format!("  {server_label}"), theme.dim()));
+                        let mut spans = vec![idx_span];
+                        if let Some(localized) = super::localized_known_search_mcp_tool_name(
+                            &tool.name,
+                            &tool.server,
+                            tool.managed_gateway_tool.as_ref(),
+                            &ctx.locale,
+                        ) {
+                            spans.push(Span::styled(
+                                localized,
+                                theme.primary().add_modifier(Modifier::BOLD),
+                            ));
+                        } else {
+                            // Dynamic MCP names remain opaque apart from the
+                            // existing title-casing presentation.
+                            let action = mcp_titleize_segment(discovered_tool_action(tool));
+                            let server_label = mcp_titleize_segment(&tool.server);
+                            spans.push(Span::styled(
+                                action,
+                                theme.primary().add_modifier(Modifier::BOLD),
+                            ));
+                            if !server_label.is_empty() {
+                                spans.push(Span::styled(format!("  {server_label}"), theme.dim()));
+                            }
                         }
                         lines.push(BlockLine::styled(Line::from(spans)));
                     }
                 } else if self.error.is_none() {
                     lines.push(Line::from("").into());
                     lines.push(
-                        Line::from(Span::styled("  (no results found)", theme.muted())).into(),
+                        Line::from(Span::styled(
+                            ctx.locale
+                                .named_text(
+                                    "scrollback.tool.search_tools.no_results_found",
+                                    "  (no results found)",
+                                )
+                                .into_owned(),
+                            theme.muted(),
+                        ))
+                        .into(),
                     );
                 }
 
@@ -307,15 +345,75 @@ impl BlockContent for SearchToolCallBlock {
         }
     }
 
-    fn preamble(&self, _ctx: &BlockContext) -> Option<Text<'static>> {
+    fn preamble(&self, ctx: &BlockContext) -> Option<Text<'static>> {
         let theme = Theme::current();
-        Some(Text::from(vec![self.header_line(&theme, false, None)]))
+        Some(Text::from(vec![self.header_line(
+            &theme,
+            false,
+            None,
+            &ctx.locale,
+        )]))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xai_grok_tools::types::resources::ManagedGatewayToolIdentity;
+
+    fn managed_identity(
+        qualified_name: &str,
+        connector_id: &str,
+        tool_id: &str,
+        display_name: &str,
+    ) -> Option<ManagedGatewayToolIdentity> {
+        Some(ManagedGatewayToolIdentity {
+            qualified_name: qualified_name.into(),
+            connector_id: connector_id.into(),
+            tool_id: tool_id.into(),
+            display_name: display_name.into(),
+            description_sha256: "d92bdcbd0f8b0a9b2d010d43e72bf3f29b7044d929dcedac4822d91770a292fc"
+                .into(),
+        })
+    }
+    use crate::locale::{LocaleContext, LocaleSource, ResolvedLocale, UiLocale};
+
+    fn ctx(locale: LocaleContext) -> BlockContext {
+        BlockContext {
+            width: 100,
+            mode: DisplayMode::Expanded,
+            is_running: false,
+            raw: false,
+            max_lines: None,
+            appearance: Default::default(),
+            is_selected: false,
+            cwd: None,
+            locale,
+        }
+    }
+
+    fn zh_locale() -> LocaleContext {
+        LocaleContext::new(ResolvedLocale {
+            locale: UiLocale::ZhCn,
+            source: LocaleSource::Cli,
+        })
+    }
+
+    fn rendered_text(block: &SearchToolCallBlock, locale: LocaleContext) -> String {
+        block
+            .output(&ctx(locale))
+            .lines
+            .iter()
+            .map(|line| {
+                line.content
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 
     #[test]
     fn discovered_tool_action_strips_local_mcp_prefix() {
@@ -324,6 +422,7 @@ mod tests {
             server: "linear".into(),
             description: String::new(),
             score: 1.0,
+            managed_gateway_tool: None,
         };
         assert_eq!(discovered_tool_action(&tool), "save_issue");
     }
@@ -335,6 +434,7 @@ mod tests {
             server: "Google Calendar".into(),
             description: String::new(),
             score: 1.0,
+            managed_gateway_tool: None,
         };
         assert_eq!(discovered_tool_action(&tool), "google_calendar_search");
     }
@@ -346,7 +446,80 @@ mod tests {
             server: "google_calendar".into(),
             description: String::new(),
             score: 1.0,
+            managed_gateway_tool: None,
         };
         assert_eq!(discovered_tool_action(&tool), "search");
+    }
+
+    #[test]
+    fn zh_localization_search_results_only_alias_known_product_tools() {
+        let mut block = SearchToolCallBlock::new("tasks list");
+        block.result_count = 5;
+        block.results = vec![
+            DiscoveredTool {
+                name: "tasks__list".into(),
+                server: "tasks".into(),
+                description: "List the user's active automations — time-based schedules and event triggers (Gmail, Outlook, GitHub, Finance, …). Use this when the user asks to see their automations, tasks, reminders, scheduled jobs, or event-triggered automations. Each entry includes `taskId`, `isActive`, `schedules[*].scheduleId` / `schedules[*].isEnabled`, and `triggers` (provider, trigger_type, dimensions, from/to/subject_contains, enabled) for use with the other automation tools.".into(),
+                score: 1.0,
+                managed_gateway_tool: managed_identity("tasks__list", "tasks", "list", "List"),
+            },
+            DiscoveredTool {
+                name: "tasks__run_now".into(),
+                server: "tasks".into(),
+                description: String::new(),
+                score: 0.95,
+                managed_gateway_tool: None,
+            },
+            DiscoveredTool {
+                name: "voice__list_voices".into(),
+                server: "voice".into(),
+                description: String::new(),
+                score: 0.9,
+                managed_gateway_tool: None,
+            },
+            DiscoveredTool {
+                name: "linear__list_issues".into(),
+                server: "linear".into(),
+                description: String::new(),
+                score: 0.8,
+                managed_gateway_tool: None,
+            },
+            DiscoveredTool {
+                name: "tasks__list".into(),
+                server: "custom".into(),
+                description: String::new(),
+                score: 0.7,
+                managed_gateway_tool: None,
+            },
+        ];
+
+        let rendered = rendered_text(&block, zh_locale());
+        assert!(rendered.contains("搜索工具 tasks list"), "{rendered}");
+        assert!(rendered.contains("1. 列出自动化"), "{rendered}");
+        assert!(rendered.contains("2. Run Now  Tasks"), "{rendered}");
+        assert!(rendered.contains("3. 列出可用语音"), "{rendered}");
+        assert!(rendered.contains("4. List Issues  Linear"), "{rendered}");
+        assert!(rendered.contains("5. Tasks  List  Custom"), "{rendered}");
+    }
+
+    #[test]
+    fn zh_localization_search_tool_copy_and_english_render_keep_canonical_dynamic_values() {
+        let mut block = SearchToolCallBlock::new("tasks list");
+        block.result_count = 1;
+        block.results.push(DiscoveredTool {
+            name: "tasks__run_now".into(),
+            server: "tasks".into(),
+            description: r"Keep C:\repo\API_KEY unchanged".into(),
+            score: 1.0,
+            managed_gateway_tool: None,
+        });
+
+        let rendered = rendered_text(&block, LocaleContext::default());
+        assert!(rendered.contains("1. Run Now  Tasks"), "{rendered}");
+        assert_eq!(block.results[0].name, "tasks__run_now");
+        assert_eq!(
+            block.copy_text(),
+            "query: tasks list\n1 result\n\n1. Run Now  Tasks\n   Keep C:\\repo\\API_KEY unchanged\n"
+        );
     }
 }

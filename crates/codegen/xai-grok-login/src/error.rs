@@ -8,7 +8,7 @@ pub enum AuthError {
     #[error("Not logged in. Run `grok login`.")]
     NotLoggedIn,
 
-    /// The token expired and no refresh authority is available.
+    /// Token expired and no refresh authority available.
     #[error("Token expired. Run `grok login` to re-authenticate.")]
     TokenExpiredNoRefresh,
 
@@ -21,11 +21,11 @@ pub enum AuthError {
     RecoveryExhausted,
 
     /// A session's team principal violates the `force_login_team_uuid` pin.
-    /// `message` states which team is required and which was returned.
+    /// `message` states which team is required vs. returned.
     #[error("{message} Run `grok login` to sign in with the required team.")]
     PinnedTeamMismatch { message: String },
 
-    /// The cached API-key session was rejected because API-key auth is disabled.
+    /// Cached API-key session rejected because API-key auth is disabled.
     #[error("API-key auth is disabled by your administrator. Run `grok login` to authenticate.")]
     ApiKeyAuthDisabled,
 

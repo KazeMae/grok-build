@@ -224,7 +224,7 @@ fn activity_label_rendered_for_each_turn_activity() {
                 reason: "API error (status 429 Too Many Requests): rate limit exceeded".into(),
                 error_type: None,
             },
-            "Retrying (2/5)".into(),
+            "Rate limited (429) | Retrying (2/5)".into(),
         ),
         (
             TurnActivity::Waiting(WaitingReason::subagent()),

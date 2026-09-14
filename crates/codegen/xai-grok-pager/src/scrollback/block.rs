@@ -382,6 +382,17 @@ pub(crate) fn join_searchable(parts: impl IntoIterator<Item = Option<String>>) -
 }
 
 impl RenderBlock {
+    /// Update display-only locale state carried by structured scrollback
+    /// blocks. Canonical source/search text is deliberately unaffected.
+    pub(crate) fn set_locale(&mut self, locale: crate::locale::LocaleContext) {
+        match self {
+            RenderBlock::Thinking(block) => block.set_locale(locale),
+            RenderBlock::SessionEvent(block) => block.set_locale(locale),
+            RenderBlock::ContextInfo(block) => block.set_locale(locale),
+            _ => {}
+        }
+    }
+
     pub(crate) fn rendered_output(&self, ctx: &BlockContext) -> RenderedBlockOutput {
         let mut rendered = match self {
             RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) => edit.rendered_output(ctx),
@@ -676,6 +687,16 @@ impl RenderBlock {
         RenderBlock::ContextInfo(ContextInfoBlock::new(snapshot, model))
     }
 
+    /// Create a `/context` snapshot block in the selected UI locale.
+    pub fn context_info_with_locale(
+        snapshot: xai_grok_shell::session::ContextInfo,
+        model: impl Into<String>,
+        locale: crate::locale::LocaleContext,
+    ) -> Self {
+        RenderBlock::ContextInfo(ContextInfoBlock::new_with_locale(snapshot, model, locale))
+    }
+
+    /// Create a session event block.
     pub fn session_event(event: SessionEvent) -> Self {
         RenderBlock::SessionEvent(SessionEventBlock::new(event))
     }
@@ -847,7 +868,8 @@ impl RenderBlock {
                         | crate::scrollback::blocks::SentMessagePresentation::Sent => {
                             theme.accent_tool
                         }
-                        crate::scrollback::blocks::SentMessagePresentation::Rejected { .. } => {
+                        crate::scrollback::blocks::SentMessagePresentation::Rejected { .. }
+                        | crate::scrollback::blocks::SentMessagePresentation::RejectedUnavailable => {
                             theme.accent_error
                         }
                         crate::scrollback::blocks::SentMessagePresentation::Unconfirmed {
@@ -1104,6 +1126,7 @@ mod tests {
             appearance: AppearanceConfig::default(),
             is_selected: false,
             cwd: None,
+            locale: Default::default(),
         }
     }
 

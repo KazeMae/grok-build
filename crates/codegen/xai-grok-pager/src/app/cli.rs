@@ -3,32 +3,32 @@ use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use clap_complete::Shell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-/// Top-level commands for the pager binary.
+/// 分页器二进制的顶层命令。
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
-    /// Run Grok without the interactive UI
+    /// 在不启动交互式界面的情况下运行 Grok
     Agent(Box<AgentArgs>),
-    /// Show the configuration Grok discovers for this directory
+    /// 显示 Grok 针对当前目录发现的配置
     Inspect {
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
-    /// Check terminal, clipboard, color, and input support without starting Grok
+    /// 在不启动 Grok 的情况下检查终端、剪贴板、颜色和输入支持
     Doctor(crate::doctor_cmd::DoctorArgs),
-    /// Manage running leader processes
+    /// 管理正在运行的 leader 进程
     Leader(LeaderMgmtArgs),
-    /// Sign out and clear cached credentials
+    /// 退出登录并清除缓存凭据
     Logout,
-    /// Sign in to Grok
+    /// 登录 Grok
     Login {
         /// Ignored (kept for backwards compatibility). OAuth2 is now the only auth method.
         #[arg(long, hide = true)]
         legacy: bool,
-        /// Use Grok OAuth via auth.x.ai.
+        /// 通过 auth.x.ai 使用 Grok OAuth。
         #[arg(long = "oauth", alias = "oidc", conflicts_with_all = ["device_auth"])]
         oauth: bool,
-        /// Use device-code authentication for headless/remote environments.
+        /// 针对无头或远程环境使用 device-code 身份验证。
         #[arg(
             long = "device-auth",
             visible_alias = "device-code",
@@ -40,69 +40,66 @@ pub enum Command {
         #[arg(skip)]
         devbox: bool,
     },
-    /// Manage MCP server configurations
+    /// 管理 MCP 服务器配置
     Mcp(crate::mcp_cmd::McpArgs),
-    /// Manage plugins and marketplace sources
+    /// 管理插件和 marketplace 来源
     Plugin(crate::plugin_cmd::PluginArgs),
-    /// Manage cross-session memory
+    /// 管理跨会话记忆
     Memory(crate::memory_cmd::MemoryArgs),
-    /// List available models and exit
+    /// 列出可用模型并退出
     Models,
-    /// List, search, or restore sessions
+    /// 列出、搜索或恢复会话
     Sessions(crate::sessions_cmd::SessionsArgs),
-    /// Print persisted token and cost usage for a session
+    /// 输出指定会话中持久化的 token 与费用用量
     Usage(crate::usage_cmd::UsageArgs),
-    /// Fetch and install managed configuration
+    /// 获取并安装托管配置
     Setup {
-        /// Print the fetched configuration as JSON instead of installing it; writes nothing to ~/.grok.
+        /// 将获取的配置作为 JSON 输出而不安装；不会写入 ~/.grok。
         #[arg(long)]
         json: bool,
     },
     /// Share a session and print the share URL
     #[command(hide = true)]
     Share(crate::share_cmd::ShareArgs),
-    /// Run any command with local clipboard support (forwards OSC 52 to the system clipboard).
+    /// 使用本地剪贴板支持运行任意命令（OSC 52 → 系统剪贴板）。
     #[cfg_attr(not(any(unix, windows)), command(hide = true))]
     #[command(long_about = "\
-Run any command inside a local PTY that forwards its clipboard to yours.
+在本地 PTY 中运行任意命令，并将其剪贴板转发到本地。
 
-Wraps an arbitrary command (for example `docker exec`, `kubectl exec`, or a
-remote shell) in a local pseudo-terminal, intercepts OSC 52 clipboard escape
-sequences from its output, and writes them to your local system clipboard. This
-makes copy work when the program runs somewhere that cannot reach your
-clipboard (containers, SSH) and your terminal does not handle OSC 52 itself
-(for example Apple Terminal). The wrapped command's terminal is also kept in
-sync with your window size.
+将任意命令（例如 `docker exec`、`kubectl exec` 或远程 shell）包装在本地伪终端中，
+拦截其输出中的 OSC 52 剪贴板转义序列，并写入本地系统剪贴板。当程序运行在无法
+访问本地剪贴板的位置（容器、SSH），且终端本身不处理 OSC 52（例如 Apple
+Terminal）时，这会让复制功能正常工作。包装命令的终端也会与窗口大小保持同步。
 
-Examples:
+示例：
   grok wrap docker exec -it my-container bash
   grok wrap kubectl exec -it my-pod -- bash
 
-See ~/.grok/README.md for more information.
+更多信息见 ~/.grok/README.grok-build-zh.md。
 ")]
     Wrap(WrapArgs),
-    /// Export a session transcript as Markdown
+    /// 将会话记录导出为 Markdown
     Export(crate::export_cmd::ExportArgs),
-    /// Export or upload session trace data
+    /// 导出或上传会话跟踪数据
     Trace(crate::trace_cmd::TraceArgs),
-    /// Check for updates or install a specific version
+    /// 检查更新或安装指定版本
     Update {
-        /// Check for updates without installing.
+        /// 仅检查更新，不安装。
         #[arg(long)]
         check: bool,
-        /// Emit machine-readable JSON output (for --check).
+        /// 输出机器可读的 JSON（用于 --check）。
         #[arg(long)]
         json: bool,
-        /// Force re-download and install even if already up to date.
+        /// 即使已是最新版本，也强制重新下载并安装。
         #[arg(long)]
         force_reinstall: bool,
-        /// Install a specific version (e.g. 0.1.150 or 0.1.151-alpha.2).
+        /// 安装指定版本（例如 0.1.150 或 0.1.151-alpha.2）。
         #[arg(long)]
         version: Option<String>,
-        /// Switch to the alpha release channel (faster updates, may have bugs).
+        /// 切换到 alpha 发布通道（更新更快，可能存在错误）。
         #[arg(long, conflicts_with_all = ["stable", "enterprise"])]
         alpha: bool,
-        /// Switch to the stable release channel (default, weekly releases).
+        /// 切换到 stable 发布通道（默认，每周发布）。
         #[arg(long, conflicts_with_all = ["alpha", "enterprise"])]
         stable: bool,
         /// Switch to the enterprise release channel.
@@ -115,27 +112,28 @@ See ~/.grok/README.md for more information.
         #[arg(long, hide = true)]
         auto: bool,
     },
-    /// Print version information
+    /// 打印版本信息
     #[command(visible_alias = "v")]
     Version {
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
-    /// Generate shell completion scripts (bash, zsh, fish, powershell, ...)
+    /// 生成 shell 补全脚本（bash、zsh、fish、powershell 等）
     Completions {
-        /// Target shell
+        /// 目标 shell
         #[arg(value_enum)]
         shell: Shell,
     },
-    /// Manage git worktrees
+    /// 管理 git worktree
     Worktree(crate::worktree_cmd::WorktreeArgs),
-    /// Show what the grok home (~/.grok) uses on disk
+    /// 显示共享 Grok 数据目录（~/.grok）的磁盘占用
     #[command(name = "du", visible_alias = "disk-usage")]
     DiskUsage(crate::disk_usage_cmd::DiskUsageArgs),
-    /// Expose this workspace to the Computer Hub (via the leader).
+    /// 通过 leader 将此 workspace 暴露给 Computer Hub。
     ///
-    /// Disabled by default and enabled server-side per account; set `GROK_WORKSPACE_COMMAND=1` to enable it locally for testing.
+    /// 默认禁用，按帐户在服务端启用；本地测试时设置
+    /// `GROK_WORKSPACE_COMMAND=1` 以启用。
     #[command(hide = true)]
     Workspace(WorkspaceMgmtArgs),
     /// Open the Agent Dashboard view at startup.
@@ -143,11 +141,11 @@ See ~/.grok/README.md for more information.
     /// Disabled when `[dashboard].enabled = false` in `~/.grok/config.toml` or when the `GROK_AGENT_DASHBOARD=0` env var is set.
     Dashboard,
 }
-/// Arguments for the `wrap` subcommand: the command to run, then its args.
+/// `wrap` 子命令的参数：要运行的命令及其参数。
 #[derive(Debug, clap::Args, Clone)]
 pub struct WrapArgs {
-    /// Command to run, followed by its arguments (e.g. `docker exec -it my-container bash`).
-    /// On Unix a single quoted string or an aliased command runs via `$SHELL -i -c`.
+    /// 要运行的命令及其参数（例如 `docker exec -it my-container bash`）。
+    /// 在 Unix 上，单引号包裹的字符串或别名命令将通过 `$SHELL -i -c` 运行。
     #[arg(
         required = true,
         trailing_var_arg = true,
@@ -156,10 +154,10 @@ pub struct WrapArgs {
     )]
     pub command: Vec<String>,
 }
-/// Targets a running leader process by PID (used by `grok leader` / `grok workspace`).
+/// 按 PID 指定正在运行的 leader 进程（用于 `grok leader` / `grok workspace`）。
 #[derive(Debug, clap::Args, Clone, Default)]
 pub struct LeaderTargetArgs {
-    /// Leader process ID from `grok leader list`.
+    /// 来自 `grok leader list` 的 leader 进程 ID。
     #[arg(long)]
     pub pid: Option<u32>,
 }
@@ -170,21 +168,21 @@ pub struct LeaderMgmtArgs {
 }
 #[derive(Debug, Subcommand, Clone)]
 pub enum LeaderMgmtCommand {
-    /// List running leader processes
+    /// 列出正在运行的 leader 进程
     List {
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
-    /// Show details for a leader process
+    /// 显示 leader 进程详情
     Info {
         #[command(flatten)]
         target: LeaderTargetArgs,
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
-    /// Stop all running leader processes
+    /// 停止所有正在运行的 leader 进程
     Kill,
 }
 #[derive(Debug, clap::Args, Clone)]
@@ -194,76 +192,76 @@ pub struct WorkspaceMgmtArgs {
 }
 #[derive(Debug, Subcommand, Clone)]
 pub enum WorkspaceMgmtCommand {
-    /// Start (or update) the workspace-to-hub exposure.
+    /// 启动（或更新）workspace→hub 暴露。
     Start(WorkspaceStartArgs),
-    /// Drain and disconnect from the hub, keeping the exposure warm.
+    /// 从 hub 排空并断开连接，同时保持暴露处于热状态。
     Pause {
         #[command(flatten)]
         target: LeaderTargetArgs,
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
-    /// Reconnect a paused exposure to the hub.
+    /// 将暂停的暴露重新连接到 hub。
     Resume {
         #[command(flatten)]
         target: LeaderTargetArgs,
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
-    /// Stop exposing the workspace (the leader keeps running).
+    /// 停止暴露 workspace（leader 继续运行）。
     Stop {
         #[command(flatten)]
         target: LeaderTargetArgs,
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
-    /// Restart the exposure (stop, then start with the given options).
+    /// 重启暴露（先停止，再使用给定选项启动）。
     Restart(WorkspaceStartArgs),
-    /// Show the current workspace-exposure status.
+    /// 显示当前 workspace 暴露状态。
     #[command(visible_alias = "list")]
     Status {
         #[command(flatten)]
         target: LeaderTargetArgs,
-        /// Emit machine-readable JSON output.
+        /// 输出机器可读的 JSON。
         #[arg(long)]
         json: bool,
     },
 }
 #[derive(Debug, clap::Args, Clone)]
 pub struct WorkspaceStartArgs {
-    /// Computer Hub WebSocket URL (default: `[hub].url`, then the prod hub).
+    /// Computer Hub WebSocket URL（默认使用 `[hub].url`，然后使用 prod hub）。
     #[arg(long, value_name = "URL")]
     pub hub_url: Option<String>,
-    /// Workspace root directory to expose. Defaults to the current directory.
+    /// 要暴露的 workspace 根目录。默认为当前目录。
     #[arg(long, value_name = "DIR", value_hint = ValueHint::DirPath)]
     pub cwd: Option<PathBuf>,
-    /// Force leader mode for this command, overriding config.
+    /// 强制此命令使用 leader 模式，覆盖配置。
     #[arg(long, conflicts_with = "no_leader")]
     pub leader: bool,
-    /// Refuse to start even when config enables leader mode.
+    /// 即使配置启用 leader 模式，也拒绝启动。
     #[arg(long, conflicts_with = "leader")]
     pub no_leader: bool,
-    /// Emit machine-readable JSON output.
+    /// 输出机器可读的 JSON。
     #[arg(long)]
     pub json: bool,
 }
-/// Arguments for the `agent` subcommand.
+/// `agent` 子命令的参数。
 #[derive(Debug, clap::Args, Clone)]
 pub struct AgentArgs {
-    /// Run authentication before starting the agent
+    /// 启动 agent 前先进行身份验证
     #[arg(
         long = "reauth",
         visible_alias = "--reauthenticate",
         default_value = "false"
     )]
     pub reauthenticate: bool,
-    /// Model ID to use
+    /// 要使用的模型 ID
     #[arg(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
-    /// Reasoning effort for reasoning models
+    /// 推理模型的推理强度
     #[clap(
         long = "reasoning-effort",
         visible_alias = "effort",
@@ -271,34 +269,33 @@ pub struct AgentArgs {
         overrides_with = "reasoning_effort"
     )]
     pub reasoning_effort: Option<String>,
-    /// Auto-approve all tool executions
+    /// 自动批准所有工具执行
     #[arg(long = "always-approve", alias = "yolo")]
     pub yolo: bool,
-    /// Path to an agent profile file.
+    /// agent 配置文件路径。
     #[arg(long = "agent-profile", value_name = "PATH")]
     pub agent_profile: Option<PathBuf>,
-    /// Load a plugin from this directory for this process only (repeatable).
-    /// Highest-priority plugin scope; always trusted: hooks and MCP servers activate without a prompt.
-    /// Used by the Agent SDKs to inject per-connection plugins.
+    /// 仅为此进程从该目录加载插件（可重复）。这是最高优先级的插件范围，且始终
+    /// 受信任——hooks 和 MCP 服务器无需提示即会激活。供 Agent SDK 注入每个
+    /// 连接的插件。
     #[arg(long = "plugin-dir", value_name = "DIR", value_hint = ValueHint::DirPath)]
     pub plugin_dirs: Vec<PathBuf>,
-    /// Connect to a shared leader process instead of starting a new agent.
-    /// Allows multiple clients to share one backend.
-    /// Defaults to [cli] use_leader in config.toml.
+    /// 连接到共享 leader 进程，而不是启动新 agent。允许多个客户端共享一个后端。
+    /// 默认取自 config.toml 中的 `[cli] use_leader`。
     #[arg(long, conflicts_with = "no_leader")]
     pub leader: bool,
-    /// Start a new agent even when config enables leader mode.
+    /// 即使配置启用 leader 模式，也启动新 agent。
     #[arg(long, conflicts_with = "leader")]
     pub no_leader: bool,
     #[command(flatten)]
     pub headless: HeadlessArgs,
-    /// Override the CLI chat proxy base URL.
+    /// 覆盖 CLI chat proxy 基础 URL。
     #[arg(long = "cli-chat-proxy-base-url")]
     pub cli_chat_proxy_base_url: Option<String>,
-    /// Override the public xAI API base URL.
+    /// 覆盖公共 xAI API 基础 URL。
     #[arg(long = "xai-api-base-url")]
     pub xai_api_base_url: Option<String>,
-    /// Agent runtime mode
+    /// agent 运行模式
     #[command(subcommand)]
     pub mode: Option<AgentCmd>,
 }
@@ -325,19 +322,19 @@ impl AgentArgs {
             .collect()
     }
 }
-/// Agent sub-subcommands.
+/// agent 的子命令。
 #[derive(Debug, Subcommand, Clone)]
 pub enum AgentCmd {
-    /// Run the agent over stdio
+    /// 通过 stdio 运行 agent
     Stdio,
-    /// Run the agent headlessly over the Grok WebSocket relay
+    /// 通过 Grok WebSocket relay 以无头模式运行 agent
     Headless(HeadlessArgs),
-    /// Run the agent as a WebSocket server
+    /// 将 agent 作为 WebSocket 服务器运行
     Serve(ServeArgs),
-    /// Run as the shared leader process for other clients
+    /// 作为其他客户端共享的 leader 进程运行
     Leader(LeaderArgs),
 }
-/// WebSocket URL override arguments, used by headless / leader / serve modes.
+/// 用于 headless / leader / serve 模式的 WebSocket URL 覆盖参数。
 #[derive(Debug, clap::Args, Clone, Default)]
 pub struct HeadlessArgs {
     #[arg(long = "grok-ws-origin")]
@@ -345,19 +342,19 @@ pub struct HeadlessArgs {
     #[arg(long = "grok-ws-url")]
     pub grok_ws_url: Option<String>,
 }
-/// Arguments for the `agent serve` subcommand.
+/// `agent serve` 子命令的参数。
 #[derive(Debug, clap::Args, Clone)]
 pub struct ServeArgs {
-    /// Address for the server to listen on
+    /// 服务器监听地址
     #[arg(long, default_value = "127.0.0.1:2419")]
     pub bind: SocketAddr,
-    /// Secret token for client authentication (auto-generated if not provided)
+    /// 客户端身份验证密钥（未提供时自动生成）
     #[arg(long, env = "GROK_AGENT_SECRET")]
     pub secret: Option<String>,
-    /// Remote agent URL for proxy mode
+    /// 代理模式下的远程 agent URL
     #[arg(long)]
     pub remote: Option<String>,
-    /// Authentication and WebSocket URL overrides
+    /// 身份验证和 WebSocket URL 覆盖
     #[command(flatten)]
     pub headless: HeadlessArgs,
 }
@@ -374,10 +371,10 @@ fn generate_random_key(len: usize) -> String {
     let raw = uuid::Uuid::new_v4().to_string().replace('-', "");
     raw.chars().cycle().take(len).collect()
 }
-/// Arguments for the `agent leader` subcommand.
+/// `agent leader` 子命令的参数。
 #[derive(Debug, clap::Args, Clone)]
 pub struct LeaderArgs {
-    /// Keep the leader running after the last client disconnects.
+    /// 最后一个客户端断开连接后仍保持 leader 运行。
     #[arg(long)]
     pub no_exit_on_disconnect: bool,
     /// Defer the grok.com relay WebSocket until the first headless IPC client registers.
@@ -385,10 +382,10 @@ pub struct LeaderArgs {
     /// Passed by leaders auto-spawned from interactive clients (TUI/IDE), which only need the relay if a headless client appears.
     #[arg(long)]
     pub relay_on_demand: bool,
-    /// Disable periodic auto-update checks for the leader.
+    /// 禁用 leader 的定期自动更新检查。
     #[arg(long)]
     pub no_auto_update: bool,
-    /// All environment URL overrides (passed from follower process)
+    /// 所有环境 URL 覆盖（由 follower 进程传入）
     #[command(flatten)]
     pub headless: HeadlessArgs,
 }
@@ -396,31 +393,34 @@ pub struct LeaderArgs {
 #[command(
     name = "grok",
     version = xai_grok_version::full_version(),
-    about = "Grok Build TUI",
+    about = "Grok Build 中文社区版 TUI",
     disable_version_flag = true,
     next_display_order = None,
     help_template = "\
 {before-help}{about-with-newline}
-{usage-heading} {usage}
+用法: {usage}
 
-Arguments:
+参数:
 {positionals}
 
-Options:
+选项:
 {options}
 
-Commands:
+命令:
 {subcommands}{after-help}\
 "
 )]
 pub struct PagerArgs {
-    /// Print version
+    /// 打印版本信息
     #[arg(short = 'v', short_alias = 'V', long = "version", action = ArgAction::SetTrue)]
     pub version: bool,
-    /// Working directory.
+    /// 工作目录。
     #[arg(long)]
     pub cwd: Option<PathBuf>,
-    /// Use a custom leader socket path instead of the default `~/.grok/leader.sock`.
+    /// UI locale（`zh-CN` 或 `en-US`）。重启后生效。
+    #[arg(long, value_name = "LOCALE", global = true)]
+    pub locale: Option<String>,
+    /// 使用自定义 leader socket 路径，而不是默认的 `~/.grok/leader.sock`。
     /// A local/branch build can thus run an isolated leader without colliding with the default one already running on the machine
     /// Name it `~/.grok/leader-*.sock` to keep `grok leader list/kill` able to find it; any other location works but won't be auto-discovered
     #[arg(
@@ -430,10 +430,10 @@ pub struct PagerArgs {
         value_hint = ValueHint::FilePath
     )]
     pub leader_socket: Option<PathBuf>,
-    /// Enable debug logging.
+    /// 启用调试日志。
     #[arg(long = "debug", global = true)]
     pub debug: bool,
-    /// Write debug logs to FILE.
+    /// 将调试日志写入 FILE。
     #[arg(
         long = "debug-file",
         value_name = "FILE",
@@ -441,7 +441,7 @@ pub struct PagerArgs {
         value_hint = ValueHint::FilePath
     )]
     pub debug_file: Option<PathBuf>,
-    /// Auto-approve all tool executions.
+    /// 自动批准所有工具执行。
     #[clap(
         long = "always-approve",
         alias = "yolo",
@@ -451,7 +451,7 @@ pub struct PagerArgs {
     /// Trust this folder and persist the decision to the trust store.
     #[arg(long = "trust", alias = "trust-folder", hide = true)]
     pub trust: bool,
-    /// Permission allow rule (compat alias: --allowedTools).
+    /// 权限允许规则（兼容别名：--allowedTools）。
     #[arg(
         long = "allow",
         alias = "allowedTools",
@@ -459,7 +459,7 @@ pub struct PagerArgs {
         value_delimiter = ','
     )]
     pub allow_rules: Vec<String>,
-    /// Permission deny rule (compat alias: --disallowedTools).
+    /// 权限拒绝规则（兼容别名：--disallowedTools）。
     #[arg(
         long = "deny",
         alias = "disallowedTools",
@@ -467,7 +467,7 @@ pub struct PagerArgs {
         value_delimiter = ','
     )]
     pub deny_rules: Vec<String>,
-    /// Single-turn prompt. Prints the response to stdout and exits.
+    /// 单轮提示。将响应输出到 stdout 后退出。
     #[clap(
         short = 'p',
         long = "single",
@@ -477,7 +477,7 @@ pub struct PagerArgs {
         "prompt_file"]
     )]
     pub single: Option<String>,
-    /// Single-turn prompt as JSON content blocks.
+    /// 将单轮提示作为 JSON 内容块。
     #[clap(
         long = "prompt-json",
         value_name = "JSON",
@@ -485,7 +485,7 @@ pub struct PagerArgs {
         "prompt_file"]
     )]
     pub prompt_json: Option<String>,
-    /// Single-turn prompt from a file.
+    /// 从文件读取单轮提示。
     #[clap(
         long = "prompt-file",
         value_name = "PATH",
@@ -494,25 +494,25 @@ pub struct PagerArgs {
         value_hint = ValueHint::FilePath
     )]
     pub prompt_file: Option<PathBuf>,
-    /// Send the prompt exactly as given.
+    /// 按给定内容原样发送提示。
     #[clap(long)]
     pub verbatim: bool,
-    /// Output format for headless mode.
+    /// headless 模式的输出格式。
     #[clap(long = "output-format", value_enum, default_value = "plain")]
     pub output_format: OutputFormat,
-    /// Emit incremental `stream_event` lines (text/thinking deltas) alongside whole messages.
-    /// Only affects `--output-format streaming-messages-json`.
+    /// 除完整消息外，输出增量 `stream_event` 行（文本或思考增量）。仅影响
+    /// `--output-format streaming-messages-json`。
     #[clap(long = "include-partial-messages")]
     pub include_partial_messages: bool,
-    /// JSON Schema for structured output. When set, the model is constrained to produce JSON matching this schema.
-    /// Implies --output-format json.
-    /// Example: --json-schema '{"type":"object","properties":{"name":{"type":"string"}}}'
+    /// 结构化输出的 JSON Schema。设置后，模型将被约束为生成符合此 schema 的 JSON。
+    /// 隐含 --output-format json。
+    /// 示例：--json-schema '{"type":"object","properties":{"name":{"type":"string"}}}'
     #[clap(long = "json-schema", value_name = "SCHEMA")]
     pub json_schema: Option<String>,
-    /// Model ID to use.
+    /// 要使用的模型 ID。
     #[clap(short = 'm', long = "model", value_name = "MODEL")]
     pub model: Option<String>,
-    /// Reasoning effort for reasoning models
+    /// 推理模型的推理强度
     #[clap(
         long = "reasoning-effort",
         visible_alias = "effort",
@@ -520,7 +520,7 @@ pub struct PagerArgs {
         overrides_with = "reasoning_effort"
     )]
     pub reasoning_effort: Option<String>,
-    /// Extra rules to append to the system prompt.
+    /// 追加到系统提示的额外规则。
     #[clap(long = "rules", alias = "append-system-prompt")]
     pub rules: Option<String>,
     /// Compaction mode [summary|transcript|segments].
@@ -532,16 +532,16 @@ pub struct PagerArgs {
     /// Only affects `--compaction-mode segments`. Sets `GROK_COMPACTION_DETAIL`.
     #[clap(long = "compaction-detail", value_name = "DETAIL", hide = true)]
     pub compaction_detail: Option<String>,
-    /// Override the agent's system prompt (compat alias: --system-prompt).
+    /// 覆盖 agent 的系统提示（兼容别名：--system-prompt）。
     #[clap(
         long = "system-prompt-override",
         alias = "system-prompt",
         value_name = "PROMPT"
     )]
     pub system_prompt_override: Option<String>,
-    /// Resume a session by ID or title, or the most recent if omitted.
-    /// Non-ID values match session titles for the current directory, ignoring letter case; UUID-shaped values always mean IDs.
-    /// Among duplicate titles a sole renamed match wins; otherwise the resume fails as ambiguous.
+    /// 按 ID 或标题恢复会话；省略值时恢复最近会话。非 ID 值会在当前目录匹配会话
+    /// 标题（忽略大小写；重命名后的唯一匹配会在重复项中胜出，否则报歧义错误；
+    /// UUID 形状的值始终表示 ID）。
     #[arg(
         long = "resume",
         short = 'r',
@@ -567,7 +567,7 @@ pub struct PagerArgs {
     /// The id-based peek cannot re-derive it: a legacy id duplicated across cwd dirs makes that lookup ambiguous.
     #[clap(skip)]
     pub(crate) pinned_resume_profile: Option<Option<String>>,
-    /// Continue the most recent session for the current working directory.
+    /// 恢复当前工作目录最近的会话。
     #[arg(
         short = 'c',
         long = "continue",
@@ -575,33 +575,34 @@ pub struct PagerArgs {
         "load_session"]
     )]
     pub continue_last_session: bool,
-    /// Use a specific session UUID for a **new** conversation (must be a valid UUID and must not already exist under the target session directory).
-    /// With `--resume`/`--continue`, only valid together with `--fork-session` (names the forked session).
-    /// Does not resume existing sessions, use `--resume` / `--continue` instead.
+    /// 使用指定的会话 UUID 创建**新**对话（必须是有效 UUID，且目标会话目录下不得
+    /// 已存在）。与 `--resume`/`--continue` 一起使用时，仅在同时指定
+    /// `--fork-session` 时有效（用于命名 fork 会话）。不会恢复现有会话——请改用
+    /// `--resume` / `--continue`。
     #[arg(short = 's', long = "session-id", value_name = "SESSION_ID")]
     pub session_id: Option<String>,
-    /// When resuming (`--resume` / `--continue`), create a new session ID instead of reusing the original (optionally set via `--session-id`).
+    /// 恢复（`--resume` / `--continue`）时创建新的会话 ID，而不是复用原 ID
+    /// （可通过 `--session-id` 设置）。
     #[arg(long = "fork-session")]
     pub fork_session: bool,
     /// Start the session in a new git worktree, optionally named.
     /// With `--resume` of a remote session, pass `--restore-code` to apply the snapshot codebase (conversation is restored either way).
     #[arg(short = 'w', long = "worktree", num_args = 0..= 1, default_missing_value = "")]
     pub worktree: Option<String>,
-    /// Branch, tag, or commit to base the worktree on (with `--worktree`).
-    /// Defaults to the current HEAD of the source checkout when omitted.
+    /// 指定用于创建 worktree 的分支、标签或提交（配合 `--worktree`）。省略时默认
+    /// 使用源代码检出的当前 HEAD。
     #[arg(long = "worktree-ref", visible_alias = "ref", requires = "worktree")]
     pub worktree_ref: Option<String>,
-    /// Restore the original session's repository snapshot when resuming.
-    /// Remote sessions require `--worktree` (never checks out into the current directory).
-    /// Without this flag, resume restores conversation only.
+    /// 恢复会话时还原原会话的仓库快照。远程会话必须同时指定 `--worktree`
+    /// （绝不会检出到当前目录）。不传此参数时，仅恢复对话。
     #[arg(long = "restore-code", requires = "resume_session")]
     pub restore_code: bool,
-    /// Disable plan mode.
+    /// 禁用计划模式。
     #[arg(long = "no-plan")]
     pub no_plan: bool,
-    /// Own a local `workspace_server` (replaces remote sandbox). Requires `--chat`.
+    /// 拥有本地 `workspace_server`（替代远程沙箱）。需要 `--chat`。
     ///
-    /// Compiled only with `--features local-workspace` (not implied by `chat`).
+    /// 仅在 `--features local-workspace` 下编译（不会由 `chat` 隐式启用）。
     #[cfg(feature = "local-workspace")]
     #[arg(
         long = "local-workspace",
@@ -611,7 +612,8 @@ pub struct PagerArgs {
         requires = "chat"
     )]
     pub local_workspace: Option<Option<PathBuf>>,
-    /// Attach an existing local `workspace_server` by `server_id`, replacing the chat sandbox (ExistingWorkspace only). Requires `--chat`.
+    /// 通过 `server_id` 附加到现有本地 `workspace_server`，替代 chat 沙箱
+    /// （仅 ExistingWorkspace）。需要 `--chat`。
     #[cfg(feature = "local-workspace")]
     #[arg(
         long = "local-workspace-attach",
@@ -620,11 +622,11 @@ pub struct PagerArgs {
         requires = "chat"
     )]
     pub local_workspace_attach: Option<String>,
-    /// Cwd override for local-workspace attach/own. Requires `--chat`.
+    /// 用于本地 workspace 附加或自有模式的 Cwd 覆盖。需要 `--chat`。
     #[cfg(feature = "local-workspace")]
     #[arg(long = "local-workspace-cwd", value_name = "PATH", requires = "chat")]
     pub local_workspace_cwd: Option<PathBuf>,
-    /// Disable subagent spawning.
+    /// 禁用 subagent 生成。
     #[arg(long = "no-subagents")]
     pub no_subagents: bool,
     /// Disable structured question prompts from the agent.
@@ -649,26 +651,26 @@ pub struct PagerArgs {
     /// Headless only: `/flush` as `-p` text is not a reliable flush trigger.
     #[arg(long = "memory-flush", hide = true)]
     pub memory_flush: bool,
-    /// Agent name or definition file path.
+    /// agent 名称或定义文件路径。
     #[arg(long = "agent", value_name = "NAME")]
     pub agent: Option<String>,
-    /// Inline subagent definitions as JSON.
+    /// 以内联 JSON 定义 subagent。
     #[arg(long = "agents", value_name = "JSON")]
     pub agents_json: Option<String>,
-    /// Built-in tools to allow (comma-separated).
+    /// 允许使用的内置工具（逗号分隔）。
     #[arg(long = "tools", value_name = "TOOLS")]
     pub cli_tools: Option<String>,
-    /// Built-in tools to remove (comma-separated).
+    /// 移除的内置工具（逗号分隔）。
     #[arg(long = "disallowed-tools", value_name = "TOOLS")]
     pub cli_disallowed_tools: Option<String>,
-    /// Maximum number of agent turns.
+    /// agent 轮次数上限。
     #[arg(
         long = "max-turns",
         value_name = "N",
         value_parser = clap::value_parser!(u32).range(1..)
     )]
     pub max_turns: Option<u32>,
-    /// Permission mode.
+    /// 权限模式。
     #[arg(
         long = "permission-mode",
         value_name = "MODE",
@@ -677,7 +679,7 @@ pub struct PagerArgs {
         )
     )]
     pub permission_mode_flag: Option<String>,
-    /// Disable web search and web fetch tools.
+    /// 禁用 web search 和 web fetch 工具。
     #[arg(long = "disable-web-search")]
     pub disable_web_search: bool,
     /// Exit as soon as the first agent turn ends, without waiting for pending background bash/monitor tasks or background subagents (headless only).
@@ -697,7 +699,7 @@ pub struct PagerArgs {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub background_wait_timeout_secs: u64,
-    /// Sandbox profile for filesystem and network access.
+    /// 文件系统和网络访问的沙箱配置。
     #[arg(long, env = "GROK_SANDBOX", value_name = "PROFILE")]
     pub sandbox: Option<String>,
     /// Session storage mode: local or writeback.
@@ -729,7 +731,7 @@ pub struct PagerArgs {
     /// Set the installer field in config.toml.
     #[arg(long = "installer", value_name = "VALUE", hide = true)]
     pub installer: Option<String>,
-    /// Run inline instead of using the terminal alternate screen.
+    /// 以内联方式运行，而不是使用终端备用屏幕。
     #[arg(long = "no-alt-screen")]
     pub no_alt_screen: bool,
     /// Experimental: scrollback-native rendering.
@@ -737,9 +739,9 @@ pub struct PagerArgs {
     /// Session-scoped only, does not write config.
     #[arg(long = "minimal")]
     pub minimal: bool,
-    /// Open in the standard fullscreen TUI for this session, overriding a config `[ui] screen_mode = "minimal"` preference.
-    /// Session-scoped only, does not write config.
-    /// Fullscreen-vs-inline still follows the alt-screen policy (--no-alt-screen, [terminal] alt_screen, terminal auto-detection).
+    /// 在此会话中以标准全屏 TUI 打开，覆盖配置中的
+    /// `[ui] screen_mode = "minimal"` 偏好。仅限会话范围，不写入配置。全屏与内联
+    /// 仍遵循备用屏幕策略（`--no-alt-screen`、`[terminal] alt_screen`、终端自动检测）。
     #[arg(long = "fullscreen", conflicts_with = "minimal")]
     pub fullscreen: bool,
     /// Write sampling events to ~/.grok/logs/sampling.jsonl.
@@ -748,7 +750,7 @@ pub struct PagerArgs {
     /// Show the login screen even when credentials are already available.
     #[arg(long = "force-login", hide = true)]
     pub force_login: bool,
-    /// Use OAuth when the welcome screen starts authentication.
+    /// 欢迎界面开始身份验证时使用 OAuth。
     #[arg(long = "oauth")]
     pub oauth: bool,
     /// Connect to a shared leader process.
@@ -757,7 +759,8 @@ pub struct PagerArgs {
     /// Run standalone even when leader mode is configured.
     #[arg(long, conflicts_with = "leader", hide = true)]
     pub no_leader: bool,
-    /// Initial prompt for the interactive session, e.g. `grok "fix the bug"` or `grok --worktree=feat "create this feature"`.
+    /// 交互式会话的初始提示，例如 `grok "fix the bug"` 或
+    /// `grok --worktree=feat "create this feature"`。
     #[arg(
         value_name = "PROMPT",
         conflicts_with_all = &["single",
@@ -765,7 +768,7 @@ pub struct PagerArgs {
         "prompt_file"]
     )]
     pub prompt: Option<String>,
-    /// Subcommand (e.g., `agent`).
+    /// 子命令（例如 `agent`）。
     #[command(subcommand, next_display_order = 0)]
     pub command: Option<Command>,
 }
@@ -824,16 +827,45 @@ impl PagerArgs {
     }
     /// Parse CLI arguments without applying side effects.
     pub fn parse_cli() -> Self {
-        let bin_name = std::env::args()
+        Self::parse_cli_from(std::env::args_os())
+    }
+
+    fn parse_cli_from<I, T>(args: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString>,
+    {
+        let mut args = args.into_iter().map(Into::into);
+        let argv0 = args
             .next()
-            .as_deref()
-            .map(std::path::Path::new)
-            .and_then(|p| p.file_name())
-            .and_then(|n| n.to_str())
-            .filter(|n| *n == "grok" || *n == "agent")
-            .unwrap_or("grok")
-            .to_owned();
-        Self::parse_from(std::iter::once(bin_name).chain(std::env::args().skip(1)))
+            .unwrap_or_else(|| std::ffi::OsString::from(xai_grok_product::CLI_NAME));
+        let invoked_name = std::path::Path::new(&argv0)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(xai_grok_product::CLI_NAME);
+        let invoked_stem = invoked_name
+            .get(..invoked_name.len().saturating_sub(4))
+            .filter(|_| {
+                invoked_name
+                    .get(invoked_name.len().saturating_sub(4)..)
+                    .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".exe"))
+            })
+            .unwrap_or(invoked_name);
+        let normalized_stem = invoked_stem.to_ascii_lowercase();
+        let is_agent_entrypoint = matches!(normalized_stem.as_str(), "agent" | "agent-zh");
+        let recognized_entrypoint = matches!(
+            normalized_stem.as_str(),
+            "grok" | "grok-zh" | "agent" | "agent-zh"
+        );
+        let bin_name = if recognized_entrypoint {
+            argv0
+        } else {
+            std::ffi::OsString::from(xai_grok_product::CLI_NAME)
+        };
+        let normalized = std::iter::once(bin_name)
+            .chain(is_agent_entrypoint.then(|| std::ffi::OsString::from("agent")))
+            .chain(args);
+        Self::parse_from(normalized)
     }
     /// Apply launch-directory path anchoring and `--cwd` after early commands have been dispatched without filesystem or process initialization.
     pub fn apply_cwd(self) -> anyhow::Result<Self> {
@@ -1033,6 +1065,38 @@ impl PagerArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_entrypoint_names_inject_the_agent_subcommand() {
+        for entrypoint in [
+            "agent",
+            "agent-zh",
+            "agent.exe",
+            "agent-zh.exe",
+            "AGENT-ZH.ExE",
+        ] {
+            let args = PagerArgs::parse_cli_from([entrypoint, "stdio"]);
+            let Some(Command::Agent(agent)) = args.command else {
+                panic!("{entrypoint} must dispatch the agent subcommand");
+            };
+            assert!(
+                matches!(agent.mode, Some(AgentCmd::Stdio)),
+                "{entrypoint} must preserve the agent mode arguments"
+            );
+        }
+    }
+
+    #[test]
+    fn grok_entrypoint_names_keep_normal_top_level_parsing() {
+        for entrypoint in ["grok", "grok-zh", "grok.exe", "grok-zh.exe", "GROK-ZH.ExE"] {
+            let args = PagerArgs::parse_cli_from([entrypoint, "version"]);
+            assert!(
+                matches!(args.command, Some(Command::Version { json: false })),
+                "{entrypoint} must not inject the agent subcommand"
+            );
+        }
+    }
+
     #[test]
     fn version_flags_parse_as_early_intent_without_exiting() {
         for flag in ["--version", "-v", "-V"] {

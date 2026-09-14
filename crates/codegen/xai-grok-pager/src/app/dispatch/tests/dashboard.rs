@@ -2569,6 +2569,31 @@ fn workspace_dispatch_with_attach_selects_the_provisional_row() {
         "live rows render even before the store snapshot has loaded",
     );
 }
+
+#[test]
+fn workspace_load_failure_toast_localizes_chrome_and_preserves_error() {
+    let mut app = test_app_with_agent();
+    app.locale = std::sync::Arc::new(crate::locale::LocaleContext::new(
+        crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        },
+    ));
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::WorkspaceSnapshotFailed {
+            error: "opaque storage error".into(),
+        }),
+        &mut app,
+    );
+    assert_eq!(
+        app.agents[&AgentId(0)]
+            .toast
+            .as_ref()
+            .map(|(message, _)| message.as_str()),
+        Some("无法加载智能体面板工作区：opaque storage error")
+    );
+}
+
 #[test]
 fn workspace_worktree_dispatch_shows_row_while_worktree_is_created() {
     use crate::views::dashboard::DashboardRowId;
@@ -4390,10 +4415,16 @@ fn dashboard_attach_subagent_switches_to_parent_with_subagent_focused() {
 fn dashboard_attach_subagent_lazily_replays_deferred_transcript() {
     let child_sid = "child-dash-defer".to_string();
     let home = tempfile::tempdir().unwrap();
+    // The replay fast path resolves hints against the parent session cwd
+    // (`make_test_agent_session` uses `std::env::temp_dir()`), so the fixture
+    // must live under that same cwd's encoded dirname. A hardcoded `/tmp`
+    // only matches on Unix, where temp_dir() == "/tmp".
     let session_dir = home
         .path()
         .join("sessions")
-        .join(urlencoding::encode("/tmp").as_ref())
+        .join(xai_grok_config::encode_cwd_dirname(
+            &std::env::temp_dir().to_string_lossy(),
+        ))
         .join(&child_sid);
     std::fs::create_dir_all(&session_dir).unwrap();
     std::fs::write(session_dir.join("summary.json"), "{}").unwrap();

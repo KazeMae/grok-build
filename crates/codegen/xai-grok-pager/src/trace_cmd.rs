@@ -7,15 +7,15 @@ use xai_grok_shell::util::grok_home::grok_home;
 
 #[derive(Debug, clap::Args, Clone)]
 pub struct TraceArgs {
-    /// Session ID to export/upload
+    /// 要导出或上传的会话 ID
     pub session_id: String,
-    /// Save locally only, skip remote upload
+    /// 仅保存到本地，跳过远程上传
     #[arg(long)]
     pub local: bool,
-    /// Output path (default: $GROK_HOME/trace-exports/<session-id>.tar.gz)
+    /// 输出路径（默认：$GROK_HOME/trace-exports/<session-id>.tar.gz）
     #[arg(short, long)]
     pub output: Option<PathBuf>,
-    /// Emit machine-readable JSON output
+    /// 输出机器可读的 JSON
     #[arg(long)]
     pub json: bool,
 }

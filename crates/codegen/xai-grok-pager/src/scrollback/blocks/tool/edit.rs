@@ -130,7 +130,15 @@ pub fn render_diff_hunk_highlighted(
     width: u16,
     config: &DiffRenderConfig,
 ) -> Vec<DiffLineOutput> {
-    render_diff_hunks_core(std::slice::from_ref(hunk), path, None, theme, width, config)
+    render_diff_hunks_core(
+        std::slice::from_ref(hunk),
+        path,
+        None,
+        theme,
+        width,
+        config,
+        None,
+    )
 }
 
 /// Render multiple hunks with separators, returning lines with backgrounds.
@@ -141,7 +149,7 @@ pub fn render_diff_hunks_highlighted(
     width: u16,
     config: &DiffRenderConfig,
 ) -> Vec<DiffLineOutput> {
-    render_diff_hunks_core(hunks, path, None, theme, width, config)
+    render_diff_hunks_core(hunks, path, None, theme, width, config, None)
 }
 
 /// The single hunk walker behind both public fronts. Every line renders its per-hunk syntect spans, keeping the
@@ -153,6 +161,7 @@ fn render_diff_hunks_core(
     theme: &Theme,
     width: u16,
     config: &DiffRenderConfig,
+    locale: Option<&crate::locale::LocaleContext>,
 ) -> Vec<DiffLineOutput> {
     let syntect = get_syntect();
     let mut lines = Vec::new();
@@ -162,8 +171,21 @@ fn render_diff_hunks_core(
             // Add separator between hunks (no background)
             let indent = if config.indent { INDENT } else { "" };
             let sep_text = match hunk_gap_lines(&hunks[i - 1], hunk) {
-                Some(1) => format!("{} 1 unchanged line", config.hunk_separator),
-                Some(n) => format!("{} {n} unchanged lines", config.hunk_separator),
+                Some(n) => {
+                    let english = if n == 1 {
+                        format!("{} 1 unchanged line", config.hunk_separator)
+                    } else {
+                        format!("{} {n} unchanged lines", config.hunk_separator)
+                    };
+                    locale
+                        .map(|locale| {
+                            locale
+                                .named_text("scrollback.tool.edit.unchanged_lines", &english)
+                                .replace("{separator}", &config.hunk_separator)
+                                .replace("{count}", &n.to_string())
+                        })
+                        .unwrap_or(english)
+                }
                 None => config.hunk_separator.clone(),
             };
             let sep_line = Line::from(vec![
@@ -335,7 +357,7 @@ pub fn render_diff_hunks_with_styles(
     width: u16,
     config: &DiffRenderConfig,
 ) -> Vec<DiffLineOutput> {
-    render_diff_hunks_core(hunks, path, Some(by_new_line), theme, width, config)
+    render_diff_hunks_core(hunks, path, Some(by_new_line), theme, width, config, None)
 }
 
 /// Full-file map spans for one line, when they may override the cold spans. Equal always; Insert only on banded
@@ -917,6 +939,30 @@ impl EditToolCallBlock {
         cwd: Option<&Path>,
         width: Option<usize>,
     ) -> Line<'static> {
+        self.header_line_with_locale(
+            theme,
+            muted,
+            show_summary,
+            dim_details,
+            surface,
+            cwd,
+            width,
+            &crate::locale::LocaleContext::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn header_line_with_locale(
+        &self,
+        theme: &Theme,
+        muted: bool,
+        show_summary: bool,
+        dim_details: bool,
+        surface: crate::render::tool_paths::ToolPathSurface,
+        cwd: Option<&Path>,
+        width: Option<usize>,
+        locale: &crate::locale::LocaleContext,
+    ) -> Line<'static> {
         let text_style = if muted {
             theme.muted()
         } else {
@@ -934,7 +980,24 @@ impl EditToolCallBlock {
             theme.muted()
         };
 
-        let prefix = self.prefix;
+        let prefix = match self.prefix {
+            "Edit " => locale
+                .named_text("scrollback.tool.edit.label", "Edit ")
+                .into_owned(),
+            "Editing workflow " => locale
+                .named_text("scrollback.tool.edit.editing_workflow", "Editing workflow ")
+                .into_owned(),
+            "Creating " => locale
+                .named_text("scrollback.tool.edit.creating", "Creating ")
+                .into_owned(),
+            "Creating workflow " => locale
+                .named_text(
+                    "scrollback.tool.edit.creating_workflow",
+                    "Creating workflow ",
+                )
+                .into_owned(),
+            other => other.to_owned(),
+        };
 
         // Build the suffix spans first so we can reserve space for them. The suffix (diffstat / "(N edits)") renders only
         // on the collapsed one-liner. Untrusted summaries (multi-file, title-fallback path) never show counts that would
@@ -960,7 +1023,11 @@ impl EditToolCallBlock {
                 }
             } else if collapsed && self.edit_count > 1 {
                 vec![Span::styled(
-                    format!(" ({} edits)", self.edit_count),
+                    if locale.locale() == crate::locale::UiLocale::ZhCn {
+                        format!("（{} 处编辑）", self.edit_count)
+                    } else {
+                        format!(" ({} edits)", self.edit_count)
+                    },
                     detail_style,
                 )]
             } else {
@@ -978,7 +1045,7 @@ impl EditToolCallBlock {
                 surface,
                 cwd,
                 width,
-                prefix.len() + suffix_width,
+                unicode_width::UnicodeWidthStr::width(prefix.as_str()) + suffix_width,
             ),
         };
 
@@ -1003,21 +1070,25 @@ impl EditToolCallBlock {
         theme: &Theme,
         width: u16,
         config: &DiffRenderConfig,
+        locale: &crate::locale::LocaleContext,
     ) -> Vec<DiffLineOutput> {
         let path = Path::new(&self.path);
         match &self.highlight {
             EditHighlightPhase::FileScoped {
                 by_new_line,
                 theme: baked,
-            } if *baked == crate::theme::cache::current_kind() => render_diff_hunks_with_styles(
+            } if *baked == crate::theme::cache::current_kind() => render_diff_hunks_core(
                 &self.hunks,
                 path,
-                by_new_line.as_ref(),
+                Some(by_new_line.as_ref()),
                 theme,
                 width,
                 config,
+                Some(locale),
             ),
-            _ => render_diff_hunks_highlighted(&self.hunks, path, theme, width, config),
+            _ => {
+                render_diff_hunks_core(&self.hunks, path, None, theme, width, config, Some(locale))
+            }
         }
     }
 }
@@ -1208,7 +1279,7 @@ impl EditToolCallBlock {
         match ctx.mode {
             DisplayMode::Collapsed => {
                 // Collapsed: just header line. Path (span 1) is selectable.
-                let line = self.header_line(
+                let line = self.header_line_with_locale(
                     &theme,
                     muted_collapsed,
                     show_summary,
@@ -1216,6 +1287,7 @@ impl EditToolCallBlock {
                     crate::render::tool_paths::ToolPathSurface::Collapsed,
                     cwd,
                     Some(ctx.content_width()),
+                    &ctx.locale,
                 );
                 // Spans: ["Edit ", path, optional suffix spans...]
                 // Only the path span (index 1) is selectable.
@@ -1245,7 +1317,7 @@ impl EditToolCallBlock {
                     dual_line_numbers: edit_cfg.dual_line_numbers,
                 };
                 // Header with word-wrap and hanging indent
-                let header = self.header_line(
+                let header = self.header_line_with_locale(
                     &theme,
                     false,
                     show_summary,
@@ -1253,6 +1325,7 @@ impl EditToolCallBlock {
                     crate::render::tool_paths::ToolPathSurface::Expanded,
                     cwd,
                     None,
+                    &ctx.locale,
                 );
                 let bullet_indent = ctx
                     .appearance
@@ -1304,7 +1377,8 @@ impl EditToolCallBlock {
                     // Empty line after header (non-selectable)
                     lines.push(BlockLine::separator(Line::from("")));
 
-                    let diff_lines = self.render_diff_lines(&theme, ctx.width, &config);
+                    let diff_lines =
+                        self.render_diff_lines(&theme, ctx.width, &config, &ctx.locale);
                     let mut diff_range_id: u16 = 1;
                     for output in diff_lines {
                         if output.is_separator {
@@ -1427,7 +1501,7 @@ impl BlockContent for EditToolCallBlock {
             .blocks
             .edit
             .effective_line_summary(crate::appearance::cache::load_collapsed_edit_blocks());
-        Some(Text::from(self.header_line(
+        Some(Text::from(self.header_line_with_locale(
             &theme,
             false,
             show_summary,
@@ -1435,6 +1509,7 @@ impl BlockContent for EditToolCallBlock {
             crate::render::tool_paths::ToolPathSurface::Fullscreen,
             ctx.cwd.as_deref(),
             None,
+            &ctx.locale,
         )))
     }
 }
@@ -1458,6 +1533,7 @@ mod tests {
             appearance: AppearanceConfig::default(),
             is_selected: false,
             cwd: None,
+            locale: Default::default(),
         }
     }
 

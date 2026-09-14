@@ -460,6 +460,7 @@ impl BlockViewerPane {
             appearance: Default::default(),
             is_selected: false,
             cwd: None,
+            locale: crate::locale::LocaleContext::default(),
         };
         block
             .output(&ctx)
@@ -877,8 +878,10 @@ impl BlockViewerPane {
         let config = DiffRenderConfig::default();
         // Block-owned dispatch so the viewer paints the same highlight phase (including the file-scoped upgrade) as the scrollback output
         let rendered = edit.render_diff_lines(
-            theme, 500, // wide width, NoWrap mode
+            theme,
+            500, // wide width, NoWrap mode
             &config,
+            &crate::locale::LocaleContext::default(),
         );
 
         // Build a flat list of DiffLine references from all hunks, interleaving None for separator lines (which render_diff_lines inserts)

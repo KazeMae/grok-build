@@ -16,7 +16,9 @@ use std::time::{Instant, SystemTime};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::agent::{BgTaskState, BgTaskStatus, ScheduledTaskInfo};
-use crate::app::subagent::{SubagentInfo, format_context_badge, format_subagent_label};
+use crate::app::subagent::{
+    SubagentInfo, format_context_badge_with_locale, format_subagent_label_with_locale,
+};
 use crate::appearance::LayoutConfig;
 use crate::scrollback::layout::HorizontalLayout;
 use crate::syntax::get_syntect;
@@ -34,6 +36,26 @@ use super::overlay::OverlayState;
 // ---------------------------------------------------------------------------
 
 const SPINNER_DIVISOR: u64 = 4;
+
+fn tasks_static(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'static str,
+) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
+fn tasks_text<'a>(
+    locale: Option<&crate::locale::LocaleContext>,
+    id: &str,
+    english: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    locale
+        .map(|locale| locale.named_text(id, english))
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed(english))
+}
 
 // ---------------------------------------------------------------------------
 // Shell command syntax highlighting (used by other modules too)
@@ -177,6 +199,16 @@ impl GroupKind {
         }
     }
 
+    fn localized_label(self, locale: Option<&crate::locale::LocaleContext>) -> &'static str {
+        let id = match self {
+            GroupKind::Workflows => "tasks.group.workflows",
+            GroupKind::Subagents => "tasks.group.subagents",
+            GroupKind::Tasks => "tasks.group.tasks",
+            GroupKind::Watchers => "tasks.group.watchers",
+        };
+        tasks_static(locale, id, self.label())
+    }
+
     fn order(self) -> u8 {
         match self {
             GroupKind::Workflows => 0,
@@ -241,12 +273,22 @@ pub enum TaskEntry {
 }
 
 impl TaskEntry {
+    #[cfg(test)]
     fn from_bg_task(
         task: &BgTaskState,
         highlight_cache: &mut HashMap<String, Vec<Span<'static>>>,
     ) -> Self {
-        // Prefer the tool call's description over the raw command for the pane label
-        // The full command is always available via the block viewer (preamble of the BgTaskBlock)
+        Self::from_bg_task_with_locale(task, highlight_cache, None)
+    }
+
+    fn from_bg_task_with_locale(
+        task: &BgTaskState,
+        highlight_cache: &mut HashMap<String, Vec<Span<'static>>>,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Self {
+        // Prefer the tool call's description over the raw command for the
+        // pane label. The full command is always available via the block
+        // viewer (preamble of the BgTaskBlock).
         let description = task
             .description
             .as_deref()
@@ -262,15 +304,15 @@ impl TaskEntry {
             let text = description
                 .map(|d| d.replace('\n', " "))
                 .unwrap_or_else(|| task.command.trim().replace('\n', " "));
-            const TAG: &str = "Monitor";
+            let tag = tasks_static(locale, "tasks.kind.monitor", "Monitor");
             let desc_style = if running {
                 Style::default().fg(theme.text_secondary)
             } else {
                 Style::default().fg(theme.gray_bright)
             };
-            let label = format!("{TAG} {text}");
+            let label = format!("{tag} {text}");
             let styled = Line::from(vec![
-                Span::styled(format!("{TAG} "), Style::default().fg(theme.accent_system)),
+                Span::styled(format!("{tag} "), Style::default().fg(theme.accent_system)),
                 Span::styled(text, desc_style),
             ]);
             (label, styled)
@@ -278,18 +320,20 @@ impl TaskEntry {
             // Collapse newlines so multi-line descriptions render on one row.
             let one_line = desc.replace('\n', " ");
             let theme = Theme::current();
-            // Prefix the description with a constant `Task` tag in the theme's secondary text color
-            // The tag makes the entry type identifiable at a glance, the same way subagent rows lead with their persona/role label
-            // The prefix is included in `label` so it is searchable (the tasks-pane filter matches against `label`)
-            const PREFIX: &str = "Task ";
+            // Prefix the description with a constant `Task` tag in the
+            // theme's secondary text color so the entry type is identifiable
+            // at a glance, the same way subagent rows lead with their
+            // persona/role label. The prefix is included in `label` so it
+            // is searchable (the tasks-pane filter matches against `label`).
+            let prefix = tasks_static(locale, "tasks.kind.task_prefix", "Task ");
             let desc_style = if running {
                 Style::default().fg(theme.text_primary)
             } else {
                 Style::default().fg(theme.gray_bright)
             };
-            let label = format!("{PREFIX}{one_line}");
+            let label = format!("{prefix}{one_line}");
             let styled = Line::from(vec![
-                Span::styled(PREFIX, Style::default().fg(theme.text_secondary)),
+                Span::styled(prefix, Style::default().fg(theme.text_secondary)),
                 Span::styled(one_line, desc_style),
             ]);
             (label, styled)
@@ -330,11 +374,20 @@ impl TaskEntry {
         }
     }
 
+    #[cfg(test)]
     fn from_subagent(info: &SubagentInfo) -> Self {
+        Self::from_subagent_with_locale(info, None)
+    }
+
+    fn from_subagent_with_locale(
+        info: &SubagentInfo,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Self {
         let theme = Theme::current();
 
-        // Single consolidated label (persona > role > subagent_type > tag > "general") plus description with any `[tag]` prefix stripped
-        let (type_label, description) = format_subagent_label(info);
+        // Single consolidated label (persona > role > subagent_type > tag >
+        // "general") plus description with any `[tag]` prefix stripped.
+        let (type_label, description) = format_subagent_label_with_locale(info, locale);
         let model_suffix = info
             .attempt
             .model
@@ -424,7 +477,15 @@ impl TaskEntry {
         }
     }
 
+    #[cfg(test)]
     fn from_workflow_run(run: &crate::views::workflows::WorkflowRunSnapshot) -> Self {
+        Self::from_workflow_run_with_locale(run, None)
+    }
+
+    fn from_workflow_run_with_locale(
+        run: &crate::views::workflows::WorkflowRunSnapshot,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Self {
         let theme = Theme::current();
         let running = run.is_active();
 
@@ -457,21 +518,44 @@ impl TaskEntry {
                 .filter(|p| !p.is_empty());
             let agents = match run.agents.iter().filter(|a| a.state == "running").count() {
                 0 => None,
-                1 => Some("1 agent".to_string()),
-                n => Some(format!("{n} agents")),
+                1 => Some(
+                    tasks_text(locale, "tasks.agent.one", "{count} agent").replace("{count}", "1"),
+                ),
+                n => Some(
+                    tasks_text(locale, "tasks.agent.many", "{count} agents")
+                        .replace("{count}", &n.to_string()),
+                ),
             };
             match (phase, agents) {
                 (Some(p), Some(a)) => format!("{p} · {a}"),
                 (Some(p), None) => p.to_string(),
                 (None, Some(a)) => a,
-                (None, None) => "running".to_string(),
+                (None, None) => {
+                    tasks_static(locale, "workflows.status.active", "running").to_string()
+                }
             }
         } else {
-            run.status.replace('_', " ")
+            let english = run.status.replace('_', " ");
+            let id = match run.status.as_str() {
+                "complete" => Some("workflows.status.complete"),
+                "user_paused" => Some("workflows.status.user_paused"),
+                "back_off_paused" => Some("workflows.status.back_off_paused"),
+                "no_progress_paused" => Some("workflows.status.no_progress_paused"),
+                "infra_paused" => Some("workflows.status.infra_paused"),
+                "blocked" => Some("workflows.status.blocked"),
+                "budget_limited" => Some("workflows.status.budget_limited"),
+                "interrupted" => Some("workflows.status.interrupted"),
+                "failed" => Some("workflows.status.failed"),
+                "cancelled" => Some("workflows.status.cancelled"),
+                _ => None,
+            };
+            id.map(|id| tasks_text(locale, id, &english).into_owned())
+                .unwrap_or(english)
         };
 
+        let workflow_prefix = tasks_static(locale, "tasks.kind.workflow_prefix", "Workflow ");
         let mut spans = vec![
-            Span::styled("Workflow ".to_string(), Style::default().fg(tag_color)),
+            Span::styled(workflow_prefix, Style::default().fg(tag_color)),
             Span::styled(run.name.clone(), name_style),
         ];
         if !suffix.is_empty() {
@@ -481,7 +565,7 @@ impl TaskEntry {
             ));
         }
 
-        let label = format!("Workflow {} {suffix}", run.name);
+        let label = format!("{workflow_prefix}{} {suffix}", run.name);
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         "workflow:".hash(&mut hasher);
         run.run_id.hash(&mut hasher);
@@ -500,7 +584,13 @@ impl TaskEntry {
         }
     }
 
-    fn from_scheduled(info: &ScheduledTaskInfo, linked: Option<(String, bool)>) -> Self {
+    fn from_scheduled(
+        info: &ScheduledTaskInfo,
+        current_cron: Option<&str>,
+        is_queued: bool,
+        linked: Option<(String, bool)>,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Self {
         let linked_running = linked.as_ref().is_some_and(|(_, running)| *running);
         let theme = Theme::current();
         let prompt_preview = if info.prompt.chars().count() > 60 {
@@ -513,28 +603,34 @@ impl TaskEntry {
                 let approx = created + std::time::Duration::from_secs(secs);
                 let now = std::time::Instant::now();
                 if approx > now {
-                    format!(" (next in {})", format_duration(approx.duration_since(now)))
+                    let duration = format_duration(approx.duration_since(now));
+                    tasks_text(locale, "tasks.schedule.next_in", " (next in {duration})")
+                        .replace("{duration}", &duration)
                 } else {
-                    " (due now)".to_string()
+                    tasks_static(locale, "tasks.schedule.due_now", " (due now)").to_string()
                 }
             } else {
                 String::new()
             }
         };
         let is_provisional = info.task_id.starts_with("provisional-");
-        let suffix = if linked_running {
-            " (running)".to_string()
+        let suffix = if current_cron == Some(&info.task_id) || linked_running {
+            tasks_static(locale, "tasks.schedule.running", " (running)").to_string()
+        } else if is_queued {
+            tasks_static(locale, "tasks.schedule.queued", " (queued)").to_string()
         } else if is_provisional {
-            " (starting)".to_string()
+            tasks_static(locale, "tasks.schedule.starting", " (starting)").to_string()
         } else if let Some(n) = &info.next_fire_at {
             if let Ok(dt) = DateTime::<chrono::FixedOffset>::parse_from_rfc3339(n) {
                 let dt = dt.with_timezone(&Utc);
                 let now = Utc::now();
                 if dt > now {
                     let dur = (dt - now).to_std().unwrap_or_default();
-                    format!(" (next in {})", format_duration(dur))
+                    let duration = format_duration(dur);
+                    tasks_text(locale, "tasks.schedule.next_in", " (next in {duration})")
+                        .replace("{duration}", &duration)
                 } else {
-                    " (due now)".to_string()
+                    tasks_static(locale, "tasks.schedule.due_now", " (due now)").to_string()
                 }
             } else {
                 countdown(&info.human_schedule, info.created_at)
@@ -542,8 +638,11 @@ impl TaskEntry {
         } else {
             countdown(&info.human_schedule, info.created_at)
         };
-        // Capitalize the tag for display (`loop` becomes `Loop`) so it reads as a proper label, matching the monitor row's `Monitor` tag
-        let tag_display = {
+        // Capitalize the tag for display (`loop` → `Loop`) so it reads as a
+        // proper label, matching the monitor row's `Monitor` tag.
+        let tag_display = if info.tag == "loop" {
+            tasks_static(locale, "tasks.kind.loop", "Loop").to_string()
+        } else {
             let mut chars = info.tag.chars();
             match chars.next() {
                 Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
@@ -589,16 +688,22 @@ impl TaskEntry {
         }
     }
 
-    /// Build a collapsible group header row, e.g. `▾ Subagents 2` (expanded) or `▸ Subagents 2` (collapsed).
-    /// The chevron and count are baked into the styled line.
-    /// The label aligns with item labels (chevron plus space is the same width as an item's 2-space indent).
-    fn header(group: GroupKind, count: usize, collapsed: bool) -> Self {
+    /// Build a collapsible group header row, e.g. `▾ Subagents 2` (expanded)
+    /// or `▸ Subagents 2` (collapsed). The chevron + count are baked into the
+    /// styled line; the label aligns with item labels (the `chevron + space`
+    /// prefix is the same width as an item's 2-space indent).
+    fn header(
+        group: GroupKind,
+        count: usize,
+        collapsed: bool,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) -> Self {
         let theme = Theme::current();
         let chevron = if collapsed { "\u{25B8} " } else { "\u{25BE} " };
         let styled = Line::from(vec![
             Span::styled(chevron, Style::default().fg(theme.gray)),
             Span::styled(
-                group.label(),
+                group.localized_label(locale),
                 Style::default()
                     .fg(theme.gray_bright)
                     .add_modifier(Modifier::BOLD),
@@ -725,8 +830,9 @@ pub(crate) struct TaskStatusCounts {
 }
 
 pub struct TasksPane {
-    /// Display list: sorted `items` with group headers inserted and collapsed groups' items removed.
-    /// This is what the `ListPane` renders.
+    ui_locale: crate::locale::LocaleContext,
+    /// Display list: sorted `items` with group headers inserted and
+    /// collapsed groups' items removed. This is what the `ListPane` renders.
     entries: Vec<TaskEntry>,
     /// Sorted task items only (no headers).
     /// `entries` is derived from this by [`Self::rebuild_entries`].
@@ -824,6 +930,7 @@ impl TasksPane {
             ..ListPaneStyle::default()
         };
         Self {
+            ui_locale: crate::locale::LocaleContext::default(),
             entries: Vec::new(),
             items: Vec::new(),
             collapsed_groups: std::collections::HashSet::new(),
@@ -853,6 +960,29 @@ impl TasksPane {
         scheduled: &HashMap<String, ScheduledTaskInfo>,
         workflow_runs: &[crate::views::workflows::WorkflowRunSnapshot],
     ) {
+        self.sync_with_locale(
+            bg_tasks,
+            subagents,
+            scheduled,
+            None,
+            &std::collections::HashSet::new(),
+            workflow_runs,
+            None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn sync_with_locale(
+        &mut self,
+        bg_tasks: &std::collections::BTreeMap<String, BgTaskState>,
+        subagents: &HashMap<String, SubagentInfo>,
+        scheduled: &HashMap<String, ScheduledTaskInfo>,
+        current_cron_task_id: Option<&str>,
+        queued_cron_ids: &std::collections::HashSet<&str>,
+        workflow_runs: &[crate::views::workflows::WorkflowRunSnapshot],
+        locale: Option<&crate::locale::LocaleContext>,
+    ) {
+        self.ui_locale = locale.cloned().unwrap_or_default();
         // Detect theme switch and refresh caches.
         let current_theme = Theme::current_kind();
         if current_theme != self.last_theme {
@@ -869,8 +999,11 @@ impl TasksPane {
         // Add bg task items
         for task in bg_tasks.values() {
             if self.show_done || task.status == BgTaskStatus::Running {
-                self.items
-                    .push(TaskEntry::from_bg_task(task, &mut self.highlight_cache));
+                self.items.push(TaskEntry::from_bg_task_with_locale(
+                    task,
+                    &mut self.highlight_cache,
+                    locale,
+                ));
             }
         }
 
@@ -879,7 +1012,8 @@ impl TasksPane {
                 continue;
             }
             if self.show_done || info.is_running() {
-                self.items.push(TaskEntry::from_subagent(info));
+                self.items
+                    .push(TaskEntry::from_subagent_with_locale(info, locale));
             }
         }
 
@@ -891,13 +1025,20 @@ impl TasksPane {
                     .find(|s| s.subagent_id.as_ref() == sid)
                     .map(|s| (sid.to_string(), s.is_running()))
             });
-            self.items.push(TaskEntry::from_scheduled(info, linked));
+            self.items.push(TaskEntry::from_scheduled(
+                info,
+                current_cron_task_id,
+                queued_cron_ids.contains(info.task_id.as_str()),
+                linked,
+                locale,
+            ));
         }
 
         self.workflow_runs = workflow_runs.to_vec();
         for run in workflow_runs {
             if self.show_done || !run.is_terminal() {
-                self.items.push(TaskEntry::from_workflow_run(run));
+                self.items
+                    .push(TaskEntry::from_workflow_run_with_locale(run, locale));
             }
         }
 
@@ -991,6 +1132,7 @@ impl TasksPane {
     /// Relies on `items` already being sorted so each group is contiguous.
     fn rebuild_entries(&mut self) {
         self.entries.clear();
+        let locale = self.ui_locale.clone();
         // Per-group item counts (indexed by `GroupKind::order`).
         let mut counts: [usize; GROUP_KIND_COUNT] = [0; GROUP_KIND_COUNT];
         for it in &self.items {
@@ -1005,6 +1147,7 @@ impl TasksPane {
                     group,
                     counts[group.order() as usize],
                     collapsed,
+                    Some(&locale),
                 ));
                 last = Some(group);
             }
@@ -1232,13 +1375,30 @@ impl TasksPane {
         subagents: &HashMap<String, SubagentInfo>,
         scheduled: &HashMap<String, ScheduledTaskInfo>,
     ) {
+        self.render_with_locale(
+            area, buf, focused, layout_cfg, bg_tasks, subagents, scheduled, None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_with_locale(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        focused: bool,
+        layout_cfg: &LayoutConfig,
+        bg_tasks: &std::collections::BTreeMap<String, BgTaskState>,
+        subagents: &HashMap<String, SubagentInfo>,
+        scheduled: &HashMap<String, ScheduledTaskInfo>,
+        locale: Option<&crate::locale::LocaleContext>,
+    ) {
         let inner = Self::content_area(area, layout_cfg);
         if self.entries.is_empty() {
             if inner.height > 0 && inner.width > 0 {
                 let theme = Theme::current();
                 if self.show_done {
                     let span = Span::styled(
-                        "No tasks or agents.",
+                        tasks_static(locale, "tasks.empty.all", "No tasks or agents."),
                         Style::default().fg(theme.gray_bright),
                     );
                     buf.set_span(inner.x, inner.y, &span, inner.width);
@@ -1248,9 +1408,19 @@ impl TasksPane {
                         .fg(theme.text_primary)
                         .add_modifier(Modifier::BOLD);
                     let line = Line::from(vec![
-                        Span::styled("No running tasks. Press ", muted),
+                        Span::styled(
+                            tasks_static(
+                                locale,
+                                "tasks.empty.running_prefix",
+                                "No running tasks. Press ",
+                            ),
+                            muted,
+                        ),
                         Span::styled("h", key_style),
-                        Span::styled(" to show all.", muted),
+                        Span::styled(
+                            tasks_static(locale, "tasks.empty.running_suffix", " to show all."),
+                            muted,
+                        ),
                     ]);
                     buf.set_line(inner.x, inner.y, &line, inner.width);
                 }
@@ -1296,6 +1466,7 @@ impl TasksPane {
         ListPane::new(&self.entries)
             .focused(focused)
             .style(self.list_style)
+            .with_locale(locale)
             .render(lp_area, buf, &mut self.list_state);
 
         // The right-corner indicators (▲/▼) are suppressed for this pane
@@ -1321,7 +1492,7 @@ impl TasksPane {
             height: list_area.height.saturating_sub(bar_height),
             ..list_area
         };
-        self.render_overlay(overlay_area, buf, bg_tasks, subagents, scheduled);
+        self.render_overlay(overlay_area, buf, bg_tasks, subagents, scheduled, locale);
     }
 
     fn render_overlay(
@@ -1331,6 +1502,7 @@ impl TasksPane {
         bg_tasks: &std::collections::BTreeMap<String, BgTaskState>,
         subagents: &HashMap<String, SubagentInfo>,
         _scheduled: &HashMap<String, ScheduledTaskInfo>,
+        locale: Option<&crate::locale::LocaleContext>,
     ) {
         let theme = Theme::current();
         let scroll_offset = self.list_state.scroll_offset();
@@ -1373,13 +1545,13 @@ impl TasksPane {
                     let Some(task) = bg_tasks.get(task_id) else {
                         continue;
                     };
-                    self.render_bg_task_overlay(area, buf, y, task_id, task, &theme);
+                    self.render_bg_task_overlay(area, buf, y, task_id, task, &theme, locale);
                 }
                 OverlayEntryData::Agent(ref subagent_id, ref child_session_id) => {
                     let Some(info) = subagents.get(child_session_id) else {
                         continue;
                     };
-                    self.render_agent_overlay(area, buf, y, subagent_id, info, &theme);
+                    self.render_agent_overlay(area, buf, y, subagent_id, info, &theme, locale);
                 }
                 OverlayEntryData::Scheduled(ref task_id, ref linked_subagent) => {
                     self.render_scheduled_overlay(
@@ -1479,6 +1651,7 @@ impl TasksPane {
         task_id: &str,
         task: &BgTaskState,
         theme: &Theme,
+        locale: Option<&crate::locale::LocaleContext>,
     ) {
         let (icon, icon_style, right_text, right_style) = if task.pending_kill {
             let frames = crate::glyphs::dot_spinner_frames();
@@ -1486,7 +1659,7 @@ impl TasksPane {
             (
                 frames[frame_idx],
                 Style::default().fg(theme.accent_error),
-                "killing\u{2026} ".to_string(),
+                tasks_static(locale, "tasks.status.killing", "killing\u{2026} ").to_string(),
                 Style::default().fg(theme.accent_error),
             )
         } else {
@@ -1621,6 +1794,7 @@ impl TasksPane {
         subagent_id: &str,
         info: &SubagentInfo,
         theme: &Theme,
+        locale: Option<&crate::locale::LocaleContext>,
     ) {
         let (icon, icon_style, right_text, right_style) = if info.attempt.pending_kill {
             let frames = crate::glyphs::dot_spinner_frames();
@@ -1628,7 +1802,7 @@ impl TasksPane {
             (
                 frames[frame_idx],
                 Style::default().fg(theme.accent_error),
-                "killing\u{2026} ".to_string(),
+                tasks_static(locale, "tasks.status.killing", "killing\u{2026} ").to_string(),
                 Style::default().fg(theme.accent_error),
             )
         } else if info.is_running() {
@@ -1662,7 +1836,7 @@ impl TasksPane {
         buf.set_span(area.x, y, &Span::styled(icon, icon_style), 2);
 
         // Clear overlay area to prevent label text bleeding through.
-        let badge = format_context_badge(info);
+        let badge = format_context_badge_with_locale(info, locale);
         let model_text = info
             .attempt
             .model
@@ -2399,7 +2573,10 @@ mod tests {
                         .unwrap_or_default()
                 })
                 .collect();
-            if let Some(x) = row.iter().position(|s| s == "\u{2717}") {
+            if let Some(x) = row
+                .iter()
+                .position(|s| s == "\u{2717}" || s == "x" || s == "\u{2717}")
+            {
                 found = true;
                 for cell in &row[x + 2..] {
                     assert!(
@@ -2854,6 +3031,21 @@ mod tests {
             _ => panic!("expected Agent variant"),
         };
         assert_eq!(label, "Explore Find API endpoints");
+    }
+
+    #[test]
+    fn zh_localization_task_entry_preserves_dynamic_description() {
+        let info = make_info();
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        let entry = TaskEntry::from_subagent_with_locale(&info, Some(&locale));
+        let label = match &entry {
+            TaskEntry::Agent { label, .. } => label.as_str(),
+            _ => panic!("expected Agent variant"),
+        };
+        assert_eq!(label, "探索 Find API endpoints");
     }
 
     #[test]

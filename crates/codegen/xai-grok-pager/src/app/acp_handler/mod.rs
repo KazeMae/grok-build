@@ -48,7 +48,8 @@ mod workflow_ingest;
 
 #[cfg(test)]
 use permissions::{
-    MCP_ARGS_MAX_LINE_CHARS, MCP_ARGS_MAX_LINES, build_permission_display, mcp_args_lines,
+    MCP_ARGS_MAX_LINE_CHARS, MCP_ARGS_MAX_LINES, build_permission_display, localized_hook_ask_line,
+    mcp_args_lines,
 };
 use permissions::{
     apply_recap_block, handle_permission_request, should_drop_duplicate_auto_recap,
@@ -608,7 +609,10 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
 }
 
 fn handle_version_mismatch(notif: &acp::ExtNotification, app: &mut AppView) -> bool {
-    let Some(banner) = crate::acp::version_mismatch_banner(notif.params.get()) else {
+    let Some(banner) = crate::acp::version_mismatch_banner_with_locale(
+        notif.params.get(),
+        Some(app.locale.as_ref()),
+    ) else {
         tracing::warn!("ignoring x.ai/leader/version_mismatch without usable versions");
         return false;
     };

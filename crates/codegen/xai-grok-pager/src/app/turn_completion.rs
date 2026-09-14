@@ -196,7 +196,17 @@ pub(super) fn note_hook_blocked_turn(
             open_prompt_blocked_card(agent, &blocked, text);
         }
         // A hold with no requeued row (foreign turn, or no stash) has no card; the toast keeps the parked queue from being silent
-        None => agent.show_toast("A hook blocked the last prompt — the queue is paused"),
+        None => {
+            let message = agent
+                .scrollback
+                .locale()
+                .named_text(
+                    "prompt.blocked.toast.queue_paused",
+                    "A hook blocked the last prompt — the queue is paused",
+                )
+                .into_owned();
+            agent.show_toast(&message);
+        }
     }
 }
 
@@ -242,7 +252,15 @@ fn open_prompt_blocked_card(
         // Modal collision or a composer busy with a queue edit
         // The hold, the requeued row, and the stored context (for a later reopen) already protect the queue
         // Leave a plain toast so the parked state isn't silent
-        agent.show_toast("Prompt blocked by a hook — it is held at the front of the queue");
+        let message = agent
+            .scrollback
+            .locale()
+            .named_text(
+                "prompt.blocked.toast.held_front",
+                "Prompt blocked by a hook — it is held at the front of the queue",
+            )
+            .into_owned();
+        agent.show_toast(&message);
         return;
     }
 
@@ -258,7 +276,11 @@ fn open_prompt_blocked_card(
 
     // `\n\n` splits the card header into a bold label plus dimmed description lines (one per paragraph)
     // The paragraphs: framing, hook reason verbatim, queue context
-    let mut question = format!("Prompt blocked by {short_hook_name}");
+    let mut question = agent
+        .scrollback
+        .locale()
+        .named_text("prompt.blocked.title", "Prompt blocked by {hook}")
+        .replace("{hook}", short_hook_name.as_ref());
     if !reason.is_empty() {
         question.push_str("\n\n");
         question.push_str(reason);
@@ -266,32 +288,87 @@ fn open_prompt_blocked_card(
     // Waiting rows sit BEHIND the requeued blocked prompt.
     let waiting = agent.session.pending_prompts.len().saturating_sub(1);
     if was_combined {
-        question.push_str("\n\nThis was a combined submission.");
+        let combined = agent.scrollback.locale().named_static_text(
+            "prompt.blocked.combined_submission",
+            "This was a combined submission.",
+        );
+        question.push_str("\n\n");
+        question.push_str(combined);
     }
     if waiting > 0 {
-        question.push_str(&format!(
-            "\n\n{waiting} more prompt{} waiting (queue paused).",
-            if waiting == 1 { "" } else { "s" }
-        ));
+        let (id, english) = if waiting == 1 {
+            (
+                "prompt.blocked.waiting.one",
+                "1 more prompt waiting (queue paused).",
+            )
+        } else {
+            (
+                "prompt.blocked.waiting.many",
+                "{count} more prompts waiting (queue paused).",
+            )
+        };
+        let waiting_message = agent
+            .scrollback
+            .locale()
+            .named_text(id, english)
+            .replace("{count}", &waiting.to_string());
+        question.push_str("\n\n");
+        question.push_str(&waiting_message);
     }
 
     let preview = Some(prompt_text);
+    let edit_label = agent
+        .scrollback
+        .locale()
+        .named_static_text("prompt.blocked.option.edit.label", "Edit")
+        .to_owned();
+    let edit_description = agent
+        .scrollback
+        .locale()
+        .named_static_text("prompt.blocked.option.edit.description", "Fix your prompt")
+        .to_owned();
+    let resend_label = agent
+        .scrollback
+        .locale()
+        .named_static_text("prompt.blocked.option.resend.label", "Resend")
+        .to_owned();
+    let resend_description = agent
+        .scrollback
+        .locale()
+        .named_static_text(
+            "prompt.blocked.option.resend.description",
+            "Send it unchanged. The hook may block it again.",
+        )
+        .to_owned();
+    let discard_label = agent
+        .scrollback
+        .locale()
+        .named_static_text("prompt.blocked.option.discard.label", "Discard")
+        .to_owned();
+    let discard_description = agent
+        .scrollback
+        .locale()
+        .named_static_text(
+            "prompt.blocked.option.discard.description",
+            "Remove it from the queue",
+        )
+        .to_owned();
     let options = vec![
         QuestionOption {
-            label: "Edit".into(),
-            description: "Fix your prompt".into(),
+            label: edit_label,
+            description: edit_description,
             preview: preview.clone(),
             id: None,
         },
         QuestionOption {
-            label: "Resend".into(),
-            description: "Send it unchanged. The hook may block it again.".into(),
+            label: resend_label,
+            description: resend_description,
             preview: preview.clone(),
             id: None,
         },
         QuestionOption {
-            label: "Discard".into(),
-            description: "Remove it from the queue".into(),
+            label: discard_label,
+            description: discard_description,
             preview,
             id: None,
         },
@@ -454,6 +531,30 @@ fn arm_driver_turn_end_reconcile(
         received_at: std::time::Instant::now(),
     });
     true
+}
+
+/// Formatted `TurnFailed` marker for an errored turn, or `None` when a
+/// dedicated banner (re-auth, overflow, disk-full, request-failed) already
+/// covers the failure.
+pub(in crate::app) fn turn_failed_event(
+    scrollback: &crate::scrollback::state::ScrollbackState,
+    agent_result: Option<&str>,
+    elapsed: std::time::Duration,
+) -> Option<SessionEvent> {
+    if super::dispatch::scrollback_has_recent_error_banner(scrollback) {
+        return None;
+    }
+    let raw = agent_result.unwrap_or("unknown error");
+    Some(SessionEvent::TurnFailed {
+        error: crate::app::error_display::format_request_failure_with_locale(
+            None,
+            None,
+            raw,
+            Some(scrollback.locale()),
+        )
+        .message(),
+        elapsed: Some(elapsed),
+    })
 }
 
 fn driver_mid_active_work(agent: &AgentView) -> bool {

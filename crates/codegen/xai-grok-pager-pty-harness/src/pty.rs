@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use portable_pty::{ExitStatus, PtySize, native_pty_system};
-use xai_grok_test_support::{TestProcessTree, TestSandbox, process_has_exited_without_reap};
+#[cfg(unix)]
+use xai_grok_test_support::process_has_exited_without_reap;
+use xai_grok_test_support::{TestProcessTree, TestSandbox};
 
 const PTY_DROP_REAP_TIMEOUT: Duration = Duration::from_millis(250);
 /// Grace after group SIGTERM before SIGKILL so a responsive child can run TERM cleanup. Wedged children fall through to SIGKILL.
@@ -155,6 +157,9 @@ impl PtyController {
             if let Some(sandbox) = sandbox {
                 cmd.env_clear();
                 sandbox.apply_to_command_builder(&mut cmd);
+                // Keep upstream PTY assertions deterministic. Individual
+                // localization scenarios can override this below.
+                cmd.env(xai_grok_product::LOCALE_ENV, "en-US");
             }
             crate::pty_spawn::apply_child_env(&mut cmd, env);
             #[allow(clippy::disallowed_methods)]

@@ -56,6 +56,8 @@ pub struct EntryRenderer<'a> {
     dim_accent: bool,
     /// Session/worktree cwd (`AgentSession.cwd`) for Expanded tool paths.
     cwd: Option<&'a Path>,
+    /// Render-only locale for local chrome; block payloads stay canonical.
+    locale: Option<&'a crate::locale::LocaleContext>,
 }
 
 impl<'a> EntryRenderer<'a> {
@@ -76,6 +78,7 @@ impl<'a> EntryRenderer<'a> {
             hide_accent: false,
             dim_accent: false,
             cwd: None,
+            locale: None,
         }
     }
 
@@ -84,8 +87,13 @@ impl<'a> EntryRenderer<'a> {
         self
     }
 
-    /// Suppress the block background band so the entry blends with the terminal's own background (minimal mode).
-    /// See [`Self::flat_background`].
+    pub fn with_locale(mut self, locale: Option<&'a crate::locale::LocaleContext>) -> Self {
+        self.locale = locale;
+        self
+    }
+
+    /// Suppress the block background band so the entry blends with the
+    /// terminal's own background (minimal mode). See [`Self::flat_background`].
     pub fn with_flat_background(mut self, flat: bool) -> Self {
         self.flat_background = flat;
         self
@@ -277,9 +285,24 @@ impl<'a> EntryRenderer<'a> {
             spans.extend(label.line.spans.iter().cloned());
         } else {
             let label = if self.group_collapse_header {
-                format!("{n} tool calls & thoughts")
+                self.locale
+                    .map(|locale| {
+                        locale
+                            .named_text(
+                                "scrollback.group.tool_calls_thoughts",
+                                "{count} tool calls & thoughts",
+                            )
+                            .replace("{count}", &n.to_string())
+                    })
+                    .unwrap_or_else(|| format!("{n} tool calls & thoughts"))
             } else {
-                format!("{n} more")
+                self.locale
+                    .map(|locale| {
+                        locale
+                            .named_text("scrollback.group.more", "{count} more")
+                            .replace("{count}", &n.to_string())
+                    })
+                    .unwrap_or_else(|| format!("{n} more"))
             };
             spans.push(ratatui::text::Span::styled(label, text_style));
         }
@@ -913,9 +936,10 @@ mod tests {
         renderer.render(area, &mut buf);
 
         // A stub is Expanded, so it keeps its rail. Collapsed rows are the ones that go bare.
-        assert_eq!(buf.cell((0, 0)).unwrap().symbol(), "┃");
-        assert_eq!(buf.cell((0, 1)).unwrap().symbol(), "┃");
-        assert_eq!(buf.cell((0, 2)).unwrap().symbol(), "┃");
+        let rail = crate::glyphs::accent_bar(); // "┃" normally, "│" on legacy ConHost
+        assert_eq!(buf.cell((0, 0)).unwrap().symbol(), rail);
+        assert_eq!(buf.cell((0, 1)).unwrap().symbol(), rail);
+        assert_eq!(buf.cell((0, 2)).unwrap().symbol(), rail);
 
         // Left padding at columns 1-2 (empty space)
         assert_eq!(buf.cell((1, 1)).unwrap().symbol(), " ");
@@ -951,9 +975,10 @@ mod tests {
             // Default layout: accent(1) + left_pad(2), so content starts at 3
             // Tool call header has no vpad, so bullet sits on row 0.
             let cell = buf.cell((3, 0)).unwrap();
+            let diamond = crate::glyphs::diamond_filled(); // "◆" normally, "♦" on legacy ConHost
             assert_eq!(
                 cell.symbol(),
-                "◆",
+                diamond,
                 "pending tool must keep the Diamond bullet at tick {tick}"
             );
             match first_fg {
@@ -983,7 +1008,10 @@ mod tests {
         let renderer = EntryRenderer::new(&entry, &theme).with_tick(7);
         renderer.render(area, &mut buf);
 
-        assert_eq!(buf.cell((3, 0)).unwrap().symbol(), "◆");
+        assert_eq!(
+            buf.cell((3, 0)).unwrap().symbol(),
+            crate::glyphs::diamond_filled()
+        );
     }
 
     /// Collect the symbols from a row range in the buffer into a String.

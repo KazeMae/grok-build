@@ -1,5 +1,11 @@
 # Getting Started
 
+> **Community build notice:** This is the unofficial Simplified Chinese
+> distribution. Its command is `grok`; it intentionally shares `~/.grok`
+> and `GROK_HOME` with the official executable so sessions, credentials, and
+> configuration remain identical. The official xAI installer does not install
+> or update the `grok` executable.
+
 Grok Build is a terminal-based AI coding assistant from SpaceXAI. It runs as a TUI (Terminal User Interface) that understands your codebase, executes shell commands, edits files, searches the web, and manages tasks.
 
 You can use it interactively as a full-screen TUI, run it headlessly for scripting and CI/CD, or integrate it into editors via the Agent Client Protocol (ACP).
@@ -8,31 +14,15 @@ You can use it interactively as a full-screen TUI, run it headlessly for scripti
 
 ## Installation
 
-Install the latest stable release (macOS, Linux, or Windows via Git Bash):
+Community packages are produced by this repository's Releases and documented
+preview build pipeline. The upstream `install.sh`,
+`install.ps1`, and `@xai-official/grok` package are intentionally not valid
+installers for this distribution.
 
-```bash
-curl -fsSL https://x.ai/cli/install.sh | bash
-```
-
-Install a specific version:
-
-```bash
-curl -fsSL https://x.ai/cli/install.sh | bash -s 0.1.42
-```
-
-On **Windows (PowerShell)**, use the native PowerShell installer:
-
-```powershell
-irm https://x.ai/cli/install.ps1 | iex
-```
-
-Install a specific version:
-
-```powershell
-$env:GROK_VERSION="0.1.42"; irm https://x.ai/cli/install.ps1 | iex
-```
-
-The PowerShell installer automatically adds `%USERPROFILE%\.grok\bin` to your User PATH. Alternatively, install via [Git for Windows](https://gitforwindows.org/) (Git Bash) or MSYS2 using the bash script above. WSL users get the Linux binary automatically.
+Every `release-v*` archive, including `release-v1.0.12-rc.1`, has one top-level
+directory named after the archive without its `.zip` or `.tar.gz` suffix. Enter
+that directory before running the bundled checksum verification and installer.
+The plain `v1.0.8` bridge is Windows-only and keeps the legacy flat ZIP layout.
 
 Verify the installation:
 
@@ -40,11 +30,13 @@ Verify the installation:
 grok --version
 ```
 
-Update to the latest version at any time:
-
-```bash
-grok update
-```
+Updater-enabled builds accept only the exact platform archive and checksum
+sidecar metadata from immutable Releases in this repository. They verify the
+GitHub SHA-256, safe archive layout, and the package's inner `SHA256SUMS.txt`,
+and never fall back to official xAI release channels. Background downloads are
+off by default: startup checks metadata and shows a notice, while `Ctrl+U`
+authorizes that one download and install. Existing raw-asset Windows builds
+require one manual ZIP installation to cross the ZIP-only bridge.
 
 To fetch a repository through Grove (NFS on macOS, FUSE on Linux) after
 `[clone] enabled = true` in Grove config:
@@ -69,7 +61,7 @@ Start Grok by running:
 grok
 ```
 
-On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
+On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions and are shared by `grok` and `grok`. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
 
 If you prefer API key authentication (e.g., for CI/CD or environments without a browser), set the `XAI_API_KEY` environment variable instead:
 
@@ -124,7 +116,7 @@ By default, Grok asks for permission before executing shell commands or editing 
 
 ### Sessions
 
-Every conversation is a **session**. Sessions are automatically saved to `~/.grok/sessions/` and can be resumed later. Each session tracks the full conversation history, tool calls, file edits, and task state.
+Every conversation is a **session**. Sessions are automatically saved to `~/.grok/sessions/`, shared by `grok` and `grok`, and can be resumed later. Each session tracks the full conversation history, tool calls, file edits, and task state.
 
 - Start a new session: `Ctrl+N` or `/new`
 - Resume a previous session: `/resume` in the TUI, or `--resume <ID>` from the CLI
@@ -199,7 +191,7 @@ grok --rules "Always use TypeScript. Prefer functional components."
 grok --yolo
 
 # Use a specific model
-grok -m grok-4.6
+grok -m grok-build
 
 # Resume a previous session
 grok --resume <session-id>

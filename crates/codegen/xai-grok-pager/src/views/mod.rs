@@ -22,6 +22,7 @@ pub mod jump;
 pub mod list_pane;
 pub(crate) mod location;
 pub mod managed_connectors_wait;
+pub(crate) mod managed_mcp_localization;
 pub mod mcps_modal;
 pub mod memory_modal;
 pub mod modal;
@@ -60,3 +61,57 @@ pub mod tutorial;
 pub mod usage_modal;
 pub mod welcome;
 pub mod workflows;
+
+/// Format a model name with its display-only reasoning-effort label. The model
+/// identifier and the canonical effort value stored in session state are never
+/// changed; only the label painted in the UI is localized.
+pub fn localized_model_name(
+    model_name: impl Into<String>,
+    reasoning_effort: Option<xai_grok_shell::sampling::types::ReasoningEffort>,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
+    let model_name = model_name.into();
+    let Some(effort) = reasoning_effort else {
+        return model_name;
+    };
+    let effort = effort.as_ref();
+    let label = locale
+        .map(|locale| {
+            locale
+                .named_text(&format!("reasoning_effort.{effort}.label"), effort)
+                .into_owned()
+        })
+        .unwrap_or_else(|| effort.to_owned());
+    format!("{model_name} ({label})")
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use super::*;
+    use crate::locale::{LocaleContext, LocaleSource, ResolvedLocale, UiLocale};
+    use xai_grok_shell::sampling::types::ReasoningEffort;
+
+    fn zh_locale() -> LocaleContext {
+        LocaleContext::new(ResolvedLocale {
+            locale: UiLocale::ZhCn,
+            source: LocaleSource::Cli,
+        })
+    }
+
+    #[test]
+    fn localization_regression_model_display_changes_only_effort_label() {
+        let locale = zh_locale();
+        assert_eq!(
+            localized_model_name("Grok 4.5", Some(ReasoningEffort::High), Some(&locale)),
+            "Grok 4.5 (高)"
+        );
+        assert_eq!(
+            localized_model_name("Grok 4.5", Some(ReasoningEffort::High), None),
+            "Grok 4.5 (high)"
+        );
+        assert_eq!(
+            localized_model_name("grok-4.5", None, Some(&locale)),
+            "grok-4.5"
+        );
+    }
+}

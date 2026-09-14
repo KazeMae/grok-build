@@ -255,7 +255,8 @@ pub(crate) async fn resume_session_into_worktree(
             .into(),
     );
     let started = std::time::Instant::now();
-    let resp = match acp_send_bounded(req, acp_tx, "Worktree session resume").await {
+    let locale = crate::locale::LocaleContext::default();
+    let resp = match acp_send_bounded(req, acp_tx, "Worktree session resume", &locale).await {
         Ok(resp) => {
             tracing::info!(
                 session_id,

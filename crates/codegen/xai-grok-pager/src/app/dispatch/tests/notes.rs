@@ -1215,6 +1215,31 @@ fn send_feedback_preserves_composer_draft() {
         },
         &mut app,
     );
+    if xai_grok_version::coding_data_retention_locked_opt_out() {
+        // Privacy build: retention is locked to opt-out, so the sharing
+        // write is refused — the report sends alone, nothing flips.
+        assert!(
+            app.coding_data_retention_opt_out,
+            "privacy build: opt-out must stay locked"
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::SetCodingDataSharing { .. })),
+            "privacy build: no sharing write may be issued: {effects:?}"
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::UploadFeedbackTrace { .. })),
+            "privacy build: no trace upload may leave the machine: {effects:?}"
+        );
+        assert!(
+            app.feedback_trace_upload_pending.is_none(),
+            "privacy build: no upload may be parked"
+        );
+        return;
+    }
     assert!(
         matches!(
             effects.as_slice(),

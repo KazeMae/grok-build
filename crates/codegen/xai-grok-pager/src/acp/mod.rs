@@ -8,7 +8,9 @@ pub mod spawn;
 mod subagent_message;
 pub mod tracker;
 mod version_mismatch;
-pub(crate) use version_mismatch::{is_version_mismatch_banner, version_mismatch_banner};
+pub(crate) use version_mismatch::{
+    is_version_mismatch_banner, version_mismatch_banner, version_mismatch_banner_with_locale,
+};
 /// Ext methods that carry a session-scoped update and may stamp `isReplay`.
 /// TUI dispatch, headless dispatch, and the session-load ACP barrier all share this list.
 /// A new method thus cannot be handled in one path and classified `Unrelated` in another.

@@ -6,6 +6,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use xai_grok_status_line::StatusLineContext;
 
+use crate::locale::LocaleContext;
 use crate::views::status_line::{MAX_STATUS_LINE_LINES, RowSize};
 
 use super::{RunId, RunOutcome, StatusLineRun, metrics};
@@ -17,8 +18,14 @@ const MAX_COMMAND_OUTPUT_BYTES: u64 = 64 * 1024;
 impl StatusLineRun {
     /// The id rides back with the row so a late result can be matched to the run that asked for it.
     pub(crate) async fn execute(self) -> (RunId, RunOutcome) {
-        let outcome =
-            run_status_command(&self.command, &self.ctx, self.term_size, COMMAND_TIMEOUT).await;
+        let outcome = run_status_command(
+            &self.command,
+            &self.ctx,
+            self.term_size,
+            COMMAND_TIMEOUT,
+            self.locale.as_ref(),
+        )
+        .await;
         (self.id, outcome)
     }
 }
@@ -28,6 +35,7 @@ async fn run_status_command(
     ctx: &StatusLineContext,
     term_size: RowSize,
     timeout: Duration,
+    locale: &LocaleContext,
 ) -> RunOutcome {
     let span = xai_grok_telemetry::region::Region::from_span(tracing::info_span!(
         "status_line.command_run",
@@ -48,9 +56,17 @@ async fn run_status_command(
             } else {
                 metrics::global().record_failed(elapsed_ms);
             }
+            let raw_error = error.to_string();
+            let display_error = localized_run_error(&error, locale);
+            let text = localized_template(
+                locale,
+                "status_line.error.wrapper",
+                "[status line: {error}]",
+                &[("error", display_error.as_str())],
+            );
             RunOutcome::Failed {
-                text: format!("[status line: {error}]"),
-                error: error.to_string(),
+                text,
+                error: raw_error,
             }
         }
     }
@@ -79,9 +95,93 @@ impl std::fmt::Display for RunError {
     }
 }
 
-/// Kills the run's process group unless the group is already empty.
-/// A group with a surviving member cannot have its id recycled, so signalling one is safe.
-/// An empty group is disarmed instead, which is the discipline `enroll` asks for to keep a reaped leader's id from being signalled later.
+fn localized_template(
+    locale: &LocaleContext,
+    id: &str,
+    english: &str,
+    arguments: &[(&str, &str)],
+) -> String {
+    let mut text = locale.named_text(id, english).into_owned();
+    for (name, value) in arguments {
+        text = text.replace(&format!("{{{name}}}"), value);
+    }
+    text
+}
+
+fn localized_run_error(error: &RunError, locale: &LocaleContext) -> String {
+    match error {
+        RunError::Spawn(error) => localized_template(
+            locale,
+            "status_line.error.spawn",
+            "could not start the script: {error}",
+            &[("error", error.to_string().as_str())],
+        ),
+        RunError::Wait(error) => localized_template(
+            locale,
+            "status_line.error.wait",
+            "could not wait for the script: {error}",
+            &[("error", error.to_string().as_str())],
+        ),
+        RunError::Json(error) => localized_template(
+            locale,
+            "status_line.error.json",
+            "could not encode Grok's payload: {error}",
+            &[("error", error.to_string().as_str())],
+        ),
+        RunError::TimedOut => locale
+            .named_text("status_line.error.timed_out", "timed out")
+            .into_owned(),
+        RunError::Exit(Some(code)) => localized_template(
+            locale,
+            "status_line.error.exit",
+            "exit {code}",
+            &[("code", code.to_string().as_str())],
+        ),
+        RunError::Exit(None) => locale
+            .named_text("status_line.error.signal", "killed by signal")
+            .into_owned(),
+    }
+}
+
+#[cfg(test)]
+mod localization_tests {
+    use super::*;
+
+    fn zh_locale() -> LocaleContext {
+        LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        })
+    }
+
+    #[test]
+    fn chinese_status_line_errors_preserve_dynamic_details() {
+        let locale = zh_locale();
+        assert_eq!(
+            localized_run_error(&RunError::Exit(Some(3)), &locale),
+            "退出 3"
+        );
+        let error = RunError::Spawn(std::io::Error::other("opaque OS detail"));
+        assert_eq!(
+            localized_run_error(&error, &locale),
+            "无法启动脚本：opaque OS detail"
+        );
+        assert_eq!(
+            localized_template(
+                &locale,
+                "status_line.error.wrapper",
+                "[status line: {error}]",
+                &[("error", "退出 3")],
+            ),
+            "[状态栏：退出 3]"
+        );
+    }
+}
+
+/// Kills the run's process group unless the group is already empty. A group
+/// with a surviving member cannot have its id recycled, so signalling one is
+/// safe; an empty group is disarmed instead, which is the discipline `enroll`
+/// asks for to keep a reaped leader's id from being signalled later.
 struct GroupGuard(Option<std::sync::Arc<xai_tty_utils::ProcessGroup>>);
 
 impl GroupGuard {

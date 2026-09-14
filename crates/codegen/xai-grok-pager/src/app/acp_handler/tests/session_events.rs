@@ -190,6 +190,38 @@
         }
     }
 
+    #[test]
+    fn zh_localization_rate_limit_retry_uses_scrollback_locale() {
+        let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Cli,
+        });
+        for (is_api_key, reason, expected) in [
+            (false, "", "你已达到当前套餐的速率限制。"),
+            (true, "", "你已达到团队 API 的速率限制。"),
+            (false, "Provider-specific retry detail.", "Provider-specific retry detail."),
+        ] {
+            let mut session = make_session(Some("s1"));
+            let mut scrollback = ScrollbackState::new();
+            scrollback.set_locale(&locale);
+            apply_retry_state(
+                &RetryState::Exhausted {
+                    attempts: 3,
+                    reason: reason.into(),
+                    is_rate_limited: true,
+                },
+                &mut session, &mut scrollback, is_api_key,
+            );
+            assert!(session.rate_limited);
+            match last_session_event(&scrollback) {
+                Some(SessionEvent::RetryFailed { error, .. }) => {
+                    assert!(error.starts_with(expected), "unexpected rate-limit display: {error}");
+                }
+                other => panic!("expected localized RetryFailed, got {other:?}"),
+            }
+        }
+    }
+
     /// Production `RetryState::Exhausted.reason` is `SamplingError::Api`'s Display: `API error (status 429 Too Many Requests): …`.
     #[test]
     fn retry_exhausted_rate_limited_surfaces_server_detail() {
@@ -847,6 +879,38 @@
         assert!(!apply_session_event(&update, &mut session, &mut scrollback, false));
     }
 
+    #[test]
+    fn apply_hook_annotation_preserves_structured_kind_for_replay() {
+        let mut session = make_session(Some("s1"));
+        let mut scrollback = ScrollbackState::new();
+        let update = XaiSessionUpdate::HookAnnotation {
+            message: "⚠ Prompt blocked by global/guard: provider reason".into(),
+            kind: Some(
+                xai_grok_shell::extensions::notification::HookAnnotationKind::PromptBlocked,
+            ),
+        };
+
+        assert!(apply_session_event(
+            &update,
+            &mut session,
+            &mut scrollback,
+            false
+        ));
+        let entry = scrollback.entries_mut().last().expect("entry pushed");
+        match &entry.block {
+            RenderBlock::SessionEvent(block) => assert!(matches!(
+                &block.event,
+                SessionEvent::HookAnnotation {
+                    kind: Some(
+                        xai_grok_shell::extensions::notification::HookAnnotationKind::PromptBlocked
+                    ),
+                    ..
+                }
+            )),
+            other => panic!("expected hook SessionEvent block, got {other:?}"),
+        }
+    }
+
     // ── handle_child_session_notification ──────────────────────────────
 
     #[test]
@@ -911,6 +975,60 @@
         assert_eq!(
             child_view.context_state.as_ref().map(|c| c.used),
             Some(95_000)
+        );
+    }
+
+    #[test]
+    fn child_hook_annotation_routes_to_live_child_scrollback() {
+        let mut agent = make_agent(Some("root-sess"));
+        let child_sid = "child-hook";
+        agent.insert_subagent_view(child_sid.into(), Box::new(make_agent(Some(child_sid))));
+        let update = XaiSessionUpdate::HookAnnotation {
+            message: "custom hook text".into(),
+            kind: None,
+        };
+
+        assert!(handle_child_session_notification(
+            update,
+            child_sid,
+            &mut agent,
+            false
+        ));
+        let child = agent.subagent_views.get_mut(child_sid).unwrap();
+        let entry = child
+            .scrollback
+            .entries_mut()
+            .last()
+            .expect("child entry pushed");
+        match &entry.block {
+            RenderBlock::SessionEvent(block) => assert!(matches!(
+                &block.event,
+                SessionEvent::HookAnnotation { message, kind: None }
+                    if message == "custom hook text"
+            )),
+            other => panic!("expected child hook SessionEvent block, got {other:?}"),
+        }
+
+        let visible_entry_count = child.scrollback.entries_mut().len();
+        agent.set_plugins_visible_recursive(false);
+        assert!(!handle_child_session_notification(
+            XaiSessionUpdate::HookAnnotation {
+                message: "hidden hook text".into(),
+                kind: None,
+            },
+            child_sid,
+            &mut agent,
+            false
+        ));
+        assert_eq!(
+            agent
+                .subagent_views
+                .get_mut(child_sid)
+                .unwrap()
+                .scrollback
+                .entries_mut()
+                .len(),
+            visible_entry_count
         );
     }
 

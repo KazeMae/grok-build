@@ -88,9 +88,21 @@ pub fn clamp_activity_subject(s: &str) -> String {
 ///
 /// Renders as `{subject}…` (no "Waiting for" prefix or quotes) so a description like `Wait 5 seconds` reads cleanly next to the spinner.
 pub fn format_waiting_for_subject(subject: &str) -> String {
+    format_waiting_for_subject_with_locale(subject, None)
+}
+
+pub fn format_waiting_for_subject_with_locale(
+    subject: &str,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
     let clamped = clamp_activity_subject(subject);
     if clamped.is_empty() {
-        "Waiting on task output…".to_string()
+        locale
+            .map(|locale| {
+                locale.named_static_text("turn.waiting.task_output", "Waiting on task output…")
+            })
+            .unwrap_or("Waiting on task output…")
+            .to_string()
     } else {
         format!("{clamped}…")
     }
@@ -110,24 +122,52 @@ impl WaitingReason {
     }
     /// User-facing spinner label.
     pub fn label(&self) -> String {
+        self.label_with_locale(None)
+    }
+
+    /// Localized user-facing spinner label. Task subjects remain verbatim.
+    pub fn label_with_locale(&self, locale: Option<&crate::locale::LocaleContext>) -> String {
+        let text = |id: &str, english: &'static str| {
+            locale
+                .map(|locale| locale.named_static_text(id, english))
+                .unwrap_or(english)
+                .to_string()
+        };
         match self {
-            Self::Model => "Waiting for response…".to_string(),
+            Self::Model => text("turn.waiting.response", "Waiting for response…"),
             Self::Subagent { display } => match display.as_deref().map(clamp_activity_subject) {
                 Some(display) if !display.is_empty() => format!("{display}…"),
-                _ => "Waiting on subagent…".to_string(),
+                _ => text("turn.waiting.subagent", "Waiting on subagent…"),
             },
             Self::TaskOutput {
                 subject: Some(subject),
                 ..
-            } => format_waiting_for_subject(subject),
-            Self::TaskOutput { .. } => "Waiting on task output…".to_string(),
-            Self::TasksComplete => "Waiting on tasks…".to_string(),
-            Self::Sleep => "Sleeping…".to_string(),
-            Self::Hooks { event_name, count } if *count > 1 => {
-                format!("Running {count} {event_name} hooks…")
-            }
-            Self::Hooks { event_name, .. } => format!("Running {event_name} hook…"),
-            Self::PromptAck => "Waiting for the agent to accept the prompt…".to_string(),
+            } => format_waiting_for_subject_with_locale(subject, locale),
+            Self::TaskOutput { .. } => text("turn.waiting.task_output", "Waiting on task output…"),
+            Self::TasksComplete => text("turn.waiting.tasks", "Waiting on tasks…"),
+            Self::Sleep => text("turn.waiting.sleep", "Sleeping…"),
+            Self::Hooks { event_name, count } if *count > 1 => locale
+                .map(|locale| {
+                    locale
+                        .named_text(
+                            "turn.waiting.hooks_plural",
+                            "Running {count} {event_name} hooks…",
+                        )
+                        .replace("{count}", &count.to_string())
+                        .replace("{event_name}", event_name)
+                })
+                .unwrap_or_else(|| format!("Running {count} {event_name} hooks…")),
+            Self::Hooks { event_name, .. } => locale
+                .map(|locale| {
+                    locale
+                        .named_text("turn.waiting.hooks_one", "Running {event_name} hook…")
+                        .replace("{event_name}", event_name)
+                })
+                .unwrap_or_else(|| format!("Running {event_name} hook…")),
+            Self::PromptAck => text(
+                "turn.waiting.prompt_ack",
+                "Waiting for the agent to accept the prompt…",
+            ),
         }
     }
     /// Short, stable snake_case label for telemetry / phase-transition logs.
@@ -163,49 +203,84 @@ pub struct WritingToolCall {
 impl WritingToolCall {
     /// User-facing spinner label.
     pub fn label(&self) -> String {
+        self.label_with_locale(None)
+    }
+
+    /// User-facing spinner label in the selected UI locale.
+    pub fn label_with_locale(&self, locale: Option<&crate::locale::LocaleContext>) -> String {
         let ordinal = match self.ordinal.get() {
             1 => String::new(),
             n => format!(" ({n})"),
         };
+        let text = |id: &str, english: &'static str| {
+            locale
+                .map(|locale| locale.named_static_text(id, english))
+                .unwrap_or(english)
+        };
+        let format_ordinal =
+            |id: &str, english: &'static str| text(id, english).replace("{ordinal}", &ordinal);
         match self.tool_name.as_deref() {
-            Some(name) if xai_grok_tools::is_task_tool_id(name) => {
-                format!("Writing subagent prompt{ordinal}…")
-            }
+            Some(name) if xai_grok_tools::is_task_tool_id(name) => format_ordinal(
+                "turn.writing.subagent_prompt",
+                "Writing subagent prompt{ordinal}…",
+            ),
             Some(xai_grok_tools::USE_TOOL_NAME) => {
-                format!("Preparing MCP tool{ordinal}…")
+                format_ordinal("turn.writing.mcp_tool", "Preparing MCP tool{ordinal}…")
             }
-            Some(xai_grok_tools::SEARCH_TOOL_NAME) => {
-                format!("Searching MCP tools{ordinal}…")
-            }
+            Some(xai_grok_tools::SEARCH_TOOL_NAME) => format_ordinal(
+                "turn.writing.search_mcp_tools",
+                "Searching MCP tools{ordinal}…",
+            ),
             Some(name) => {
                 use xai_grok_tools::types::tool::ToolKind;
                 let copy =
                     xai_grok_tools::tool_taxonomy::writing_tool_kind(name).and_then(|kind| {
                         match kind {
-                            ToolKind::Write => Some("Writing file"),
-                            ToolKind::Edit => Some("Writing edit"),
-                            ToolKind::Execute => Some("Writing command"),
-                            ToolKind::Plan => Some("Updating todo list"),
-                            ToolKind::Workflow => Some("Writing workflow"),
-                            ToolKind::Feedback => Some("Writing feedback draft"),
-                            ToolKind::ImageGen => Some("Writing image prompt"),
-                            ToolKind::ImageToVideo | ToolKind::ReferenceToVideo => {
-                                Some("Writing video prompt")
+                            ToolKind::Write => {
+                                Some(("turn.writing.file", "Writing file{ordinal}…"))
                             }
-                            ToolKind::AskUser => Some("Preparing question"),
+                            ToolKind::Edit => Some(("turn.writing.edit", "Writing edit{ordinal}…")),
+                            ToolKind::Execute => {
+                                Some(("turn.writing.command", "Writing command{ordinal}…"))
+                            }
+                            ToolKind::Plan => {
+                                Some(("turn.writing.todo", "Updating todo list{ordinal}…"))
+                            }
+                            ToolKind::Workflow => {
+                                Some(("turn.writing.workflow", "Writing workflow{ordinal}…"))
+                            }
+                            ToolKind::Feedback => {
+                                Some(("turn.writing.feedback", "Writing feedback draft{ordinal}…"))
+                            }
+                            ToolKind::ImageGen => Some((
+                                "turn.writing.image_prompt",
+                                "Writing image prompt{ordinal}…",
+                            )),
+                            ToolKind::ImageToVideo | ToolKind::ReferenceToVideo => Some((
+                                "turn.writing.video_prompt",
+                                "Writing video prompt{ordinal}…",
+                            )),
+                            ToolKind::AskUser => {
+                                Some(("turn.writing.question", "Preparing question{ordinal}…"))
+                            }
                             _ => None,
                         }
                     });
                 match copy {
-                    Some(copy) => format!("{copy}{ordinal}…"),
+                    Some((id, copy)) => format_ordinal(id, copy),
                     None => {
                         let name =
                             xai_grok_workspace::permission::mcp_pretty_name_if_qualified(name);
-                        format!("Preparing {}{ordinal}…", clamp_activity_subject(&name))
+                        text(
+                            "turn.writing.preparing_subject",
+                            "Preparing {subject}{ordinal}…",
+                        )
+                        .replace("{subject}", &clamp_activity_subject(&name))
+                        .replace("{ordinal}", &ordinal)
                     }
                 }
             }
-            None => format!("Preparing tool call{ordinal}…"),
+            None => format_ordinal("turn.writing.tool_call", "Preparing tool call{ordinal}…"),
         }
     }
 }
@@ -1325,7 +1400,11 @@ impl AcpUpdateTracker {
         if !is_completed {
             let defer_as_bg = if let Some(pending) = self.pending_tools.get_mut(&tc_id) {
                 let bash_output = extract_bash_output_from_value(&tcu.fields.raw_output);
+                let update_meta = tcu.meta.clone();
                 pending.base.update(tcu.fields);
+                if update_meta.is_some() {
+                    pending.base.meta = update_meta;
+                }
                 if pending.entry_id.is_none() && is_bg_tool(&pending.base) {
                     let desc = extract_raw_field(&pending.base, "description");
                     Some((tc_id.clone(), desc, false))
@@ -1682,6 +1761,7 @@ fn extract_cron_prompt_body(text: &str) -> Option<String> {
 /// Merge ToolCallUpdate fields with the base ToolCall.
 /// Update fields take precedence when present.
 fn merge_tool_call_update(base: acp::ToolCall, update: acp::ToolCallUpdate) -> acp::ToolCall {
+    let update_meta = update.meta;
     acp::ToolCall::new(
         update.tool_call_id,
         update.fields.title.unwrap_or(base.title),
@@ -1692,7 +1772,7 @@ fn merge_tool_call_update(base: acp::ToolCall, update: acp::ToolCallUpdate) -> a
     .raw_input(update.fields.raw_input.or(base.raw_input))
     .raw_output(update.fields.raw_output.or(base.raw_output))
     .locations(update.fields.locations.unwrap_or(base.locations))
-    .meta(base.meta)
+    .meta(update_meta.or(base.meta))
 }
 /// Peeled display form when a redundant leading `cd <cwd>` was stripped, else None.
 fn peeled_if_changed(command: &str, session_cwd: Option<&Path>) -> Option<String> {
@@ -2090,10 +2170,14 @@ fn tool_call_to_block(tc: &acp::ToolCall, session_cwd: Option<&Path>) -> RenderB
                 && let Ok(ToolOutput::SearchTool(SearchToolOutput {
                     result_count,
                     content,
+                    managed_gateway_tools,
                 })) = serde_json::from_value::<ToolOutput>(raw.clone())
             {
                 block.result_count = result_count;
-                block.results = parse_search_tool_results(&content);
+                block.results = parse_search_tool_results(
+                    &content,
+                    managed_gateway_tools.as_deref().unwrap_or_default(),
+                );
                 block.content = Some(content);
             }
             if !success {
@@ -2105,10 +2189,12 @@ fn tool_call_to_block(tc: &acp::ToolCall, session_cwd: Option<&Path>) -> RenderB
             let tool_name = extract_raw_field(tc, "tool_name").unwrap_or_else(|| tc.title.clone());
             let mut block = UseToolCallBlock::new(tool_name);
             block.input_args = extract_use_tool_args(tc);
+            let (extracted, managed_gateway_tool) = extract_use_tool_output(&tc.raw_output);
+            block.managed_gateway_tool = managed_gateway_tool;
             let text = content_text(tc);
             if !text.is_empty() {
                 block.output = Some(text);
-            } else if let Some(extracted) = extract_use_tool_output(&tc.raw_output) {
+            } else if let Some(extracted) = extracted {
                 block.output = Some(extracted);
             }
             if !success {
@@ -2755,7 +2841,10 @@ fn meta_summary(meta: &NotificationMeta) -> String {
 /// Parse the JSON content from a SearchToolOutput into DiscoveredTool entries.
 /// Results are grouped by server: `{"results": [{"server": "...", "tools": [...]}]}`.
 /// Each tool has `tool_name`, `description`, `score`, and `input_schema`.
-fn parse_search_tool_results(content: &str) -> Vec<DiscoveredTool> {
+fn parse_search_tool_results(
+    content: &str,
+    managed_gateway_tools: &[xai_grok_tools::types::resources::ManagedGatewayToolIdentity],
+) -> Vec<DiscoveredTool> {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(content) else {
         return Vec::new();
     };
@@ -2782,11 +2871,22 @@ fn parse_search_tool_results(content: &str) -> Vec<DiscoveredTool> {
                 .unwrap_or("")
                 .to_owned();
             let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let managed_gateway_tool = managed_gateway_tools
+                .iter()
+                .find(|identity| {
+                    identity.qualified_name == name
+                        && identity.connector_id == server
+                        && name.split_once("__").is_some_and(|(connector, tool_id)| {
+                            connector == identity.connector_id && tool_id == identity.tool_id
+                        })
+                })
+                .cloned();
             out.push(DiscoveredTool {
                 name: name.to_owned(),
                 server: server.clone(),
                 description,
                 score,
+                managed_gateway_tool,
             });
         }
     }
@@ -2795,25 +2895,37 @@ fn parse_search_tool_results(content: &str) -> Vec<DiscoveredTool> {
 /// Extract output text from a use_tool's raw_output.
 /// MCP tools don't put content in ACP content blocks; they only set raw_output.
 /// This extracts the text from ToolOutput::MCP, ToolOutput::Text, or ToolOutput::Dynamic variants.
-fn extract_use_tool_output(raw: &Option<serde_json::Value>) -> Option<String> {
-    let val = raw.as_ref()?;
+fn extract_use_tool_output(
+    raw: &Option<serde_json::Value>,
+) -> (
+    Option<String>,
+    Option<xai_grok_tools::types::resources::ManagedGatewayToolIdentity>,
+) {
+    let Some(val) = raw.as_ref() else {
+        return (None, None);
+    };
     if let Ok(output) = serde_json::from_value::<ToolOutput>(val.clone()) {
-        let text = match output {
+        let (text, managed_gateway_tool) = match output {
             ToolOutput::MCP(mcp) => {
                 use xai_grok_tools::types::output::MCPOutputDetails;
-                match mcp.output() {
+                let managed_gateway_tool = mcp.managed_gateway_tool().cloned();
+                let text = match mcp.output() {
                     MCPOutputDetails::OkayOutput(s) | MCPOutputDetails::Error(s) => s.clone(),
-                }
+                };
+                (text, managed_gateway_tool)
             }
-            ToolOutput::Text(text) => text.text,
+            ToolOutput::Text(text) => (text.text, None),
             ToolOutput::Dynamic(v) => {
-                return Some(serde_json::to_string_pretty(&v).unwrap_or_default());
+                return (
+                    Some(serde_json::to_string_pretty(&v).unwrap_or_default()),
+                    None,
+                );
             }
-            _ => return None,
+            _ => return (None, None),
         };
-        return Some(maybe_pretty_json(&text));
+        return (Some(maybe_pretty_json(&text)), managed_gateway_tool);
     }
-    val.as_str().map(maybe_pretty_json)
+    (val.as_str().map(maybe_pretty_json), None)
 }
 /// If the string is valid JSON, pretty-print it. Otherwise return as-is.
 fn maybe_pretty_json(s: &str) -> String {

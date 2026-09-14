@@ -7,23 +7,24 @@ use anyhow::{Result, bail};
 use clap::{Subcommand, ValueEnum};
 use xai_grok_shell::util::config::{McpServerConfig, McpServerTransportConfig};
 
+use crate::locale::LocaleContext;
 use crate::util::display_user_grok_path;
 
 const ADD_AFTER_HELP: &str = "\
-Examples:
-  # Add a stdio server (everything after -- is the server command)
+示例：
+  # 添加 stdio 服务器（-- 之后的内容均为服务器命令）
   grok mcp add xcode -- xcrun mcpbridge
 
-  # Add a stdio server with environment variables
+  # 添加带环境变量的 stdio 服务器
   grok mcp add postgres -e DATABASE_URL=postgres://localhost/mydb -- npx -y @modelcontextprotocol/server-postgres
 
-  # Add a remote HTTP server
+  # 添加远程 HTTP 服务器
   grok mcp add --transport http sentry https://mcp.sentry.dev/mcp
 
-  # Add a remote server with an authentication header
+  # 添加带身份验证请求头的远程服务器
   grok mcp add --transport http api https://mcp.example.com/mcp --header \"Authorization: Bearer YOUR_TOKEN\"
 
-  # Add to the project config (./.grok/config.toml) instead of ~/.grok/config.toml
+  # 写入项目配置（./.grok/config.toml），而不是 ~/.grok/config.toml
   grok mcp add --scope project github -- npx -y @modelcontextprotocol/server-github";
 
 #[derive(Debug, clap::Args, Clone)]
@@ -32,70 +33,83 @@ pub struct McpArgs {
     pub command: McpCommand,
 }
 
-/// Transport used to communicate with an MCP server.
+/// 与 MCP 服务器通信所使用的传输方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum McpTransport {
-    /// Launch a local process and communicate over stdin/stdout
+    /// 启动本地进程并通过 stdin/stdout 通信
     Stdio,
-    /// Connect to a remote server over streamable HTTP
+    /// 通过流式 HTTP 连接远程服务器
     Http,
-    /// Connect to a remote server over Server-Sent Events
+    /// 通过 Server-Sent Events 连接远程服务器
     Sse,
 }
 
-/// Which config file an MCP server definition is written to.
+/// MCP 服务器定义要写入的配置文件范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum McpScope {
-    /// `~/.grok/config.toml`, available in all your projects
+    /// `~/.grok/config.toml`，可用于你的所有项目
     User,
-    /// `./.grok/config.toml`, shared with everyone working in this directory
+    /// `./.grok/config.toml`，与此目录中的所有协作者共享
     Project,
 }
 
-impl McpScope {
-    fn label(self) -> &'static str {
-        match self {
-            McpScope::User => "user",
-            McpScope::Project => "project",
-        }
+fn localized_mcp_template(
+    locale: &LocaleContext,
+    id: &str,
+    english: &str,
+    replacements: &[(&str, &str)],
+) -> String {
+    let mut text = locale.named_text(id, english).into_owned();
+    for (placeholder, value) in replacements {
+        text = text.replace(placeholder, value);
+    }
+    text
+}
+
+fn scope_display_label(locale: &LocaleContext, scope: McpScope) -> String {
+    match scope {
+        McpScope::User => locale.named_text("mcp.scope.user", "user").into_owned(),
+        McpScope::Project => locale
+            .named_text("mcp.scope.project", "project")
+            .into_owned(),
     }
 }
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum McpCommand {
-    /// List configured MCP servers
+    /// 列出已配置的 MCP 服务器
     List {
-        /// Emit machine-readable JSON output
+        /// 输出机器可读的 JSON
         #[arg(long)]
         json: bool,
     },
-    /// Add or update an MCP server
+    /// 添加或更新 MCP 服务器
     Add(AddArgs),
-    /// Remove an MCP server
+    /// 移除 MCP 服务器
     Remove {
-        /// Server name to remove
+        /// 要移除的服务器名称
         name: String,
 
-        /// Config to remove from. When omitted, all scopes are searched.
+        /// 从指定配置范围移除；省略时搜索所有范围。
         #[arg(short = 's', long, value_enum)]
         scope: Option<McpScope>,
     },
-    /// Enable an MCP server
+    /// 启用 MCP 服务器
     Enable {
-        /// Server name
+        /// 服务器名称
         name: String,
     },
-    /// Disable an MCP server
+    /// 禁用 MCP 服务器
     Disable {
-        /// Server name
+        /// 服务器名称
         name: String,
     },
-    /// Diagnose MCP server configuration and connectivity
+    /// 诊断 MCP 服务器配置和连接
     Doctor {
-        /// Emit machine-readable JSON output
+        /// 输出机器可读的 JSON
         #[arg(long)]
         json: bool,
-        /// Server name to check
+        /// 要检查的服务器名称
         name: Option<String>,
     },
 }
@@ -104,31 +118,31 @@ pub enum McpCommand {
 #[derive(Debug, clap::Args, Clone)]
 #[command(after_help = ADD_AFTER_HELP)]
 pub struct AddArgs {
-    /// Server name
+    /// 服务器名称
     name: String,
 
-    /// Command to launch (stdio) or URL to connect to (http, sse)
+    /// 要启动的命令（stdio）或要连接的 URL（http、sse）
     #[arg(value_name = "COMMAND_OR_URL", group = "source")]
     command_or_url: Option<String>,
 
-    /// Arguments passed to the server command.
-    /// Place them after `--` so flags such as `-y` are passed to the server instead of grok.
+    /// 传给服务器命令的参数。请放在 `--` 之后，使 `-y` 等参数传给
+    /// 服务器而不是 grok。
     #[arg(value_name = "ARGS")]
     args: Vec<String>,
 
-    /// Transport type. Defaults to stdio, or to http when the positional argument is an http(s):// URL.
+    /// 传输类型。默认为 stdio；若位置参数是裸 http(s):// URL，则推断为 http。
     #[arg(short = 't', long, value_enum)]
     transport: Option<McpTransport>,
 
-    /// Config to write to: user (~/.grok/config.toml) or project (./.grok/config.toml)
+    /// 写入范围：用户配置（~/.grok/config.toml）或项目配置（./.grok/config.toml）
     #[arg(short = 's', long, value_enum, default_value = "user")]
     scope: McpScope,
 
-    /// Environment variable for the server process (repeatable)
+    /// 服务器进程的环境变量（可重复指定）
     #[arg(short = 'e', long = "env", value_name = "KEY=value")]
     env: Vec<String>,
 
-    /// HTTP header for remote servers (repeatable)
+    /// 远程服务器的 HTTP 请求头（可重复指定）
     #[arg(short = 'H', long = "header", value_name = "NAME: VALUE")]
     header: Vec<String>,
 
@@ -147,18 +161,23 @@ pub struct AddArgs {
 }
 
 pub async fn run(mcp_args: McpArgs) -> Result<()> {
+    run_with_locale(mcp_args, &LocaleContext::default()).await
+}
+
+pub async fn run_with_locale(mcp_args: McpArgs, locale: &LocaleContext) -> Result<()> {
     match mcp_args.command {
-        McpCommand::List { json } => run_list(json),
-        McpCommand::Add(args) => run_add(args).await,
-        McpCommand::Remove { name, scope } => run_remove(&name, scope).await,
-        McpCommand::Enable { name } => run_set_enabled(&name, true).await,
-        McpCommand::Disable { name } => run_set_enabled(&name, false).await,
-        McpCommand::Doctor { json, name } => run_doctor(json, name).await,
+        McpCommand::List { json } => run_list(json, locale),
+        McpCommand::Add(args) => run_add(args, locale).await,
+        McpCommand::Remove { name, scope } => run_remove(&name, scope, locale).await,
+        McpCommand::Enable { name } => run_set_enabled(&name, true, locale).await,
+        McpCommand::Disable { name } => run_set_enabled(&name, false, locale).await,
+        McpCommand::Doctor { json, name } => run_doctor(json, name, locale).await,
     }
 }
 
-fn run_list(json: bool) -> Result<()> {
-    // Include project-scoped servers (nearest definition wins), matching what a session started in this directory would load from config.toml files
+fn run_list(json: bool, locale: &LocaleContext) -> Result<()> {
+    // Include project-scoped servers (nearest definition wins), matching what
+    // a session started in this directory would load from config.toml files.
     let cwd = current_dir_or_exit();
     let servers = xai_grok_shell::util::config::load_mcp_server_configs_with_project(&cwd);
     let disabled = xai_grok_shell::util::config::disabled_mcp_server_names(&cwd);
@@ -190,7 +209,13 @@ fn run_list(json: bool) -> Result<()> {
             .collect();
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else if servers.is_empty() {
-        println!("No MCP servers configured. Run `grok mcp add --help` to get started.");
+        println!(
+            "{}",
+            locale.named_text(
+                "mcp.list.empty",
+                "No MCP servers configured. Run `grok mcp add --help` to get started."
+            )
+        );
     } else {
         for (name, (config, scope)) in &servers {
             let transport = match &config.transport {
@@ -205,13 +230,28 @@ fn run_list(json: bool) -> Result<()> {
             };
             let mut notes = Vec::new();
             if blocked.contains_key(name) {
-                notes.push("blocked by organization policy");
+                notes.push(
+                    locale
+                        .named_text(
+                            "mcp.list.blocked_by_policy",
+                            "blocked by organization policy",
+                        )
+                        .into_owned(),
+                );
             }
             if disabled.contains(name) {
-                notes.push("disabled");
+                notes.push(
+                    locale
+                        .named_text("mcp.list.disabled", "disabled")
+                        .into_owned(),
+                );
             }
             if *scope == "project" {
-                notes.push("project");
+                notes.push(
+                    locale
+                        .named_text("mcp.list.project", "project")
+                        .into_owned(),
+                );
             }
             let suffix = if notes.is_empty() {
                 String::new()
@@ -232,8 +272,8 @@ struct ResolvedAdd {
     warnings: Vec<String>,
 }
 
-async fn run_add(args: AddArgs) -> Result<()> {
-    let resolved = resolve_add(&args)?;
+async fn run_add(args: AddArgs, locale: &LocaleContext) -> Result<()> {
+    let resolved = resolve_add_with_locale(&args, locale)?;
     for warning in &resolved.warnings {
         eprintln!("{warning}");
     }
@@ -255,11 +295,23 @@ async fn run_add(args: AddArgs) -> Result<()> {
                 rendered.push(' ');
                 rendered.push_str(&cmd_args.join(" "));
             }
-            format!("{kind} MCP server '{name}' with command: {rendered}")
+            localized_mcp_template(
+                locale,
+                "mcp.add.summary_command",
+                "{kind} MCP server '{name}' with command: {rendered}",
+                &[
+                    ("{kind}", kind),
+                    ("{name}", name),
+                    ("{rendered}", &rendered),
+                ],
+            )
         }
-        McpServerTransportConfig::StreamableHttp { url, .. } => {
-            format!("{kind} MCP server '{name}' with URL: {url}")
-        }
+        McpServerTransportConfig::StreamableHttp { url, .. } => localized_mcp_template(
+            locale,
+            "mcp.add.summary_url",
+            "{kind} MCP server '{name}' with URL: {url}",
+            &[("{kind}", kind), ("{name}", name), ("{url}", url)],
+        ),
     };
 
     let config = McpServerConfig {
@@ -289,8 +341,26 @@ async fn run_add(args: AddArgs) -> Result<()> {
 
     let path = scope_target(args.scope);
     xai_grok_shell::util::config::save_mcp_server_config_at(&path, name, &config).await?;
-    println!("Added {summary} to {} config", args.scope.label());
-    println!("File modified: {}", scope_display(args.scope, &path));
+    let scope_label = scope_display_label(locale, args.scope);
+    println!(
+        "{}",
+        localized_mcp_template(
+            locale,
+            "mcp.add.added_to_config",
+            "Added {summary} to {scope} config",
+            &[("{summary}", &summary), ("{scope}", &scope_label)],
+        )
+    );
+    let display_path = scope_display(args.scope, &path);
+    println!(
+        "{}",
+        localized_mcp_template(
+            locale,
+            "mcp.file_modified",
+            "File modified: {path}",
+            &[("{path}", &display_path)],
+        )
+    );
     Ok(())
 }
 
@@ -298,7 +368,11 @@ async fn run_add(args: AddArgs) -> Result<()> {
 /// An explicit transport flag fully determines how `command_or_url` is interpreted.
 /// Without one, a bare positional http(s):// URL is inferred to be an HTTP server; other URL-looking commands stay stdio with a warning.
 fn resolve_add(args: &AddArgs) -> Result<ResolvedAdd> {
-    validate_server_name(&args.name)?;
+    resolve_add_with_locale(args, &LocaleContext::default())
+}
+
+fn resolve_add_with_locale(args: &AddArgs, locale: &LocaleContext) -> Result<ResolvedAdd> {
+    validate_server_name(&args.name, locale)?;
 
     // Extra args or --env mean the user is describing a command, and the legacy --command/--url flags keep their own rules
     // Only a bare positional http(s):// URL therefore triggers inference
@@ -326,11 +400,21 @@ fn resolve_add(args: &AddArgs) -> Result<ResolvedAdd> {
     // Legacy-flag misroutes: --url always means a remote server, and --type only modifies --url
     if args.url.is_some() && transport == McpTransport::Stdio {
         bail!(
-            "--url cannot be combined with --transport stdio. For a remote server, use --transport http or --transport sse."
+            "{}",
+            locale.named_text(
+                "mcp.error.url_with_stdio",
+                "--url cannot be combined with --transport stdio. For a remote server, use --transport http or --transport sse."
+            )
         );
     }
     if args.transport_type.is_some() && args.url.is_none() {
-        bail!("--type is only valid together with --url. Use --transport to choose the transport.");
+        bail!(
+            "{}",
+            locale.named_text(
+                "mcp.error.type_without_url",
+                "--type is only valid together with --url. Use --transport to choose the transport."
+            )
+        );
     }
 
     let server_args = if args.command.is_some() {
@@ -349,11 +433,21 @@ fn resolve_add(args: &AddArgs) -> Result<ResolvedAdd> {
         McpTransport::Stdio => {
             let Some(command) = source else {
                 bail!(
-                    "A command is required for stdio servers. Usage: grok mcp add <name> -- <command> [args...]"
+                    "{}",
+                    locale.named_text(
+                        "mcp.error.command_required",
+                        "A command is required for stdio servers. Usage: grok mcp add <name> -- <command> [args...]"
+                    )
                 );
             };
             if !args.header.is_empty() {
-                bail!("--header can only be used with HTTP or SSE servers.");
+                bail!(
+                    "{}",
+                    locale.named_text(
+                        "mcp.error.header_stdio",
+                        "--header can only be used with HTTP or SSE servers."
+                    )
+                );
             }
             // A KEY=value command means an env pair leaked out of -e, which takes one pair per flag (the old --env was greedy)
             if looks_like_env_pair(command) {
@@ -364,12 +458,18 @@ fn resolve_add(args: &AddArgs) -> Result<ResolvedAdd> {
                     .chain([command])
                     .map(|pair| format!("-e {pair}"))
                     .collect();
+                let pairs = pairs.join(" ");
                 bail!(
-                    "Invalid command '{command}': it looks like an environment variable. Pass each variable as its own flag: {}",
-                    pairs.join(" ")
+                    "{}",
+                    localized_mcp_template(
+                        locale,
+                        "mcp.error.command_looks_env",
+                        "Invalid command '{command}': it looks like an environment variable. Pass each variable as its own flag: {pairs}",
+                        &[("{command}", command), ("{pairs}", &pairs)],
+                    )
                 );
             }
-            let env = parse_env_vars(&args.env)?;
+            let env = parse_env_vars(&args.env, locale)?;
 
             let mut warnings = Vec::new();
             if !explicit_transport && looks_like_url(command) {
@@ -380,9 +480,15 @@ fn resolve_add(args: &AddArgs) -> Result<ResolvedAdd> {
                     } else {
                         format!("http://{command}")
                     };
-                warnings.push(format!(
-                    "Warning: '{command}' looks like a URL, but it is being added as a stdio command because --transport was not specified.\nFor a remote server, use: grok mcp add --transport http {} {suggested_url}",
-                    args.name
+                warnings.push(localized_mcp_template(
+                    locale,
+                    "mcp.warning.url_as_stdio",
+                    "Warning: '{command}' looks like a URL, but it is being added as a stdio command because --transport was not specified.\nFor a remote server, use: grok mcp add --transport http {name} {suggested_url}",
+                    &[
+                        ("{command}", command),
+                        ("{name}", &args.name),
+                        ("{suggested_url}", &suggested_url),
+                    ],
                 ));
             }
 
@@ -405,27 +511,56 @@ fn resolve_add(args: &AddArgs) -> Result<ResolvedAdd> {
             };
             let Some(url) = source else {
                 bail!(
-                    "A URL is required for {label} servers. Usage: grok mcp add --transport {label} <name> <url>"
+                    "{}",
+                    localized_mcp_template(
+                        locale,
+                        "mcp.error.url_required",
+                        "A URL is required for {label} servers. Usage: grok mcp add --transport {label} <name> <url>",
+                        &[("{label}", label)],
+                    )
                 );
             };
             if !url.starts_with("http://") && !url.starts_with("https://") {
-                bail!("Invalid URL '{url}'. Server URLs must start with http:// or https://.");
+                bail!(
+                    "{}",
+                    localized_mcp_template(
+                        locale,
+                        "mcp.error.invalid_url",
+                        "Invalid URL '{url}'. Server URLs must start with http:// or https://.",
+                        &[("{url}", url)],
+                    )
+                );
             }
             if !server_args.is_empty() {
+                let args = server_args.join(" ");
                 bail!(
-                    "Unexpected arguments after the URL: '{}'. HTTP and SSE servers take a single URL.",
-                    server_args.join(" ")
+                    "{}",
+                    localized_mcp_template(
+                        locale,
+                        "mcp.error.unexpected_args",
+                        "Unexpected arguments after the URL: '{args}'. HTTP and SSE servers take a single URL.",
+                        &[("{args}", &args)],
+                    )
                 );
             }
             if !args.env.is_empty() {
-                bail!("--env can only be used with stdio servers.");
+                bail!(
+                    "{}",
+                    locale.named_text(
+                        "mcp.error.env_remote",
+                        "--env can only be used with stdio servers."
+                    )
+                );
             }
-            let headers = parse_headers(&args.header)?;
+            let headers = parse_headers(&args.header, locale)?;
 
             let mut warnings = Vec::new();
             if inferred_http {
-                warnings.push(format!(
-                    "No --transport given; '{url}' starts with http(s)://, adding as an HTTP server. Use --transport sse for an SSE server, or --transport stdio to force a stdio command."
+                warnings.push(localized_mcp_template(
+                    locale,
+                    "mcp.warning.inferred_http",
+                    "No --transport given; '{url}' starts with http(s)://, adding as an HTTP server. Use --transport sse for an SSE server, or --transport stdio to force a stdio command.",
+                    &[("{url}", url)],
                 ));
             }
 
@@ -446,20 +581,26 @@ fn resolve_add(args: &AddArgs) -> Result<ResolvedAdd> {
     }
 }
 
-fn validate_server_name(name: &str) -> Result<()> {
+fn validate_server_name(name: &str, locale: &LocaleContext) -> Result<()> {
     if name.is_empty()
         || !name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         bail!(
-            "Invalid name '{name}'. Names can only contain letters, numbers, hyphens, and underscores."
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.error.invalid_name",
+                "Invalid name '{name}'. Names can only contain letters, numbers, hyphens, and underscores.",
+                &[("{name}", name)],
+            )
         );
     }
     Ok(())
 }
 
-fn parse_env_vars(pairs: &[String]) -> Result<HashMap<String, String>> {
+fn parse_env_vars(pairs: &[String], locale: &LocaleContext) -> Result<HashMap<String, String>> {
     let mut env = HashMap::new();
     for pair in pairs {
         match pair.split_once('=') {
@@ -467,22 +608,44 @@ fn parse_env_vars(pairs: &[String]) -> Result<HashMap<String, String>> {
                 env.insert(key.to_string(), value.to_string());
             }
             _ => bail!(
-                "Invalid environment variable format: '{pair}'. Environment variables should be added as: -e KEY1=value1 -e KEY2=value2"
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.error.invalid_env",
+                    "Invalid environment variable format: '{pair}'. Environment variables should be added as: -e KEY1=value1 -e KEY2=value2",
+                    &[("{pair}", pair)],
+                )
             ),
         }
     }
     Ok(env)
 }
 
-fn parse_headers(headers: &[String]) -> Result<HashMap<String, String>> {
+fn parse_headers(headers: &[String], locale: &LocaleContext) -> Result<HashMap<String, String>> {
     let mut parsed = HashMap::new();
     for header in headers {
         let Some((name, value)) = header.split_once(':') else {
-            bail!("Invalid header format: '{header}'. Expected format: 'Name: value'");
+            bail!(
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.error.invalid_header_format",
+                    "Invalid header format: '{header}'. Expected format: 'Name: value'",
+                    &[("{header}", header)],
+                )
+            );
         };
         let name = name.trim();
         if name.is_empty() {
-            bail!("Invalid header: '{header}'. Header name cannot be empty.");
+            bail!(
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.error.empty_header_name",
+                    "Invalid header: '{header}'. Header name cannot be empty.",
+                    &[("{header}", header)],
+                )
+            );
         }
         parsed.insert(name.to_string(), value.trim().to_string());
     }
@@ -611,27 +774,60 @@ fn available_mcp_server_names(cwd: &Path) -> Vec<String> {
     names
 }
 
-async fn run_set_enabled(name: &str, enabled: bool) -> Result<()> {
-    // Do not use validate_server_name (add-only: [A-Za-z0-9_-])
-    // Enable/disable also targets compat/plugin names that may contain dots or other keys
+async fn run_set_enabled(name: &str, enabled: bool, locale: &LocaleContext) -> Result<()> {
+    // Do not use validate_server_name (add-only: [A-Za-z0-9_-]). Enable/disable
+    // also targets compat/plugin names that may contain dots or other keys.
     if name.is_empty() {
-        bail!("Server name cannot be empty.");
+        bail!(
+            "{}",
+            locale.named_text(
+                "mcp.error.empty_server_name",
+                "Server name cannot be empty."
+            )
+        );
     }
     if is_gateway_cli_toggle_name(name) {
         eprintln!(
-            "Gateway connectors (e.g. managed_gateway:…) cannot be toggled via CLI; use Space in /mcps."
+            "{}",
+            locale.named_text(
+                "mcp.gateway.toggle_denied",
+                "Gateway connectors (e.g. managed_gateway:…) cannot be toggled via CLI; use Space in /mcps."
+            )
         );
         std::process::exit(1);
     }
     let cwd = current_dir_or_exit();
 
     if !mcp_server_is_known(name, &cwd) {
-        eprintln!("No MCP server named '{name}'.");
+        eprintln!(
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.error.server_missing",
+                "No MCP server named '{name}'.",
+                &[("{name}", name)],
+            )
+        );
         let available = available_mcp_server_names(&cwd);
         if !available.is_empty() {
-            eprintln!("Available servers: {}", available.join(", "));
+            let names = available.join(", ");
+            eprintln!(
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.available_servers",
+                    "Available servers: {names}",
+                    &[("{names}", &names)],
+                )
+            );
         } else {
-            eprintln!("No MCP servers configured. Run `grok mcp add --help` to get started.");
+            eprintln!(
+                "{}",
+                locale.named_text(
+                    "mcp.list.empty",
+                    "No MCP servers configured. Run `grok mcp add --help` to get started."
+                )
+            );
         }
         std::process::exit(1);
     }
@@ -665,36 +861,76 @@ async fn run_set_enabled(name: &str, enabled: bool) -> Result<()> {
 
     if enabled && now_disabled {
         eprintln!(
-            "Warning: '{name}' is still disabled after enable (check project-scoped config)."
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.warning.enable_still_disabled",
+                "Warning: '{name}' is still disabled after enable (check project-scoped config).",
+                &[("{name}", name)],
+            )
         );
         std::process::exit(1);
     }
     if !enabled && !now_disabled {
-        eprintln!("Warning: '{name}' is still enabled after disable.");
+        eprintln!(
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.warning.disable_still_enabled",
+                "Warning: '{name}' is still enabled after disable.",
+                &[("{name}", name)],
+            )
+        );
         std::process::exit(1);
     }
 
     if enabled {
-        println!("Enabled MCP server '{name}'.");
+        println!(
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.state.enabled",
+                "Enabled MCP server '{name}'.",
+                &[("{name}", name)],
+            )
+        );
     } else {
-        println!("Disabled MCP server '{name}'.");
+        println!(
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.state.disabled",
+                "Disabled MCP server '{name}'.",
+                &[("{name}", name)],
+            )
+        );
     }
 
     let user_config = xai_grok_shell::util::config::user_config_path();
     for path in &modified {
-        if path == &user_config {
-            println!(
-                "File modified: {}",
-                display_user_grok_path(xai_grok_config::USER_CONFIG_FILENAME)
-            );
+        let display_path = if path == &user_config {
+            display_user_grok_path("config.toml")
         } else {
-            println!("File modified: {}", path.display());
-        }
+            path.display().to_string()
+        };
+        println!(
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.file_modified",
+                "File modified: {path}",
+                &[("{path}", &display_path)],
+            )
+        );
     }
     Ok(())
 }
 
-async fn run_remove(name: &str, requested_scope: Option<McpScope>) -> Result<()> {
+async fn run_remove(
+    name: &str,
+    requested_scope: Option<McpScope>,
+    locale: &LocaleContext,
+) -> Result<()> {
     use xai_grok_shell::util::config::{
         delete_mcp_server_config_at, mcp_server_defined_at, user_config_path,
     };
@@ -714,18 +950,64 @@ async fn run_remove(name: &str, requested_scope: Option<McpScope>) -> Result<()>
     {
         Ok(site) => site,
         Err(RemoveError::NotFound) => {
-            let searched = requested_scope.map_or("user or project", McpScope::label);
-            eprintln!("No MCP server named '{name}' in {searched} config");
+            let searched = requested_scope.map_or_else(
+                || {
+                    locale
+                        .named_text("mcp.scope.user_or_project", "user or project")
+                        .into_owned()
+                },
+                |scope| scope_display_label(locale, scope),
+            );
+            eprintln!(
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.error.remove_missing",
+                    "No MCP server named '{name}' in {scope} config",
+                    &[("{name}", name), ("{scope}", &searched)],
+                )
+            );
             std::process::exit(1);
         }
         Err(RemoveError::Ambiguous { project_path }) => {
-            eprintln!("MCP server '{name}' exists in multiple scopes:");
             eprintln!(
-                "  user: {}",
-                display_user_grok_path(xai_grok_config::USER_CONFIG_FILENAME)
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.remove.ambiguous",
+                    "MCP server '{name}' exists in multiple scopes:",
+                    &[("{name}", name)],
+                )
             );
-            eprintln!("  project: {}", project_path.display());
-            eprintln!("Specify which one to remove, e.g.: grok mcp remove {name} --scope project");
+            let user_path = display_user_grok_path("config.toml");
+            eprintln!(
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.remove.user_path",
+                    "  user: {path}",
+                    &[("{path}", &user_path)],
+                )
+            );
+            let project_path = project_path.display().to_string();
+            eprintln!(
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.remove.project_path",
+                    "  project: {path}",
+                    &[("{path}", &project_path)],
+                )
+            );
+            eprintln!(
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.remove.choose_scope",
+                    "Specify which one to remove, e.g.: grok mcp remove {name} --scope project",
+                    &[("{name}", name)],
+                )
+            );
             std::process::exit(1);
         }
     };
@@ -733,37 +1015,87 @@ async fn run_remove(name: &str, requested_scope: Option<McpScope>) -> Result<()>
     let existed = delete_mcp_server_config_at(&path, name).await?;
     if !existed {
         // Race guard: the entry vanished between the existence check and the delete.
-        eprintln!("No MCP server named '{name}' in {} config", scope.label());
+        let scope_label = scope_display_label(locale, scope);
+        eprintln!(
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.error.remove_missing",
+                "No MCP server named '{name}' in {scope} config",
+                &[("{name}", name), ("{scope}", &scope_label)],
+            )
+        );
         std::process::exit(1);
     }
 
-    println!("Removed MCP server '{name}' from {} config", scope.label());
-    println!("File modified: {}", scope_display(scope, &path));
+    let scope_label = scope_display_label(locale, scope);
+    println!(
+        "{}",
+        localized_mcp_template(
+            locale,
+            "mcp.remove.success",
+            "Removed MCP server '{name}' from {scope} config",
+            &[("{name}", name), ("{scope}", &scope_label)],
+        )
+    );
+    let display_path = scope_display(scope, &path);
+    println!(
+        "{}",
+        localized_mcp_template(
+            locale,
+            "mcp.file_modified",
+            "File modified: {path}",
+            &[("{path}", &display_path)],
+        )
+    );
 
     // A scoped delete can leave the name defined in the other scope or an ancestor .grok/config.toml, where it still resolves for sessions
     let still_user_defined = mcp_server_defined_at(&user_config_path(), name);
     if let Some((survivor_scope, remaining)) =
         surviving_definition(still_user_defined, find_project_site())
     {
+        let remaining = scope_display(survivor_scope, &remaining);
         eprintln!(
-            "note: '{name}' is still defined in {}",
-            scope_display(survivor_scope, &remaining)
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.remove.note_survivor",
+                "note: '{name}' is still defined in {path}",
+                &[("{name}", name), ("{path}", &remaining)],
+            )
         );
     }
 
     Ok(())
 }
 
-async fn run_doctor(json: bool, name: Option<String>) -> Result<()> {
+async fn run_doctor(json: bool, name: Option<String>, locale: &LocaleContext) -> Result<()> {
     let cwd = current_dir_or_exit();
     let report = xai_grok_shell::mcp_doctor::run_doctor(&cwd, name.as_deref()).await;
 
     if let Some(ref filter) = name
         && report.servers.is_empty()
     {
-        eprintln!("MCP server '{}' not found.", filter);
+        eprintln!(
+            "{}",
+            localized_mcp_template(
+                locale,
+                "mcp.doctor.missing",
+                "MCP server '{name}' not found.",
+                &[("{name}", filter)],
+            )
+        );
         if !report.all_server_names.is_empty() {
-            eprintln!("Available servers: {}", report.all_server_names.join(", "));
+            let names = report.all_server_names.join(", ");
+            eprintln!(
+                "{}",
+                localized_mcp_template(
+                    locale,
+                    "mcp.available_servers",
+                    "Available servers: {names}",
+                    &[("{names}", &names)],
+                )
+            );
         }
         std::process::exit(1);
     }

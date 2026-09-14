@@ -13,11 +13,31 @@ fn context() -> StatusLineContext {
 }
 
 fn plain(ctx: &StatusLineContext, turn_elapsed: Option<Duration>) -> String {
-    compose_builtin(ctx, turn_elapsed, StatusLineItem::ALL)
+    plain_with_locale(ctx, turn_elapsed, None)
+}
+
+fn plain_with_locale(
+    ctx: &StatusLineContext,
+    turn_elapsed: Option<Duration>,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
+    compose_builtin(ctx, turn_elapsed, StatusLineItem::ALL, locale)
         .iter()
         .map(|s| s.text.as_str())
         .collect::<Vec<_>>()
         .join(SEGMENT_SEPARATOR)
+}
+
+#[test]
+fn chinese_localizes_static_units_and_preserves_dynamic_values() {
+    let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    assert_eq!(
+        plain_with_locale(&context(), Some(Duration::from_secs(83)), Some(&locale)),
+        "project │ Grok Build │ 42% 上下文 │ $0.37 │ 1分23秒 │ status_line work"
+    );
 }
 
 #[test]
@@ -41,14 +61,14 @@ fn omits_segments_whose_data_is_missing_or_rounds_to_zero() {
     assert!(plain(&ctx, None).contains("$0.01"));
 
     ctx.context_window.used_percentage = None;
-    assert!(compose_builtin(&ctx, None, &[StatusLineItem::Context]).is_empty());
+    assert!(compose_builtin(&ctx, None, &[StatusLineItem::Context], None).is_empty());
 }
 
 #[test]
 fn name_past_its_budget_is_cut_by_painted_columns() {
     let mut ctx = context();
     ctx.session_name = Some("辺".repeat(SESSION_NAME_COLS));
-    let cut = &compose_builtin(&ctx, None, &[StatusLineItem::SessionName])[0].text;
+    let cut = &compose_builtin(&ctx, None, &[StatusLineItem::SessionName], None)[0].text;
 
     let width = super::super::painted_width(cut);
     assert!(
@@ -70,14 +90,15 @@ fn name_past_its_budget_is_cut_by_painted_columns() {
 fn cost_the_session_does_not_have_omits_its_segment() {
     let mut ctx = context();
     ctx.cost.total_cost_usd = None;
-    assert!(compose_builtin(&ctx, None, &[StatusLineItem::Cost]).is_empty());
+    assert!(compose_builtin(&ctx, None, &[StatusLineItem::Cost], None).is_empty());
 }
 
 #[test]
 fn context_segment_warns_near_compaction() {
     let mut ctx = context();
-    let tone =
-        |ctx: &StatusLineContext| compose_builtin(ctx, None, &[StatusLineItem::Context])[0].tone;
+    let tone = |ctx: &StatusLineContext| {
+        compose_builtin(ctx, None, &[StatusLineItem::Context], None)[0].tone
+    };
 
     ctx.context_window.used_percentage = Some(90);
     assert_eq!(tone(&ctx), SegmentTone::Warn);

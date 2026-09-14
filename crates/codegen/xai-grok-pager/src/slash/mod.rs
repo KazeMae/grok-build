@@ -29,13 +29,118 @@ use registry::{CommandRegistry, CommandSource, CommandTrigger};
 use xai_grok_tools::implementations::skills::types::SkillScope;
 
 pub use command::{
-    AppCtx, ArgItem, CommandExecCtx, CommandProvenance, CommandResult, SlashCommand,
-    WorkflowChoice, WorkflowRunChoice,
+    AppCtx, ArgItem, ArgPresentation, CommandExecCtx, CommandProvenance, CommandResult,
+    SlashCommand, WorkflowChoice, WorkflowRunChoice,
 };
 pub use mode_support::{ModeSupport, Remedy};
 
 /// Maximum number of visible rows in the dropdown (scroll beyond this).
 pub const MAX_VISIBLE_SUGGESTIONS: usize = 8;
+
+/// Localize client-owned slash-command errors at the presentation boundary.
+///
+/// Command identity, arguments, model/theme names, effort ids, and unknown
+/// ACP/server messages remain byte-for-byte unchanged. Keeping localization
+/// here avoids threading UI state through every [`CommandExecCtx`] literal.
+pub(crate) fn localize_command_error(
+    message: &str,
+    locale: &crate::locale::LocaleContext,
+) -> String {
+    if let Some(command) = message.strip_prefix("Usage: ") {
+        return format!(
+            "{}{command}",
+            locale.named_text("slash.error.usage", "Usage: ")
+        );
+    }
+    if let Some(model) = message.strip_prefix("Unknown model: ") {
+        return locale
+            .named_text(
+                "slash.command.model.error.unknown",
+                "Unknown model: {model}",
+            )
+            .replace("{model}", model);
+    }
+    if message == "No active model" || message == "no active model to apply effort to" {
+        return locale
+            .named_text("reasoning.error.no_active_model", message)
+            .into_owned();
+    }
+    if message == "current model does not support reasoning effort" {
+        return locale
+            .named_text("reasoning.error.unsupported", message)
+            .into_owned();
+    }
+    if let Some(rest) = message.strip_prefix("unknown effort level '") {
+        if let Some(token) = rest.strip_suffix("'; this model has no selectable effort levels") {
+            return locale
+                .named_text(
+                    "reasoning.error.unknown_no_options",
+                    "unknown effort level '{token}'; this model has no selectable effort levels",
+                )
+                .replace("{token}", token);
+        }
+        if let Some((token, options)) = rest.split_once("'; use one of: ") {
+            return locale
+                .named_text(
+                    "reasoning.error.unknown_options",
+                    "unknown effort level '{token}'; use one of: {options}",
+                )
+                .replace("{token}", token)
+                .replace("{options}", options);
+        }
+    }
+    if let Some(rest) = message.strip_prefix("Unknown theme: ")
+        && let Some((theme, available)) = rest.rsplit_once(". Available: ")
+    {
+        return locale
+            .named_text(
+                "slash.command.theme.error.unknown",
+                "Unknown theme: {theme}. Available: {available}",
+            )
+            .replace("{theme}", theme)
+            .replace("{available}", available);
+    }
+    if message == "/usage is not available." {
+        return locale
+            .named_text(
+                "slash.command.usage.error.unavailable",
+                "/usage is not available.",
+            )
+            .into_owned();
+    }
+    if let Some(rest) = message.strip_prefix("Unknown argument: ")
+        && let Some((argument, hint)) = rest.rsplit_once(". Use ")
+    {
+        return locale
+            .named_text(
+                "slash.command.usage.error.unknown_argument",
+                "Unknown argument: {argument}. Use {hint}",
+            )
+            .replace("{argument}", argument)
+            .replace("{hint}", hint);
+    }
+    if let Some(mode) = message
+        .strip_prefix("No active session to reopen in ")
+        .and_then(|rest| rest.strip_suffix(" mode"))
+    {
+        let localized_mode = match mode {
+            "minimal" => {
+                locale.named_text("settings.setting.screen_mode.choice.minimal.label", mode)
+            }
+            "fullscreen" => {
+                locale.named_text("settings.setting.screen_mode.choice.fullscreen.label", mode)
+            }
+            _ => std::borrow::Cow::Borrowed(mode),
+        };
+        return locale
+            .named_text(
+                "slash.command.screen_mode.error.no_session",
+                "No active session to reopen in {mode} mode",
+            )
+            .replace("{mode}", &localized_mode);
+    }
+    message.to_owned()
+}
 
 // ---------------------------------------------------------------------------
 // SuggestionRow
@@ -102,6 +207,14 @@ impl MenuKey {
 /// A single row in the slash suggestion dropdown.
 #[derive(Debug, Clone)]
 pub struct SuggestionRow {
+    /// Stable canonical command name used only for presentation metadata.
+    /// `None` for argument rows. Display aliases and inserted text remain
+    /// untouched by localization.
+    pub command_canonical: Option<String>,
+    /// Whether the fixed command description may be resolved through the
+    /// locale catalog. Dynamic ACP skills/workflows remain opaque even if
+    /// their name collides with a built-in command.
+    pub localize_description: bool,
     /// Display text (e.g., "/model" or "Grok 4 Fast").
     pub display: String,
     /// Description text (e.g., "Switch the active model").
@@ -115,9 +228,87 @@ pub struct SuggestionRow {
     pub tag: Option<String>,
     /// Provenance badge; `Some` only on rows in a builtin/skill name collision.
     pub provenance: Option<CommandProvenance>,
+    /// Render-only localized badge text. Provenance remains canonical for
+    /// collision handling and command identity.
+    pub provenance_badge: Option<String>,
+    /// Stable argument presentation metadata copied from [`ArgItem`].
+    pub presentation: Option<ArgPresentation>,
 }
 
 impl SuggestionRow {
+    fn is_known_shell_command(trigger: &CommandTrigger) -> bool {
+        if trigger.provenance != CommandProvenance::Shell {
+            return false;
+        }
+        matches!(
+            (trigger.canonical.as_str(), trigger.description.as_str()),
+            (
+                "deep-research",
+                "Research with bounded parallel agents, cross-check evidence, and write a cited report"
+            ) | (
+                "workflow",
+                "Launch a saved workflow, list runs, or manage a run (pause, resume, stop, save)"
+            ) | ("goal", "Set, manage, or check an autonomous goal")
+                | ("flush", "Flush conversation memory to disk now")
+                | (
+                    "dream",
+                    "Run memory consolidation (merge session logs into organized topics)"
+                )
+                | ("memory", "Browse, view, and manage your memories")
+        )
+    }
+
+    /// Bundled skills are dynamic ACP commands, but their shipped short
+    /// descriptions are stable client-owned chrome. Require both trusted
+    /// bundled scope and an exact canonical/English pair so user, project,
+    /// plugin, workflow, and changed server text remain opaque.
+    fn is_known_bundled_skill(trigger: &CommandTrigger) -> bool {
+        if !trigger.bundled_skill && !trigger.product_chat_skill {
+            return false;
+        }
+        matches!(
+            (trigger.canonical.as_str(), trigger.description.as_str()),
+            (
+                "build-with-ai",
+                "Build AI apps on SpaceXAI (XAI_API_KEY + api.x.ai)"
+            ) | (
+                "code-review",
+                "Run an extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Use for a deep code quality audit or an especially harsh maintainability review."
+            ) | ("create-skill", "Create a new Grok skill")
+                | ("create-workflow", "Author a new multi-agent workflow")
+                | (
+                    "design",
+                    "Run the full design-doc-writer and design-doc-reviewer loop until consensus. Produces a polished design document with a PR plan."
+                )
+                | (
+                    "execute-plan",
+                    "Execute a PR Plan DAG from a design document. Parses the plan, topologically sorts it, implements PRs in parallel using worktree-isolated subagents, runs mandatory orchestrator-level review, and assembles either a Graphite PR stack or a plain-git branch stack depending on tool availability."
+                )
+                | (
+                    "bundled:imagine",
+                    "Prompting and workflow guidance for Imagine image tools"
+                )
+                | (
+                    "implement",
+                    "Run the full implement-review-fix loop using implementer and reviewer personas. Supports effort-based multi-reviewer scaling (1-5 reviewers) with automatic specialization selection. Includes memory-based feedback loop that learns from past review patterns. Loops until all reviewers find 0 issues of any severity."
+                )
+                | (
+                    "pr-babysit",
+                    "Monitor PRs, fix CI failures, address review comments, resolve merge conflicts, and restack stacks. Supports independent PRs, Graphite stacks, and GitHub stacked PRs (gh-stack)."
+                )
+                | (
+                    "resume-claude",
+                    "Continue from a recent Claude Code session"
+                )
+                | ("resume-codex", "Continue from a recent Codex session")
+                | ("resume-cursor", "Continue from a recent Cursor session")
+                | (
+                    "review",
+                    "Run a reviewer subagent against uncommitted local changes, a named branch, or a GitHub PR. Local and branch modes write a review file plus a summary to disk. PR mode posts the findings as a PENDING GitHub review for the user to inspect and submit through the UI."
+                )
+        )
+    }
+
     fn from_command(
         trigger: &CommandTrigger,
         takes_args: bool,
@@ -128,23 +319,33 @@ impl SuggestionRow {
             insert_text.push(' ');
         }
         Self {
+            command_canonical: Some(trigger.canonical.clone()),
+            localize_description: trigger.source == CommandSource::Builtin
+                || Self::is_known_shell_command(trigger)
+                || Self::is_known_bundled_skill(trigger),
             display: trigger.display.clone(),
             description: trigger.description.clone(),
             insert_text,
             indices: Vec::new(),
             tag: None,
             provenance: collides_with_builtin_or_skill.then(|| trigger.provenance.clone()),
+            provenance_badge: None,
+            presentation: None,
         }
     }
 
     fn from_arg(item: &ArgItem) -> Self {
         Self {
+            command_canonical: None,
+            localize_description: false,
             display: item.display.clone(),
             description: item.description.clone(),
             insert_text: item.insert_text.clone(),
             indices: Vec::new(),
             tag: None,
             provenance: None,
+            provenance_badge: None,
+            presentation: item.presentation,
         }
     }
 
@@ -1607,6 +1808,44 @@ mod tests {
     use super::registry::CommandRegistry;
     use super::*;
 
+    fn zh_locale() -> crate::locale::LocaleContext {
+        crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+            locale: crate::locale::UiLocale::ZhCn,
+            source: crate::locale::LocaleSource::Requirement,
+        })
+    }
+
+    #[test]
+    fn localizes_owned_slash_errors_without_changing_dynamic_tokens() {
+        let locale = zh_locale();
+        assert_eq!(
+            localize_command_error("Usage: /model <name> [effort]", &locale),
+            "用法：/model <name> [effort]"
+        );
+        assert_eq!(
+            localize_command_error("Unknown model: Grok Private 7", &locale),
+            "未知模型：Grok Private 7"
+        );
+        assert_eq!(
+            localize_command_error(
+                "unknown effort level 'deep'; use one of: low, high",
+                &locale,
+            ),
+            "未知的推理强度“deep”；可选值：low, high"
+        );
+        assert_eq!(
+            localize_command_error(
+                "Unknown theme: solarized. Available: auto, Grokday, Groknight",
+                &locale,
+            ),
+            "未知主题：solarized。可用主题：auto, Grokday, Groknight"
+        );
+        assert_eq!(
+            localize_command_error("server supplied opaque error", &locale),
+            "server supplied opaque error"
+        );
+    }
+
     #[test]
     fn parses_invocation_with_args() {
         let inv = parse_invocation("/model grok-code-fast-1").expect("parsed");
@@ -2433,12 +2672,16 @@ mod tests {
         assert!(!command_prefix_matches_smart("Privacy", "PR"));
 
         let row = SuggestionRow {
+            command_canonical: Some("privacy".to_string()),
+            localize_description: true,
             display: "/Privacy".to_string(),
             description: String::new(),
             insert_text: "/Privacy ".to_string(),
             indices: Vec::new(),
             tag: None,
             provenance: None,
+            provenance_badge: None,
+            presentation: None,
         };
         // Without smart-case, starts_with("p") fails on "Privacy" and the ghost disappears
         // The dropdown would still highlight the row via CaseMatching::Smart
@@ -3027,6 +3270,106 @@ mod tests {
     }
 
     #[test]
+    fn localization_regression_only_exact_bundled_skill_descriptions_are_localizable() {
+        fn skill(scope: &str, description: &str) -> agent_client_protocol::AvailableCommand {
+            let meta = serde_json::json!({
+                "scope": scope,
+                "path": format!("/grok/{scope}/build-with-ai/SKILL.md"),
+            })
+            .as_object()
+            .cloned()
+            .expect("skill meta is an object");
+            agent_client_protocol::AvailableCommand::new(
+                "build-with-ai".to_string(),
+                description.to_string(),
+            )
+            .meta(meta)
+        }
+
+        fn product_skill(
+            description: &str,
+            product: &str,
+        ) -> agent_client_protocol::AvailableCommand {
+            let meta = serde_json::json!({
+                "scope": "server",
+                "path": "chat-product://build-with-ai",
+                "product": product,
+            })
+            .as_object()
+            .cloned()
+            .expect("skill meta is an object");
+            agent_client_protocol::AvailableCommand::new(
+                "build-with-ai".to_string(),
+                description.to_string(),
+            )
+            .meta(meta)
+        }
+
+        let exact = "Build AI apps on SpaceXAI (XAI_API_KEY + api.x.ai)";
+        let mut ctrl = SlashController::new(
+            CommandRegistry::new(Vec::new()),
+            std::path::PathBuf::from("."),
+        );
+        let state = SlashState::default();
+        let models = ModelState::default();
+
+        ctrl.registry_mut()
+            .set_acp_commands(&[skill("bundled", exact)]);
+        ctrl.refresh(&state, "/", 1, &models);
+        let bundled = state
+            .snapshot()
+            .matches
+            .into_iter()
+            .find(|row| row.display == "/build-with-ai")
+            .expect("bundled skill row");
+        assert!(bundled.localize_description);
+
+        ctrl.registry_mut()
+            .set_acp_commands(&[product_skill(exact, "chat")]);
+        ctrl.refresh(&state, "/", 1, &models);
+        let product = state
+            .snapshot()
+            .matches
+            .into_iter()
+            .find(|row| row.display == "/build-with-ai")
+            .expect("product skill row");
+        assert!(product.localize_description);
+
+        ctrl.registry_mut()
+            .set_acp_commands(&[product_skill(exact, "team")]);
+        ctrl.refresh(&state, "/", 1, &models);
+        let other_server = state
+            .snapshot()
+            .matches
+            .into_iter()
+            .find(|row| row.display == "/build-with-ai")
+            .expect("other server skill row");
+        assert!(!other_server.localize_description);
+
+        ctrl.registry_mut()
+            .set_acp_commands(&[skill("local", exact)]);
+        ctrl.refresh(&state, "/", 1, &models);
+        let local = state
+            .snapshot()
+            .matches
+            .into_iter()
+            .find(|row| row.display == "/build-with-ai")
+            .expect("local skill row");
+        assert!(!local.localize_description);
+
+        ctrl.registry_mut()
+            .set_acp_commands(&[skill("bundled", "Build AI apps with a team-owned override")]);
+        ctrl.refresh(&state, "/", 1, &models);
+        let changed = state
+            .snapshot()
+            .matches
+            .into_iter()
+            .find(|row| row.display == "/build-with-ai")
+            .expect("changed bundled row");
+        assert!(!changed.localize_description);
+    }
+
+    #[test]
     fn flat_mru_boosts_recent_command_regardless_of_typed_prefix() {
         // Flat schema (hermetic): using `plan` recently boosts it even when typing `/p`, independent of the live builtin registry
         let mut ctrl = tie_controller(
@@ -3282,6 +3625,7 @@ mod tests {
                 match_text: match_text.into(),
                 insert_text: insert.into(),
                 description: String::new(),
+                presentation: None,
             };
             if let Some(rest) = args_query.strip_prefix("first")
                 && rest.starts_with(char::is_whitespace)

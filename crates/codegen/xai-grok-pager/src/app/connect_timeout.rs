@@ -11,6 +11,10 @@ macro_rules! connect_ui_timeout_env {
 }
 
 pub(super) const CONNECT_UI_TIMEOUT_ENV: &str = connect_ui_timeout_env!();
+#[cfg(windows)]
+pub(super) const CONNECT_UI_TIMEOUT_TRY_COMMAND: &str =
+    concat!("$env:", connect_ui_timeout_env!(), "='60'; grok");
+#[cfg(not(windows))]
 pub(super) const CONNECT_UI_TIMEOUT_TRY_COMMAND: &str =
     concat!(connect_ui_timeout_env!(), "=60 grok");
 pub(super) const DEFAULT_CONNECT_UI_TIMEOUT: Duration = Duration::from_secs(30);
@@ -73,6 +77,16 @@ mod tests {
         assert_eq!(resolve(Some("1e3"), Personal), DEFAULT_CONNECT_UI_TIMEOUT);
         assert_eq!(resolve(Some("1"), Personal), PERSONAL_CONNECT_UI_FLOOR);
         assert_eq!(resolve(Some("9999"), Personal), Duration::from_secs(9999));
+        #[cfg(windows)]
+        assert_eq!(
+            CONNECT_UI_TIMEOUT_TRY_COMMAND,
+            "$env:GROK_CONNECT_UI_TIMEOUT_SECS='60'; grok"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            CONNECT_UI_TIMEOUT_TRY_COMMAND,
+            "GROK_CONNECT_UI_TIMEOUT_SECS=60 grok"
+        );
     }
 
     #[test]

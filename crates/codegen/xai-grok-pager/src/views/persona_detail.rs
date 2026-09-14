@@ -13,6 +13,7 @@ use ratatui::style::{Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
 use crate::input::line_editor::{LineEditOutcome, LineEditor};
+use crate::locale::LocaleContext;
 use crate::theme::Theme;
 use crate::views::modal_window::{
     self, ModalContentArea, ModalSizing, ModalWindowConfig, ModalWindowState, Shortcut,
@@ -46,14 +47,22 @@ impl PersonaField {
     ];
 
     fn label(self) -> &'static str {
+        self.label_with_locale(None)
+    }
+
+    fn label_with_locale(self, locale: Option<&LocaleContext>) -> &'static str {
         match self {
-            Self::Name => "Name",
-            Self::Description => "Description",
-            Self::Model => "Model",
-            Self::ReasoningEffort => "Effort",
-            Self::Isolation => "Isolation",
-            Self::Instructions => "Instructions",
-            Self::InstructionsFile => "Instr. file",
+            Self::Name => persona_static(locale, "persona.field.name", "Name"),
+            Self::Description => persona_static(locale, "persona.field.description", "Description"),
+            Self::Model => persona_static(locale, "persona.field.model", "Model"),
+            Self::ReasoningEffort => persona_static(locale, "persona.field.effort", "Effort"),
+            Self::Isolation => persona_static(locale, "persona.field.isolation", "Isolation"),
+            Self::Instructions => {
+                persona_static(locale, "persona.field.instructions", "Instructions")
+            }
+            Self::InstructionsFile => {
+                persona_static(locale, "persona.field.instructions_file", "Instr. file")
+            }
         }
     }
 
@@ -74,6 +83,18 @@ impl PersonaField {
             Self::Name | Self::Description | Self::Model | Self::ReasoningEffort | Self::Isolation
         )
     }
+}
+
+fn persona_static(locale: Option<&LocaleContext>, id: &str, english: &'static str) -> &'static str {
+    locale
+        .map(|locale| locale.named_static_text(id, english))
+        .unwrap_or(english)
+}
+
+fn persona_text(locale: Option<&LocaleContext>, id: &str, english: &str) -> String {
+    locale
+        .map(|locale| locale.named_text(id, english).into_owned())
+        .unwrap_or_else(|| english.to_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -314,14 +335,35 @@ impl PersonaDetailState {
 
     /// Save current state back to the TOML file using toml_edit to preserve formatting.
     fn save_to_file(&self) -> Result<(), String> {
+        self.save_to_file_with_locale(None)
+    }
+
+    fn save_to_file_with_locale(&self, locale: Option<&LocaleContext>) -> Result<(), String> {
         let Some(ref path) = self.source_path else {
-            return Err("No source file to save to".to_string());
+            return Err(persona_static(
+                locale,
+                "persona.error.no_save_source",
+                "No source file to save to",
+            )
+            .to_string());
         };
-        let content =
-            std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {e}"))?;
-        let mut doc: toml_edit::DocumentMut = content
-            .parse()
-            .map_err(|e| format!("Failed to parse TOML: {e}"))?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            persona_text(
+                locale,
+                "persona.error.read_file",
+                "Failed to read file: {error}",
+            )
+            .replace("{error}", &e.to_string())
+        })?;
+        let mut doc: toml_edit::DocumentMut =
+            content.parse::<toml_edit::DocumentMut>().map_err(|e| {
+                persona_text(
+                    locale,
+                    "persona.error.parse_toml",
+                    "Failed to parse TOML: {error}",
+                )
+                .replace("{error}", &e.to_string())
+            })?;
 
         // Update simple string fields.
         let fields: &[(&str, &str)] = &[
@@ -341,7 +383,14 @@ impl PersonaDetailState {
             }
         }
 
-        std::fs::write(path, doc.to_string()).map_err(|e| format!("Failed to write file: {e}"))?;
+        std::fs::write(path, doc.to_string()).map_err(|e| {
+            persona_text(
+                locale,
+                "persona.error.write_file",
+                "Failed to write file: {error}",
+            )
+            .replace("{error}", &e.to_string())
+        })?;
         Ok(())
     }
 }
@@ -378,8 +427,23 @@ pub fn render_persona_detail(
     theme: &Theme,
     compact: bool,
 ) {
-    let title = format!("persona: {}", state.name);
-    let shortcuts = build_shortcuts(state);
+    render_persona_detail_with_locale(buf, area, state, theme, compact, None)
+}
+
+pub fn render_persona_detail_with_locale(
+    buf: &mut Buffer,
+    area: Rect,
+    state: &mut PersonaDetailState,
+    theme: &Theme,
+    compact: bool,
+    locale: Option<&LocaleContext>,
+) {
+    let title = format!(
+        "{}: {}",
+        persona_static(locale, "persona.title", "persona"),
+        state.name
+    );
+    let shortcuts = build_shortcuts_with_locale(state, locale);
     let config = ModalWindowConfig {
         title: &title,
         tabs: None,
@@ -420,7 +484,7 @@ pub fn render_persona_detail(
         }
 
         let is_selected = state.selected_field == field;
-        let label = field.label();
+        let label = field.label_with_locale(locale);
         let value = state.field_value(field);
 
         // Background highlight for selected row.
@@ -470,7 +534,12 @@ pub fn render_persona_detail(
                 } else {
                     Style::default().fg(theme.gray_dim)
                 };
-                buf.set_string(value_x, y, "(empty)", empty_style);
+                buf.set_string(
+                    value_x,
+                    y,
+                    persona_static(locale, "persona.empty", "(empty)"),
+                    empty_style,
+                );
             } else {
                 let lines = word_wrap_lines(value, value_w);
                 let total = lines.len();
@@ -502,10 +571,12 @@ pub fn render_persona_detail(
                     if is_long {
                         y += 1;
                         if y < max_y {
-                            let hint = format!(
-                                "  ... ({} more lines: e to expand, j/k to scroll)",
-                                total - max_collapsed
-                            );
+                            let hint = persona_text(
+                                locale,
+                                "persona.instructions.collapsed_hint",
+                                "  ... ({count} more lines: e to expand, j/k to scroll)",
+                            )
+                            .replace("{count}", &(total - max_collapsed).to_string());
                             buf.set_string(
                                 content_area.x + 2,
                                 y,
@@ -543,7 +614,12 @@ pub fn render_persona_detail(
                         } else {
                             String::new()
                         };
-                        let hint = format!("  (e to collapse, j/k to scroll{})", pos_hint);
+                        let hint = persona_text(
+                            locale,
+                            "persona.instructions.expanded_hint",
+                            "  (e to collapse, j/k to scroll{position})",
+                        )
+                        .replace("{position}", &pos_hint);
                         buf.set_string(
                             content_area.x + 2,
                             y,
@@ -594,7 +670,16 @@ pub fn render_persona_detail(
     }
 
     // I/O sections
-    for (section, items) in [("Inputs", &state.inputs), ("Outputs", &state.outputs)] {
+    for (section, items) in [
+        (
+            persona_static(locale, "persona.section.inputs", "Inputs"),
+            &state.inputs,
+        ),
+        (
+            persona_static(locale, "persona.section.outputs", "Outputs"),
+            &state.outputs,
+        ),
+    ] {
         if items.is_empty() || y >= max_y {
             continue;
         }
@@ -611,7 +696,11 @@ pub fn render_persona_detail(
             if y >= max_y {
                 break;
             }
-            let req = if entry.required { ", required" } else { "" };
+            let req = if entry.required {
+                persona_static(locale, "persona.required", ", required")
+            } else {
+                ""
+            };
             let header = format!("  \u{2022} {} ({}{})", entry.name, entry.io_type, req);
             buf.set_string(
                 content_area.x,
@@ -654,8 +743,12 @@ pub fn render_persona_detail(
     if y < max_y
         && let Some(ref path) = state.source_path
     {
-        let src = format!("Source: {}", path.display());
-        let truncated: String = src.chars().take(w).collect();
+        let src = format!(
+            "{}: {}",
+            persona_static(locale, "persona.source", "Source"),
+            path.display()
+        );
+        let truncated = crate::render::line_utils::truncate_str(&src, w);
         buf.set_string(
             content_area.x,
             y,
@@ -679,28 +772,35 @@ fn persona_detail_sizing(compact: bool) -> ModalSizing {
 }
 
 fn build_shortcuts(state: &PersonaDetailState) -> Vec<Shortcut<'static>> {
+    build_shortcuts_with_locale(state, None)
+}
+
+fn build_shortcuts_with_locale(
+    state: &PersonaDetailState,
+    locale: Option<&LocaleContext>,
+) -> Vec<Shortcut<'static>> {
     if state.is_editing() {
         vec![
             Shortcut {
-                label: "Enter save",
+                label: persona_static(locale, "persona.shortcut.save", "Enter save"),
                 clickable: false,
                 id: 0,
             },
             Shortcut {
-                label: "Esc cancel",
+                label: persona_static(locale, "persona.shortcut.cancel", "Esc cancel"),
                 clickable: false,
                 id: 0,
             },
         ]
     } else {
         let mut shortcuts = vec![Shortcut {
-            label: "j/k nav",
+            label: persona_static(locale, "persona.shortcut.navigate", "j/k nav"),
             clickable: false,
             id: 0,
         }];
         if state.editable {
             shortcuts.push(Shortcut {
-                label: "e edit field",
+                label: persona_static(locale, "persona.shortcut.edit_field", "e edit field"),
                 clickable: false,
                 id: 0,
             });
@@ -713,7 +813,7 @@ fn build_shortcuts(state: &PersonaDetailState) -> Vec<Shortcut<'static>> {
             });
         }
         shortcuts.push(Shortcut {
-            label: "Esc back",
+            label: persona_static(locale, "persona.shortcut.back", "Esc back"),
             clickable: false,
             id: 0,
         });
@@ -729,12 +829,20 @@ pub fn handle_persona_detail_key(
     state: &mut PersonaDetailState,
     key: &KeyEvent,
 ) -> PersonaDetailOutcome {
+    handle_persona_detail_key_with_locale(state, key, None)
+}
+
+pub fn handle_persona_detail_key_with_locale(
+    state: &mut PersonaDetailState,
+    key: &KeyEvent,
+    locale: Option<&LocaleContext>,
+) -> PersonaDetailOutcome {
     state.message = None;
 
     if state.is_editing() {
-        handle_editing_key(state, key)
+        handle_editing_key(state, key, locale)
     } else {
-        handle_browse_key(state, key)
+        handle_browse_key(state, key, locale)
     }
 }
 
@@ -753,7 +861,11 @@ pub fn handle_persona_detail_paste(
     finish_edit(outcome)
 }
 
-fn handle_browse_key(state: &mut PersonaDetailState, key: &KeyEvent) -> PersonaDetailOutcome {
+fn handle_browse_key(
+    state: &mut PersonaDetailState,
+    key: &KeyEvent,
+    locale: Option<&LocaleContext>,
+) -> PersonaDetailOutcome {
     // When instructions are expanded and selected, j/k scrolls within them.
     let instr_scrolling =
         state.selected_field == PersonaField::Instructions && state.instructions_expanded;
@@ -795,18 +907,38 @@ fn handle_browse_key(state: &mut PersonaDetailState, key: &KeyEvent) -> PersonaD
         // Other fields: e/Enter opens inline editor.
         KeyCode::Char('e') | KeyCode::Enter => {
             if !state.editable {
-                state.message = Some("Bundled personas are read-only".to_string());
+                state.message = Some(
+                    persona_static(
+                        locale,
+                        "persona.error.bundled_read_only",
+                        "Bundled personas are read-only",
+                    )
+                    .to_string(),
+                );
                 return PersonaDetailOutcome::Changed;
             }
             let field = state.selected_field;
             if !field.is_editable() {
-                state.message = Some("This field cannot be edited inline".to_string());
+                state.message = Some(
+                    persona_static(
+                        locale,
+                        "persona.error.not_inline_editable",
+                        "This field cannot be edited inline",
+                    )
+                    .to_string(),
+                );
                 return PersonaDetailOutcome::Changed;
             }
             let current = state.field_value(field).to_owned();
             if current.contains(['\n', '\r']) {
-                state.message =
-                    Some("Multiline values must be edited in the source file".to_string());
+                state.message = Some(
+                    persona_static(
+                        locale,
+                        "persona.error.multiline_source",
+                        "Multiline values must be edited in the source file",
+                    )
+                    .to_string(),
+                );
                 return PersonaDetailOutcome::Changed;
             }
             let mut editor = LineEditor::default();
@@ -824,9 +956,18 @@ fn handle_browse_key(state: &mut PersonaDetailState, key: &KeyEvent) -> PersonaD
                 if state.editable {
                     return PersonaDetailOutcome::EditInEditor { path: path.clone() };
                 }
-                state.message = Some("Bundled personas are read-only".to_string());
+                state.message = Some(
+                    persona_static(
+                        locale,
+                        "persona.error.bundled_read_only",
+                        "Bundled personas are read-only",
+                    )
+                    .to_string(),
+                );
             } else {
-                state.message = Some("No source file".to_string());
+                state.message = Some(
+                    persona_static(locale, "persona.error.no_source", "No source file").to_string(),
+                );
             }
             PersonaDetailOutcome::Changed
         }
@@ -834,7 +975,11 @@ fn handle_browse_key(state: &mut PersonaDetailState, key: &KeyEvent) -> PersonaD
     }
 }
 
-fn handle_editing_key(state: &mut PersonaDetailState, key: &KeyEvent) -> PersonaDetailOutcome {
+fn handle_editing_key(
+    state: &mut PersonaDetailState,
+    key: &KeyEvent,
+    locale: Option<&LocaleContext>,
+) -> PersonaDetailOutcome {
     if key.code == KeyCode::Esc {
         state.mode = PersonaDetailMode::Browse;
         return PersonaDetailOutcome::Changed;
@@ -854,10 +999,13 @@ fn handle_editing_key(state: &mut PersonaDetailState, key: &KeyEvent) -> Persona
         if changed {
             state.set_field_value(field, new_value);
             state.dirty = true;
-            if let Err(e) = state.save_to_file() {
-                state.message = Some(format!("Save failed: {e}"));
+            if let Err(e) = state.save_to_file_with_locale(locale) {
+                state.message = Some(
+                    persona_text(locale, "persona.error.save", "Save failed: {error}")
+                        .replace("{error}", &e),
+                );
             } else {
-                state.message = Some("Saved".to_string());
+                state.message = Some(persona_static(locale, "persona.saved", "Saved").to_string());
             }
         }
         return PersonaDetailOutcome::Changed;

@@ -70,6 +70,10 @@ fn build_tracer_provider(
     mode: OtelProviderMode,
     session_metrics_gate: SessionMetricsGate,
 ) -> SdkTracerProvider {
+    // Privacy build: never construct the vendor OTLP exporter.
+    if xai_grok_version::research_data_collection_forbidden() {
+        return SdkTracerProvider::builder().build();
+    }
     match mode {
         OtelProviderMode::Server => build_server_provider(client, config, session_metrics_gate),
         OtelProviderMode::Local => SdkTracerProvider::builder().build(),

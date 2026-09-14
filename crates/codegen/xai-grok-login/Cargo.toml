@@ -62,7 +62,8 @@ xai-grok-sampler = { workspace = true }
 xai-grok-shell-base = { workspace = true }
 xai-grok-telemetry = { workspace = true }
 xai-grok-tools = { workspace = true }
-xai-grok-version = { workspace = true }
+xai-grok-locale = { path = "../xai-grok-locale" }
+xai-grok-version = { workspace = true, features = ["privacy"] }
 xai-system-power = { workspace = true }
 
 # gRPC stack for the gated login path; compiled out unless the feature is on.

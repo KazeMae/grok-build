@@ -197,6 +197,13 @@ fn hook_denied_signal<'a>(context: Option<&'a serde_json::Value>) -> TerminalSig
     }
 }
 
+fn zh_locale() -> crate::locale::LocaleContext {
+    crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    })
+}
+
 #[test]
 fn hook_denied_finalize_displaces_feedback_before_opening_the_card() {
     let mut agent = running_viewer("p1");
@@ -335,8 +342,54 @@ fn hook_denied_finalize_requeues_blocked_prompt_and_opens_card() {
 }
 
 #[test]
+fn hook_denied_card_localizes_fixed_chrome_and_preserves_hook_reason() {
+    let context = serde_json::to_value(xai_grok_shell::session::commands::CancellationContext {
+        hook_name: Some("global/block-hihi:user_prompt_submit[0].hooks[0]".into()),
+        reason: Some("opaque provider reason".into()),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut agent = running_viewer("p1");
+    agent.scrollback.set_locale(&zh_locale());
+    agent.session.enqueue_prompt("queued follower".into());
+    stash_in_flight(&mut agent);
+    let _ = finalize_turn_from_terminal(&mut agent, "s1", hook_denied_signal(Some(&context)));
+
+    let question = &agent
+        .question_view
+        .as_ref()
+        .expect("localized card")
+        .questions[0];
+    assert_eq!(
+        question.question.split("\n\n").collect::<Vec<_>>(),
+        [
+            "提示被 global/block-hihi 阻止",
+            "opaque provider reason",
+            "还有 1 条提示正在等待（队列已暂停）。"
+        ]
+    );
+    assert_eq!(
+        question
+            .options
+            .iter()
+            .map(|option| option.label.as_str())
+            .collect::<Vec<_>>(),
+        ["编辑", "重新发送", "丢弃"]
+    );
+    assert_eq!(
+        question
+            .options
+            .iter()
+            .map(|option| option.description.as_str())
+            .collect::<Vec<_>>(),
+        ["修改提示", "原样发送；钩子可能再次阻止它。", "从队列中移除"]
+    );
+}
+
+#[test]
 fn hook_denied_finalize_ignores_foreign_stash() {
     let mut agent = running_viewer("p1");
+    agent.scrollback.set_locale(&zh_locale());
     // Adopted turn: the rewind stash exists but "p1" was never noted self-originated
     let entry = agent
         .scrollback
@@ -367,7 +420,7 @@ fn hook_denied_finalize_ignores_foreign_stash() {
         agent
             .toast
             .as_ref()
-            .is_some_and(|(m, _)| m.contains("queue is paused")),
+            .is_some_and(|(m, _)| m == "钩子阻止了上一条提示——队列已暂停"),
         "a hold without a card must never be silent"
     );
 }
@@ -375,6 +428,7 @@ fn hook_denied_finalize_ignores_foreign_stash() {
 #[test]
 fn hook_denied_finalize_during_queue_edit_requeues_without_card() {
     let mut agent = running_viewer("p1");
+    agent.scrollback.set_locale(&zh_locale());
     agent.session.enqueue_prompt("row being edited".into());
     let edited_id = agent.session.pending_prompts.front().unwrap().id;
     stash_in_flight(&mut agent);
@@ -401,6 +455,12 @@ fn hook_denied_finalize_during_queue_edit_requeues_without_card() {
         "no card over a composer busy with a queue edit"
     );
     assert!(agent.session.hook_block_hold);
+    assert!(
+        agent.toast.as_ref().is_some_and(|(message, _)| {
+            message == "提示被钩子阻止——已保留在队列最前端"
+        }),
+        "queue-edit collision toast is localized"
+    );
     assert!(
         matches!(
             agent.prompt_mode,

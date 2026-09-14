@@ -8,7 +8,7 @@ use xai_grok_tools::types::tool::{ToolKind, ToolNamespace};
 use super::*;
 use crate::acp::meta::NotificationMeta;
 use crate::acp::tracker::AcpUpdateTracker;
-use crate::scrollback::blocks::tool::{SentMessagePresentation, ToolCallBlock};
+use crate::scrollback::blocks::tool::{SentMessageDetail, SentMessagePresentation, ToolCallBlock};
 use crate::scrollback::state::ScrollbackState;
 
 fn raw_output(output: SendSubagentMessageOutput) -> serde_json::Value {
@@ -198,37 +198,44 @@ fn pending_and_terminal_without_typed_output_use_conservative_fallbacks() {
         assert_eq!(pending.presentation, SentMessagePresentation::Sending);
     }
 
-    for (id, call, expected_reason) in [
-        (
+    let malformed = with_content(
+        call_with_id(
             "malformed",
-            with_content(
-                call_with_id(
-                    "malformed",
-                    acp::ToolCallStatus::Failed,
-                    Some(serde_json::json!({"subagent_id": 7, "text": "hello"})),
-                    None,
-                ),
-                "Permission denied before execution",
-            ),
-            "Permission denied before execution",
+            acp::ToolCallStatus::Failed,
+            Some(serde_json::json!({"subagent_id": 7, "text": "hello"})),
+            None,
         ),
-        (
-            "unavailable",
-            call_with_id("unavailable", acp::ToolCallStatus::Completed, None, None),
-            "Message was not accepted or delivery details are unavailable.",
-        ),
-    ] {
-        let fallback = block(&call);
-        assert_eq!(fallback.subagent_id, None, "{id}");
-        assert_eq!(fallback.text, None, "{id}");
-        assert_eq!(
-            fallback.presentation,
-            SentMessagePresentation::Rejected {
-                reason: expected_reason.into(),
-            },
-            "{id}",
-        );
-    }
+        "Permission denied before execution",
+    );
+    let fallback = block(&malformed);
+    assert_eq!(fallback.subagent_id, None);
+    assert_eq!(fallback.text, None);
+    assert_eq!(
+        fallback.presentation,
+        SentMessagePresentation::Rejected {
+            reason: "Permission denied before execution".into(),
+        },
+    );
+
+    let unavailable = call_with_id("unavailable", acp::ToolCallStatus::Completed, None, None);
+    let fallback = block(&unavailable);
+    assert_eq!(fallback.subagent_id, None);
+    assert_eq!(fallback.text, None);
+    assert_eq!(
+        fallback.presentation,
+        SentMessagePresentation::RejectedUnavailable,
+    );
+
+    let provider_uses_same_words = with_content(
+        call_with_id("provider-sentinel", acp::ToolCallStatus::Failed, None, None),
+        crate::scrollback::blocks::tool::UNAVAILABLE_DELIVERY_REASON,
+    );
+    assert_eq!(
+        block(&provider_uses_same_words).presentation,
+        SentMessagePresentation::Rejected {
+            reason: crate::scrollback::blocks::tool::UNAVAILABLE_DELIVERY_REASON.into(),
+        },
+    );
 }
 
 #[test]
@@ -306,7 +313,7 @@ fn legacy_serialized_outputs_replay_with_current_truthful_classification() {
                 "outcome": "channel_closed",
             }),
             SentMessagePresentation::Rejected {
-                reason: SendSubagentMessageOutput::ChannelClosed.to_string(),
+                reason: SentMessageDetail::Delivery(SendSubagentMessageOutput::ChannelClosed),
             },
         ),
     ] {
@@ -484,4 +491,78 @@ fn tracker_refines_pending_call_to_dedicated_sent_block() {
         panic!("expected dedicated sent-message block");
     };
     assert_eq!(block.presentation, SentMessagePresentation::Sent);
+}
+
+#[test]
+fn tracker_preserves_canonical_metadata_first_seen_on_terminal_update() {
+    let id = "update-meta-terminal";
+    let pending = acp::ToolCall::new(acp::ToolCallId::new(Arc::from(id)), "relay_to_subagent")
+        .kind(acp::ToolKind::Other)
+        .status(acp::ToolCallStatus::Pending)
+        .raw_input(Some(input("sub-123", "follow up")));
+    let mut tracker = AcpUpdateTracker::new();
+    let mut scrollback = ScrollbackState::new();
+    tracker.handle_update(
+        acp::SessionUpdate::ToolCall(pending),
+        &NotificationMeta::default(),
+        &mut scrollback,
+    );
+    tracker.handle_update(
+        acp::SessionUpdate::ToolCallUpdate(
+            acp::ToolCallUpdate::new(
+                acp::ToolCallId::new(Arc::from(id)),
+                acp::ToolCallUpdateFields::new()
+                    .status(Some(acp::ToolCallStatus::Completed))
+                    .raw_output(Some(raw_output(SendSubagentMessageOutput::Accepted {
+                        message_id: "message-1".into(),
+                    }))),
+            )
+            .meta(Some(canonical_meta(
+                SEND_SUBAGENT_MESSAGE_TOOL_NAME,
+                ToolKind::ActiveAgentMessage,
+            ))),
+        ),
+        &NotificationMeta::default(),
+        &mut scrollback,
+    );
+
+    assert!(matches!(
+        &scrollback.get(0).expect("message entry").block,
+        RenderBlock::ToolCall(ToolCallBlock::SentMessage(_))
+    ));
+}
+
+#[test]
+fn tracker_preserves_canonical_metadata_first_seen_on_streaming_update() {
+    let id = "update-meta-streaming";
+    let pending = acp::ToolCall::new(acp::ToolCallId::new(Arc::from(id)), "relay_to_subagent")
+        .kind(acp::ToolKind::Other)
+        .status(acp::ToolCallStatus::Pending)
+        .raw_input(Some(input("sub-123", "follow up")));
+    let mut tracker = AcpUpdateTracker::new();
+    let mut scrollback = ScrollbackState::new();
+    tracker.handle_update(
+        acp::SessionUpdate::ToolCall(pending),
+        &NotificationMeta::default(),
+        &mut scrollback,
+    );
+    tracker.handle_update(
+        acp::SessionUpdate::ToolCallUpdate(
+            acp::ToolCallUpdate::new(
+                acp::ToolCallId::new(Arc::from(id)),
+                acp::ToolCallUpdateFields::new().status(Some(acp::ToolCallStatus::InProgress)),
+            )
+            .meta(Some(canonical_meta(
+                SEND_SUBAGENT_MESSAGE_TOOL_NAME,
+                ToolKind::ActiveAgentMessage,
+            ))),
+        ),
+        &NotificationMeta::default(),
+        &mut scrollback,
+    );
+
+    assert!(matches!(
+        &scrollback.get(0).expect("message entry").block,
+        RenderBlock::ToolCall(ToolCallBlock::SentMessage(_))
+    ));
 }

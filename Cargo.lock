@@ -13700,6 +13700,7 @@ dependencies = [
  "which",
  "xai-dirs",
  "xai-grok-env",
+ "xai-grok-product",
  "xai-grok-version",
  "xai-tty-utils",
 ]
@@ -13871,6 +13872,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "xai-grok-locale"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "xai-grok-login"
 version = "0.1.0"
 dependencies = [
@@ -13918,6 +13927,7 @@ dependencies = [
  "xai-grok-env",
  "xai-grok-extra-ca",
  "xai-grok-http",
+ "xai-grok-locale",
  "xai-grok-memory",
  "xai-grok-sampler",
  "xai-grok-shell-base",
@@ -14092,6 +14102,7 @@ dependencies = [
  "xai-grok-env",
  "xai-grok-extra-ca",
  "xai-grok-secrets",
+ "xai-grok-version",
 ]
 
 [[package]]
@@ -14129,6 +14140,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "sha2 0.10.9",
  "shellexpand",
  "shlex",
  "signal-hook 0.3.18",
@@ -14168,6 +14180,7 @@ dependencies = [
  "xai-grok-foreign-sessions",
  "xai-grok-gboom",
  "xai-grok-hooks",
+ "xai-grok-locale",
  "xai-grok-login",
  "xai-grok-markdown",
  "xai-grok-mermaid",
@@ -14175,6 +14188,7 @@ dependencies = [
  "xai-grok-pager-diff",
  "xai-grok-pager-render",
  "xai-grok-plugin-marketplace",
+ "xai-grok-product",
  "xai-grok-sandbox",
  "xai-grok-shell",
  "xai-grok-status-line",
@@ -14221,6 +14235,7 @@ dependencies = [
  "xai-grok-login",
  "xai-grok-pager",
  "xai-grok-pager-minimal",
+ "xai-grok-product",
  "xai-grok-sandbox",
  "xai-grok-shell",
  "xai-grok-telemetry",
@@ -14250,6 +14265,7 @@ dependencies = [
  "ratatui",
  "similar",
  "tracing",
+ "unicode-width 0.2.0",
  "uuid",
  "xai-grok-pager",
  "xai-grok-pager-diff",
@@ -14285,6 +14301,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-width 0.2.0",
+ "xai-grok-product",
  "xai-grok-test-support",
  "xai-tty-utils",
 ]
@@ -14337,6 +14354,7 @@ dependencies = [
  "xai-grok-gboom",
  "xai-grok-markdown",
  "xai-grok-paths",
+ "xai-grok-product",
  "xai-grok-shared",
  "xai-grok-telemetry",
  "xai-grok-tools",
@@ -14373,6 +14391,13 @@ dependencies = [
  "xai-grok-config",
  "xai-hooks-plugins-types",
  "xai-tty-utils",
+]
+
+[[package]]
+name = "xai-grok-product"
+version = "0.1.0"
+dependencies = [
+ "xai-grok-version",
 ]
 
 [[package]]
@@ -14628,6 +14653,7 @@ dependencies = [
  "xai-grok-foreign-sessions",
  "xai-grok-hooks",
  "xai-grok-http",
+ "xai-grok-locale",
  "xai-grok-login",
  "xai-grok-mcp",
  "xai-grok-memory",
@@ -14689,6 +14715,7 @@ dependencies = [
  "xai-grok-config",
  "xai-grok-env",
  "xai-grok-extra-ca",
+ "xai-grok-product",
  "xai-grok-shared",
  "xai-grok-version",
  "xai-tty-utils",
@@ -14971,6 +14998,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "time",
@@ -14981,6 +15009,7 @@ dependencies = [
  "xai-dirs",
  "xai-grok-extra-ca",
  "xai-grok-login",
+ "xai-grok-product",
  "xai-grok-shell",
  "xai-grok-telemetry",
  "xai-grok-tools",
@@ -15012,7 +15041,9 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "xai-dirs",
+ "xai-grok-config",
  "xai-grok-extra-ca",
+ "xai-grok-product",
  "xai-tty-utils",
 ]
 

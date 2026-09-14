@@ -33,6 +33,7 @@ pub fn render_consent(
     content_area: Rect,
     buf: &mut Buffer,
     theme: &Theme,
+    locale: &crate::locale::LocaleContext,
     notice: &ConsentNotice,
     selected: Option<usize>,
     hovered_link: Option<usize>,
@@ -52,42 +53,51 @@ pub fn render_consent(
     render_logo_tier(layout.logo, buf, theme, layout.logo_tier);
 
     let link_rects = if legibility.can_accept() {
-        paint_centered(
-            message,
-            buf,
-            Style::default().fg(theme.gray_bright),
-            &notice.title,
-        );
+        let title = if notice.title == "Updates to our terms" {
+            locale.named_static_text("consent.title.default", "Updates to our terms")
+        } else {
+            notice.title.as_str()
+        };
+        paint_centered(message, buf, Style::default().fg(theme.gray_bright), title);
         paint_body(message, buf, theme, &rows, hovered_link)
     } else {
         // Title dropped: on a screen this small, why the notice is unreadable matters more.
         let text = if message.width < NARROW_COLS {
-            TOO_SMALL_NARROW
+            locale.named_static_text("consent.too_small_narrow", TOO_SMALL_NARROW)
         } else {
-            TOO_SMALL
+            locale.named_static_text("consent.too_small", TOO_SMALL)
         };
         paint_centered(message, buf, Style::default().fg(theme.gray), text);
         Vec::new()
     };
 
-    // Accept is refused while the body is unread, so the row is withheld rather than offered and ignored
-    // Quit stays, or the screen would show no way out at all
-    let menu_items: &[(&str, &str)] = if legibility.can_accept() {
-        &[("a", notice.accept_label.as_str()), ("q", "Quit")]
+    // Accept is refused while the body is unread, so the row is withheld rather than offered and
+    // ignored. Quit stays, or the screen would show no way out at all.
+    let accept_label = if notice.accept_label == "Got it" {
+        locale.named_static_text("consent.accept.default", "Got it")
     } else {
-        &[("q", "Quit")]
+        notice.accept_label.as_str()
+    };
+    let menu_items: &[(&str, &str)] = if legibility.can_accept() {
+        &[
+            ("a", accept_label),
+            ("q", locale.text(crate::locale::TextKey::WelcomeQuit)),
+        ]
+    } else {
+        &[("q", locale.text(crate::locale::TextKey::WelcomeQuit))]
     };
     let menu_area = inset_horizontal(layout.menu, prompt::prompt_inset(compact));
     let menu_rects = render_menu(menu_area, buf, theme, menu_items, selected, None, 0);
 
     // The version row is the only free row, and a pending Ctrl+C matters more than the badge.
     if let Some(pending) = &pending_hint {
-        super::render_pending_hint(layout.version, buf, theme, pending);
+        super::render_pending_hint(layout.version, buf, theme, pending, locale);
     } else {
         render_version_badge(
             layout.version,
             buf,
             theme,
+            locale,
             None,
             h_margin,
             false,

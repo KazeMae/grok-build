@@ -909,6 +909,20 @@ pub(crate) fn format_type_label(subagent_type: &str) -> &str {
     }
 }
 
+fn localized_builtin_subagent_type<'a>(
+    subagent_type: &str,
+    locale: Option<&'a crate::locale::LocaleContext>,
+) -> Option<&'a str> {
+    let locale = locale?;
+    let (key, english) = match subagent_type {
+        "general-purpose" => ("subagent.label.general", "general"),
+        "explore" => ("subagent.label.explore", "explore"),
+        "plan" => ("subagent.label.plan", "plan"),
+        _ => return None,
+    };
+    Some(locale.named_static_text(key, english))
+}
+
 pub(crate) fn format_context_badge(info: &SubagentInfo) -> &str {
     match info.attempt.context_source.as_deref() {
         Some("resumed") => "resumed",
@@ -917,7 +931,23 @@ pub(crate) fn format_context_badge(info: &SubagentInfo) -> &str {
     }
 }
 
-/// Returns `(Some(tag), rest_after_close_bracket)` when the description begins with `[<non-empty>]`, else `(None, description)` unchanged.
+pub(crate) fn format_context_badge_with_locale(
+    info: &SubagentInfo,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
+    let english = format_context_badge(info);
+    let key = match english {
+        "resumed" => "tasks.context.resumed",
+        "forked" => "tasks.context.forked",
+        _ => return english.to_string(),
+    };
+    locale
+        .map(|locale| locale.named_text(key, english).into_owned())
+        .unwrap_or_else(|| english.to_string())
+}
+
+/// Returns `(Some(tag), rest_after_close_bracket)` when the description
+/// begins with `[<non-empty>]`, else `(None, description)` unchanged.
 pub(crate) fn parse_tag_prefix(description: &str) -> (Option<&str>, &str) {
     if let Some(rest) = description.strip_prefix('[')
         && let Some(close) = rest.find(']')
@@ -933,6 +963,13 @@ pub(crate) fn parse_tag_prefix(description: &str) -> (Option<&str>, &str) {
 /// Single consolidated label and display description for a subagent row.
 /// The description always has the `[tag]` prefix stripped, used as the label or not, so callers never render bracket noise inline.
 pub(crate) fn format_subagent_label(info: &SubagentInfo) -> (String, String) {
+    format_subagent_label_with_locale(info, None)
+}
+
+pub(crate) fn format_subagent_label_with_locale(
+    info: &SubagentInfo,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> (String, String) {
     let (tag, clean_desc) = parse_tag_prefix(&info.description);
 
     let raw_label = if let Some(p) = info
@@ -950,13 +987,23 @@ pub(crate) fn format_subagent_label(info: &SubagentInfo) -> (String, String) {
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        r.to_string()
+        if r.eq_ignore_ascii_case(info.subagent_type.as_ref()) {
+            localized_builtin_subagent_type(&info.subagent_type, locale)
+                .unwrap_or(r)
+                .to_string()
+        } else {
+            r.to_string()
+        }
     } else if info.subagent_type.as_ref() != "general-purpose" {
-        format_type_label(&info.subagent_type).to_string()
+        localized_builtin_subagent_type(&info.subagent_type, locale)
+            .unwrap_or_else(|| format_type_label(&info.subagent_type))
+            .to_string()
     } else if let Some(tag) = tag {
         tag.to_string()
     } else {
-        "general".to_string()
+        localized_builtin_subagent_type("general-purpose", locale)
+            .unwrap_or("general")
+            .to_string()
     };
 
     // Iterating handles uppercase mappings that span several codepoints (`ß` becomes `SS`)
@@ -986,48 +1033,86 @@ pub(crate) fn format_subagent_meta(
 /// Concise display label for the subagent scrollback block and the fullscreen title bar.
 /// Callers handle the `None` activity separately.
 pub(crate) fn format_activity_label(activity: &crate::acp::tracker::TurnActivity) -> String {
+    format_activity_label_with_locale(activity, None)
+}
+
+pub(crate) fn format_activity_label_with_locale(
+    activity: &crate::acp::tracker::TurnActivity,
+    locale: Option<&crate::locale::LocaleContext>,
+) -> String {
     use crate::acp::tracker::TurnActivity;
+    let static_text = |id: &str, english: &'static str| {
+        locale
+            .map(|locale| locale.named_static_text(id, english))
+            .unwrap_or(english)
+    };
     match activity {
-        TurnActivity::Thinking => "Thinking".to_string(),
-        TurnActivity::Responding => "Responding".to_string(),
+        TurnActivity::Thinking => static_text("turn.activity.thinking", "Thinking").to_string(),
+        TurnActivity::Responding => {
+            static_text("turn.activity.responding", "Responding").to_string()
+        }
         TurnActivity::ToolRunning { title, description } => {
             if let Some(desc) = description
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
-                crate::acp::tracker::format_waiting_for_subject(desc)
+                crate::acp::tracker::format_waiting_for_subject_with_locale(desc, locale)
             } else if title.is_empty() {
-                "Running tool".to_string()
+                static_text("turn.activity.running_tool", "Running tool").to_string()
             } else {
                 let first_line = title.lines().next().unwrap_or(title);
                 let max_len = crate::acp::tracker::MAX_ACTIVITY_SUBJECT_CHARS;
                 // Byte length is the char count for ASCII, so this skips the char walk for the common title
                 if first_line.len() <= max_len {
-                    format!("Running: {first_line}")
+                    locale
+                        .map(|locale| {
+                            locale
+                                .named_text("turn.activity.running", "Running: {subject}")
+                                .replace("{subject}", first_line)
+                        })
+                        .unwrap_or_else(|| format!("Running: {first_line}"))
                 } else {
                     let char_count = first_line.chars().count();
                     if char_count <= max_len {
-                        format!("Running: {first_line}")
+                        locale
+                            .map(|locale| {
+                                locale
+                                    .named_text("turn.activity.running", "Running: {subject}")
+                                    .replace("{subject}", first_line)
+                            })
+                            .unwrap_or_else(|| format!("Running: {first_line}"))
                     } else {
                         let truncated: String = first_line.chars().take(max_len).collect();
-                        format!("Running: {truncated}\u{2026}")
+                        locale
+                            .map(|locale| {
+                                locale
+                                    .named_text("turn.activity.running", "Running: {subject}")
+                                    .replace("{subject}", &format!("{truncated}\u{2026}"))
+                            })
+                            .unwrap_or_else(|| format!("Running: {truncated}\u{2026}"))
                     }
                 }
             }
         }
-        TurnActivity::AutoCompacting => "Compacting".to_string(),
+        TurnActivity::AutoCompacting => {
+            static_text("turn.activity.compacting", "Compacting").to_string()
+        }
         TurnActivity::Retrying {
             attempt,
             max_retries,
-            ..
-        } => crate::app::error_display::retry_clause(
+            reason,
+            error_type,
+        } => crate::app::error_display::format_retry_activity_label_with_locale(
             *attempt,
             *max_retries,
+            reason,
+            error_type.as_deref(),
             crate::app::error_display::RetryLabelStyle::Compact,
+            locale,
         ),
-        TurnActivity::WritingToolCall(writing) => writing.label(),
-        TurnActivity::Waiting(reason) => reason.label(),
+        TurnActivity::WritingToolCall(writing) => writing.label_with_locale(locale),
+        TurnActivity::Waiting(reason) => reason.label_with_locale(locale),
     }
 }
 

@@ -27,7 +27,8 @@ pub use search::{
 pub use search_tool::{
     DiscoveredTool, SearchToolCallBlock as IntegrationSearchToolCallBlock, discovered_tool_action,
 };
-pub use sent_message::{SentMessagePresentation, SentMessageToolCallBlock};
+pub(crate) use sent_message::UNAVAILABLE_DELIVERY_REASON;
+pub use sent_message::{SentMessageDetail, SentMessagePresentation, SentMessageToolCallBlock};
 pub use use_tool::UseToolCallBlock;
 pub use web_fetch::WebFetchToolCallBlock;
 pub use web_search::WebSearchToolCallBlock;
@@ -43,6 +44,45 @@ use std::fmt;
 /// Headers are single logical selection targets (path/query/url/command);
 /// using one id across tool kinds keeps multi-line drag/copy grouping simple.
 pub(crate) const TOOL_HEADER_RANGE: u16 = 0;
+
+/// Return a translated display alias for the legacy product-owned voice tool.
+///
+/// The qualified name remains the canonical routing, permission, search, and
+/// copy contract. Unknown and server-provided names deliberately fall back to
+/// their existing dynamic presentation.
+pub(crate) fn localized_known_mcp_tool_name(
+    tool_name: &str,
+    locale: &crate::locale::LocaleContext,
+) -> Option<&'static str> {
+    let (key, english) = match tool_name {
+        "voice__list_voices" => ("scrollback.tool.mcp.voice.list_voices", "Voice List Voices"),
+        _ => return None,
+    };
+    let localized = locale.named_static_text(key, english);
+    (localized != english).then_some(localized)
+}
+
+/// Search results carry the server separately from the qualified tool name.
+/// Require both halves of the product-owned identity before replacing the
+/// dynamic presentation; a custom server must not inherit a Tasks/Voice alias
+/// merely by returning the same tool-name string.
+pub(crate) fn localized_known_search_mcp_tool_name(
+    tool_name: &str,
+    server: &str,
+    managed_gateway_tool: Option<&xai_grok_tools::types::resources::ManagedGatewayToolIdentity>,
+    locale: &crate::locale::LocaleContext,
+) -> Option<&'static str> {
+    let expected_server = tool_name.split_once("__")?.0;
+    if server != expected_server {
+        return None;
+    }
+    if let Some(identity) = managed_gateway_tool {
+        return crate::views::managed_mcp_localization::localized_verified_managed_mcp_tool_name(
+            tool_name, identity, locale,
+        );
+    }
+    localized_known_mcp_tool_name(tool_name, locale)
+}
 
 /// 1-based inclusive line range for display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +178,65 @@ impl VerbGroupKind {
             VerbGroupKind::OtherTool => ("tool", "tools"),
         };
         if count == 1 { one } else { many }
+    }
+
+    /// Locale key for the locally generated verb-group action. Dynamic tool
+    /// names, arguments, and outputs never pass through this mapping.
+    pub fn verb_locale_key(self, running: bool) -> &'static str {
+        let action = match self {
+            VerbGroupKind::File | VerbGroupKind::Skill => "read",
+            VerbGroupKind::Search
+            | VerbGroupKind::WebSearch
+            | VerbGroupKind::MemorySearch
+            | VerbGroupKind::IntegrationSearch => "search",
+            VerbGroupKind::Dir => "list",
+            VerbGroupKind::WebFetch => "fetch",
+            VerbGroupKind::Subagent | VerbGroupKind::Command | VerbGroupKind::OtherTool => "run",
+            VerbGroupKind::Message => "send",
+            VerbGroupKind::EditFile => "edit",
+            VerbGroupKind::McpCall => "call",
+        };
+        match (action, running) {
+            ("read", false) => "scrollback.verb_group.verb.read.completed",
+            ("read", true) => "scrollback.verb_group.verb.read.running",
+            ("search", false) => "scrollback.verb_group.verb.search.completed",
+            ("search", true) => "scrollback.verb_group.verb.search.running",
+            ("list", false) => "scrollback.verb_group.verb.list.completed",
+            ("list", true) => "scrollback.verb_group.verb.list.running",
+            ("fetch", false) => "scrollback.verb_group.verb.fetch.completed",
+            ("fetch", true) => "scrollback.verb_group.verb.fetch.running",
+            ("run", false) => "scrollback.verb_group.verb.run.completed",
+            ("run", true) => "scrollback.verb_group.verb.run.running",
+            ("send", false) => "scrollback.verb_group.verb.send.completed",
+            ("send", true) => "scrollback.verb_group.verb.send.running",
+            ("edit", false) => "scrollback.verb_group.verb.edit.completed",
+            ("edit", true) => "scrollback.verb_group.verb.edit.running",
+            ("call", false) => "scrollback.verb_group.verb.call.completed",
+            ("call", true) => "scrollback.verb_group.verb.call.running",
+            _ => unreachable!("verb-group action is exhaustive"),
+        }
+    }
+
+    /// Locale key for the locally generated verb-group noun. Chinese uses one
+    /// classifier-bearing noun for both singular and plural counts.
+    pub fn noun_locale_key(self) -> &'static str {
+        match self {
+            VerbGroupKind::File | VerbGroupKind::EditFile => "scrollback.verb_group.noun.file",
+            VerbGroupKind::Skill => "scrollback.verb_group.noun.skill",
+            VerbGroupKind::Search => "scrollback.verb_group.noun.pattern",
+            VerbGroupKind::Dir => "scrollback.verb_group.noun.dir",
+            VerbGroupKind::WebFetch | VerbGroupKind::WebSearch => {
+                "scrollback.verb_group.noun.website"
+            }
+            VerbGroupKind::MemorySearch => "scrollback.verb_group.noun.memory",
+            VerbGroupKind::IntegrationSearch | VerbGroupKind::McpCall => {
+                "scrollback.verb_group.noun.mcp_tool"
+            }
+            VerbGroupKind::Subagent => "scrollback.verb_group.noun.subagent",
+            VerbGroupKind::Command => "scrollback.verb_group.noun.command",
+            VerbGroupKind::Message => "scrollback.verb_group.noun.message",
+            VerbGroupKind::OtherTool => "scrollback.verb_group.noun.tool",
+        }
     }
 }
 

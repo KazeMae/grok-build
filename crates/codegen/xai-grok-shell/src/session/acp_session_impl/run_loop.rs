@@ -2335,9 +2335,12 @@ pub(super) async fn run_session(
                         // The notice keeps them from being parked silently
                         if session.state.lock().await.hook_block_held() {
                             session
-                                .send_hook_annotation(&format!(
+                                .send_hook_annotation_with_kind(
+                                    crate::extensions::notification::HookAnnotationKind::InterjectionsJoined,
+                                    &format!(
                                     "\u{26a0} {flushed_interjections} interjection(s) joined the held queue. Send a prompt to resume."
-                                ))
+                                    ),
+                                )
                                 .await;
                         }
                     }

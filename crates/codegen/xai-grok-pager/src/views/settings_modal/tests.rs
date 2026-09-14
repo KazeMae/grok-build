@@ -26,8 +26,380 @@ fn make_state() -> SettingsModalState {
     )
 }
 
-/// The contextual-hints group renders as a single top-level row (children hidden).
-/// Enter opens the sub-sheet, Space there toggles the focused child via the typed action, and Esc returns to Browse.
+fn zh_cn_locale() -> crate::locale::LocaleContext {
+    crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    })
+}
+
+/// Flatten a Ratatui buffer as visually rendered. Wide glyphs own their first
+/// cell; the following blank continuation cells are not real spaces.
+fn buffer_visual_text(buf: &Buffer) -> String {
+    let area = *buf.area();
+    let mut out = String::new();
+    for y in area.y..area.y.saturating_add(area.height) {
+        let mut skip = 0usize;
+        for x in area.x..area.x.saturating_add(area.width) {
+            let symbol = buf[(x, y)].symbol();
+            if skip == 0 {
+                out.push_str(symbol);
+            }
+            skip = skip.max(symbol.width()).saturating_sub(1);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+#[test]
+fn locale_aware_settings_modal_renders_chinese_chrome() {
+    let mut state = make_state();
+    let area = Rect::new(0, 0, 120, 40);
+    let mut buf = Buffer::empty(area);
+    let locale = zh_cn_locale();
+
+    render_settings_modal_with_locale(&mut buf, area, &mut state, false, None, Some(&locale));
+
+    let text = buffer_visual_text(&buf);
+    assert!(
+        text.contains("设置"),
+        "localized modal title missing: {text:?}"
+    );
+    assert!(
+        text.contains("外观"),
+        "localized category missing: {text:?}"
+    );
+    assert!(
+        text.contains("提示"),
+        "localized docs footer missing: {text:?}"
+    );
+    assert!(
+        text.contains("主题"),
+        "localized setting label missing: {text:?}"
+    );
+    assert!(
+        text.contains("/ 开始搜索"),
+        "localized search hint missing: {text:?}"
+    );
+    assert!(
+        !text.contains("/ to search"),
+        "English search hint leaked into zh-CN browse view: {text:?}"
+    );
+    assert!(
+        !text.contains("Theme"),
+        "English setting label leaked into zh-CN browse view: {text:?}"
+    );
+}
+
+#[test]
+fn locale_aware_settings_modal_renders_localized_metadata_and_choices() {
+    let mut state = make_state();
+    let theme_row = state
+        .rows
+        .iter()
+        .position(|row| matches!(row, RowEntry::Setting { key, .. } if *key == "theme"))
+        .expect("theme setting row");
+    state.selected = theme_row;
+
+    let expanded = handle_settings_key(
+        &mut state,
+        &KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+    );
+    assert!(matches!(expanded, SettingsKeyOutcome::Changed));
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut browse_buf = Buffer::empty(area);
+    let locale = zh_cn_locale();
+    render_settings_modal_with_locale(
+        &mut browse_buf,
+        area,
+        &mut state,
+        false,
+        None,
+        Some(&locale),
+    );
+    let browse_text = buffer_visual_text(&browse_buf);
+    assert!(
+        browse_text.contains("设置 TUI 的颜色主题。"),
+        "localized setting description missing: {browse_text:?}",
+    );
+
+    assert!(state.try_enter_picking_enum());
+    let mut picker_buf = Buffer::empty(area);
+    render_settings_modal_with_locale(
+        &mut picker_buf,
+        area,
+        &mut state,
+        false,
+        None,
+        Some(&locale),
+    );
+    let picker_text = buffer_visual_text(&picker_buf);
+    assert!(
+        picker_text.contains("跟随系统的深色／浅色外观。"),
+        "localized enum choice description missing: {picker_text:?}",
+    );
+    assert!(
+        !picker_text.contains("Follow the system"),
+        "English enum choice description leaked into zh-CN picker: {picker_text:?}",
+    );
+    assert!(
+        picker_text.contains("Grok 夜间") && picker_text.contains("Grok 日间"),
+        "localized Grok theme names missing: {picker_text:?}",
+    );
+    assert!(
+        !picker_text.contains("Grok Night") && !picker_text.contains("Grok Day"),
+        "English Grok theme names leaked into zh-CN picker: {picker_text:?}",
+    );
+}
+
+#[test]
+fn zh_localization_settings_modal_localizes_follow_up_behavior() {
+    let mut state = make_state();
+    let follow_up_row = state
+        .rows
+        .iter()
+        .position(
+            |row| matches!(row, RowEntry::Setting { key, .. } if *key == "follow_up_behavior"),
+        )
+        .expect("follow-up behavior setting row");
+    state.selected = follow_up_row;
+
+    let expanded = handle_settings_key(
+        &mut state,
+        &KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+    );
+    assert!(matches!(expanded, SettingsKeyOutcome::Changed));
+
+    let area = Rect::new(0, 0, 120, 40);
+    let locale = zh_cn_locale();
+    let mut browse_buf = Buffer::empty(area);
+    render_settings_modal_with_locale(
+        &mut browse_buf,
+        area,
+        &mut state,
+        false,
+        None,
+        Some(&locale),
+    );
+    let browse_text = buffer_visual_text(&browse_buf);
+    assert!(
+        browse_text.contains("跟进方式")
+            && browse_text.contains("轮次运行期间如何处理你发送的消息。"),
+        "localized follow-up metadata missing: {browse_text:?}",
+    );
+    assert!(
+        !browse_text.contains("Follow-up behavior")
+            && !browse_text.contains("What to do with messages"),
+        "English follow-up metadata leaked into zh-CN browse view: {browse_text:?}",
+    );
+
+    assert!(state.try_enter_picking_enum());
+    let mut picker_buf = Buffer::empty(area);
+    render_settings_modal_with_locale(
+        &mut picker_buf,
+        area,
+        &mut state,
+        false,
+        None,
+        Some(&locale),
+    );
+    let picker_text = buffer_visual_text(&picker_buf);
+    assert!(
+        picker_text.contains("队列") && picker_text.contains("插话"),
+        "localized follow-up choices missing: {picker_text:?}",
+    );
+    assert!(
+        !picker_text.contains("Queue")
+            && !picker_text.contains("Steer")
+            && !picker_text.contains("Hold follow-ups")
+            && !picker_text.contains("Inject follow-ups"),
+        "English follow-up choices leaked into zh-CN picker: {picker_text:?}",
+    );
+}
+
+#[test]
+fn zh_localization_metadata_covers_every_registered_setting_and_choice() {
+    let locale = zh_cn_locale();
+    let registry = SettingsRegistry::defaults();
+    let snapshot = PagerLocalSnapshot::default();
+
+    for meta in registry.all() {
+        let label_fallback = format!("__missing_setting_label:{}__", meta.key);
+        assert_ne!(
+            locale.setting_label(meta.key, &label_fallback).as_ref(),
+            label_fallback.as_str(),
+            "missing zh-CN label for setting {}",
+            meta.key,
+        );
+
+        let description_fallback = format!("__missing_setting_description:{}__", meta.key);
+        assert_ne!(
+            locale
+                .setting_description(meta.key, &description_fallback)
+                .as_ref(),
+            description_fallback.as_str(),
+            "missing zh-CN description for setting {}",
+            meta.key,
+        );
+
+        match &meta.kind {
+            SettingKind::Enum { choices, .. } => {
+                for choice in *choices {
+                    let label_fallback = format!(
+                        "__missing_setting_choice_label:{}:{}__",
+                        meta.key, choice.canonical
+                    );
+                    assert_ne!(
+                        locale
+                            .setting_choice_label(meta.key, choice.canonical, &label_fallback)
+                            .as_ref(),
+                        label_fallback.as_str(),
+                        "missing zh-CN label for setting choice {}:{}",
+                        meta.key,
+                        choice.canonical,
+                    );
+
+                    if !choice.description.is_empty() {
+                        let description_fallback = format!(
+                            "__missing_setting_choice_description:{}:{}__",
+                            meta.key, choice.canonical
+                        );
+                        assert_ne!(
+                            locale
+                                .setting_choice_description(
+                                    meta.key,
+                                    choice.canonical,
+                                    &description_fallback,
+                                )
+                                .as_ref(),
+                            description_fallback.as_str(),
+                            "missing zh-CN description for setting choice {}:{}",
+                            meta.key,
+                            choice.canonical,
+                        );
+                    }
+                }
+            }
+            SettingKind::DynamicEnum { source, .. } => {
+                for choice in crate::settings::dynamic_enum_choices(*source, &snapshot)
+                    .into_iter()
+                    .filter(|choice| choice.canonical.is_empty())
+                {
+                    let label_fallback =
+                        format!("__missing_dynamic_choice_label:{}:_none__", meta.key);
+                    assert_ne!(
+                        locale
+                            .setting_choice_label(meta.key, &choice.canonical, &label_fallback)
+                            .as_ref(),
+                        label_fallback.as_str(),
+                        "missing zh-CN empty-choice label for dynamic setting {}",
+                        meta.key,
+                    );
+
+                    if !choice.description.is_empty() {
+                        let description_fallback =
+                            format!("__missing_dynamic_choice_description:{}:_none__", meta.key);
+                        assert_ne!(
+                            locale
+                                .setting_choice_description(
+                                    meta.key,
+                                    &choice.canonical,
+                                    &description_fallback,
+                                )
+                                .as_ref(),
+                            description_fallback.as_str(),
+                            "missing zh-CN empty-choice description for dynamic setting {}",
+                            meta.key,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn legacy_settings_modal_wrapper_keeps_english_chrome() {
+    let mut state = make_state();
+    let area = Rect::new(0, 0, 120, 40);
+    let mut buf = Buffer::empty(area);
+
+    render_settings_modal(&mut buf, area, &mut state, false, None);
+
+    let text = buffer_visual_text(&buf);
+    assert!(
+        text.contains("Settings"),
+        "English modal title missing: {text:?}"
+    );
+    assert!(
+        text.contains("Appearance"),
+        "English category missing: {text:?}"
+    );
+    assert!(
+        text.contains("Tip"),
+        "English docs footer missing: {text:?}"
+    );
+}
+
+#[test]
+fn locale_aware_reset_overlay_localizes_background_rows() {
+    let mut state = make_state();
+    let area = Rect::new(0, 0, 120, 40);
+    let mut buf = Buffer::empty(area);
+    let locale = zh_cn_locale();
+    let overlay = ResetConfirmOverlay {
+        prompt: "Reset this setting?",
+        breadcrumb_suffix: "Reset",
+    };
+
+    assert!(render_settings_modal_with_locale(
+        &mut buf,
+        area,
+        &mut state,
+        false,
+        Some(&overlay),
+        Some(&locale),
+    ));
+
+    let text = buffer_visual_text(&buf);
+    assert!(
+        text.contains("设置"),
+        "localized overlay title missing: {text:?}"
+    );
+    assert!(
+        text.contains("外观"),
+        "localized overlay background category missing: {text:?}"
+    );
+    assert!(
+        text.contains("Reset this setting?"),
+        "opaque caller-owned reset prompt changed: {text:?}"
+    );
+}
+
+#[test]
+fn locale_aware_settings_empty_filter_preserves_query() {
+    let mut state = make_state();
+    state.set_query("xyzzy-no-match");
+    let area = Rect::new(0, 0, 80, 9);
+    let mut buf = Buffer::empty(area);
+    let theme = Theme::current();
+    let locale = zh_cn_locale();
+
+    render_rows_with_locale(&mut buf, area, &mut state, &theme, Some(&locale));
+
+    let text = buffer_visual_text(&buf);
+    assert!(
+        text.contains("未找到与“xyzzy-no-match”匹配的设置"),
+        "localized empty-filter message missing or query changed: {text:?}",
+    );
+}
+
+/// The contextual-hints group renders as a single top-level row (children
+/// hidden); Enter opens the sub-sheet, Space there toggles the focused
+/// child via the typed action, and Esc returns to Browse.
 #[test]
 fn contextual_hints_group_sub_sheet_flow() {
     let mut s = make_state();
@@ -1538,12 +1910,14 @@ fn render_editing_value_cursor_at_logical_position_when_buffer_fits() {
     let theme = Theme::current();
     render_editing_value(&mut buf, area, &mut s, &theme);
 
-    // The input row is at y = header_rows = 3 (title + desc + gap). Cursor glyph is ▏ (left one-eighth block).
+    // The input row is at y = header_rows = 3 (title + desc + gap).
+    // Cursor glyph follows the active terminal's safe glyph set.
     let row_y = 3u16;
+    let cursor_glyph = crate::glyphs::selection_bar();
     let mut found_cursor_col: Option<u16> = None;
     for x in 0..area.width {
         if let Some(cell) = buf.cell((x, row_y))
-            && cell.symbol() == "\u{258F}"
+            && cell.symbol() == cursor_glyph
         {
             found_cursor_col = Some(x);
             break;
@@ -1575,10 +1949,11 @@ fn render_editing_value_cursor_pans_to_left_on_overflow_at_start() {
     render_editing_value(&mut buf, area, &mut s, &theme);
 
     let row_y = 3u16;
+    let cursor_glyph = crate::glyphs::selection_bar();
     let mut found_cursor_col: Option<u16> = None;
     for x in 0..area.width {
         if let Some(cell) = buf.cell((x, row_y))
-            && cell.symbol() == "\u{258F}"
+            && cell.symbol() == cursor_glyph
         {
             found_cursor_col = Some(x);
             break;
@@ -1609,10 +1984,11 @@ fn render_editing_value_cursor_pans_to_right_on_overflow_at_end() {
     render_editing_value(&mut buf, area, &mut s, &theme);
 
     let row_y = 3u16;
+    let cursor_glyph = crate::glyphs::selection_bar();
     let mut found_cursor_col: Option<u16> = None;
     for x in 0..area.width {
         if let Some(cell) = buf.cell((x, row_y))
-            && cell.symbol() == "\u{258F}"
+            && cell.symbol() == cursor_glyph
         {
             found_cursor_col = Some(x);
             break;
@@ -2024,8 +2400,12 @@ fn int_editing_value_renders_stepper_ui() {
     let theme = Theme::current();
     render_editing_value(&mut buf, area, &mut s, &theme);
 
-    // Find the stepper row dynamically; the description word-wraps so the input row's y is no longer fixed at 3
-    // Scan rows top-down for the one that contains both stepper glyphs
+    // Find the stepper row dynamically — the description
+    // word-wraps so the input row's y is no
+    // longer fixed at 3. Scan rows top-down for the one that
+    // contains both stepper glyphs.
+    let left_glyph = int_stepper_left_glyph();
+    let right_glyph = crate::glyphs::chevron();
     let mut stepper_row: Option<String> = None;
     for y in 0..area.height {
         let mut row = String::new();
@@ -2034,19 +2414,19 @@ fn int_editing_value_renders_stepper_ui() {
                 row.push_str(cell.symbol());
             }
         }
-        if row.contains('\u{2039}') && row.contains('\u{203A}') {
+        if row.contains(left_glyph) && row.contains(right_glyph) {
             stepper_row = Some(row);
             break;
         }
     }
     let row = stepper_row.expect("must find the stepper row");
     assert!(
-        row.contains('\u{2039}'),
-        "stepper row must contain `‹` glyph, got {row:?}"
+        row.contains(left_glyph),
+        "stepper row must contain left glyph {left_glyph:?}, got {row:?}"
     );
     assert!(
-        row.contains('\u{203A}'),
-        "stepper row must contain `›` glyph, got {row:?}"
+        row.contains(right_glyph),
+        "stepper row must contain right glyph {right_glyph:?}, got {row:?}"
     );
     assert!(
         row.contains("125"),
@@ -2621,8 +3001,8 @@ fn picker_separates_focus_highlight_from_committed_marker() {
     // Layout: rows 3..5 are choices (with subtitle on row 1). Row 3 is the committed "first" (unfocused), row 4 the focused "second".
     assert_eq!(
         marker_at(3),
-        "\u{25CF}",
-        "row 3 (committed, unfocused) should be ●"
+        crate::glyphs::filled_dot(),
+        "row 3 (committed, unfocused) should use the filled marker"
     );
     assert_eq!(
         marker_at(4),
@@ -2691,8 +3071,8 @@ fn picker_separates_focus_highlight_from_committed_marker() {
     };
     assert_eq!(
         marker_at2(3),
-        "\u{25CF}",
-        "committed+focused row should be ●"
+        crate::glyphs::filled_dot(),
+        "committed+focused row should use the filled marker"
     );
     assert_eq!(
         marker_at2(4),
@@ -2754,7 +3134,7 @@ fn picker_string_original_value_fills_committed_marker() {
     };
     assert_eq!(
         marker_at(3),
-        "\u{25CF}",
+        crate::glyphs::filled_dot(),
         "String original_value \"first\" must fill row 3"
     );
     assert_eq!(
@@ -2812,7 +3192,7 @@ fn picker_string_original_value_fills_committed_marker() {
     };
     assert_eq!(
         marker_at2(3),
-        "\u{25CF}",
+        crate::glyphs::filled_dot(),
         "empty String must fill empty-canonical clear row"
     );
     assert_eq!(
@@ -3104,8 +3484,10 @@ fn render_picker_drops_description_when_wrap_block_exceeds_height() {
         all_text.contains('X'),
         "title `X` must render at narrow height: {all_text:?}",
     );
-    // The fallback dropped the description, freeing space for the choice marker `\u{25CB}` or `\u{25CF}` (`○`/`●`)
-    let has_choice_marker = all_text.contains('\u{25CB}') || all_text.contains('\u{25CF}');
+    // The fallback dropped the description, freeing space for
+    // the stable hollow marker or the terminal-safe filled marker.
+    let has_choice_marker =
+        all_text.contains('\u{25CB}') || all_text.contains(crate::glyphs::filled_dot());
     assert!(
         has_choice_marker,
         "at least one choice marker must render when desc is dropped: {all_text:?}",
@@ -5520,7 +5902,7 @@ fn chevron_column_is_at_constant_right_offset() {
     let enum_cell = buf_enum.cell((glyph_x, 0)).expect("enum col cell");
     assert_eq!(
         enum_cell.symbol(),
-        "\u{203A}",
+        crate::glyphs::chevron(),
         "Enum row's chevron column must contain the `›` glyph at \
          area.right - {} (constant right offset across rows), got: {:?}",
         ROW_RIGHT_PAD_W + 1,
@@ -5588,7 +5970,7 @@ fn chevron_column_is_at_constant_right_offset() {
         .expect("enum row chevron glyph cell");
     assert_eq!(
         enum_glyph_cell.symbol(),
-        "\u{203A}",
+        crate::glyphs::chevron(),
         "Enum row's chevron glyph must land at glyph_x={glyph_x_multi}",
     );
     let bool_glyph_cell = buf_multi
@@ -5658,7 +6040,7 @@ fn chevron_column_aligns_across_one_and_two_line_layouts() {
         .expect("two-line chevron cell on line 2");
     assert_eq!(
         two_line_cell.symbol(),
-        "\u{203A}",
+        crate::glyphs::chevron(),
         "Two-line row's chevron must land at \
          `area.right - ROW_RIGHT_PAD_W - 1` on LINE 2 (UX Issue 2)",
     );
@@ -5667,7 +6049,7 @@ fn chevron_column_aligns_across_one_and_two_line_layouts() {
         .expect("one-line chevron cell");
     assert_eq!(
         one_line_cell.symbol(),
-        "\u{203A}",
+        crate::glyphs::chevron(),
         "One-line row's chevron must land at `area.right - ROW_RIGHT_PAD_W - 1`",
     );
     // The offset from the right edge is the same; pin that explicitly so a future refactor that changes one anchor independently trips the test
@@ -5895,8 +6277,8 @@ fn picker_description_word_wraps_no_ellipsis() {
         .expect("must find title row");
     let mut desc_row_count = 0usize;
     for (i, row) in rows.iter().enumerate().skip(title_y + 1) {
-        // Choice markers are `\u{25CB}` (○) or `\u{25CF}` (●).
-        if row.contains('\u{25CB}') || row.contains('\u{25CF}') {
+        // Choice markers are the stable hollow marker or terminal-safe filled marker.
+        if row.contains('\u{25CB}') || row.contains(crate::glyphs::filled_dot()) {
             break;
         }
         let interior = row.trim();
@@ -7399,6 +7781,7 @@ fn locked_coding_data_sharing_row_does_not_open_picker() {
     for lock in [
         CodingDataSharingLock::Zdr,
         CodingDataSharingLock::TeamManaged,
+        CodingDataSharingLock::PrivacyBuild,
     ] {
         let mut s = make_locked_state(lock);
         s.selected = coding_data_sharing_row_idx(&s);
@@ -7433,6 +7816,7 @@ fn locked_coding_data_sharing_row_refuses_reset() {
     for lock in [
         CodingDataSharingLock::Zdr,
         CodingDataSharingLock::TeamManaged,
+        CodingDataSharingLock::PrivacyBuild,
     ] {
         let mut s = make_locked_state(lock);
         s.selected = coding_data_sharing_row_idx(&s);
@@ -7600,6 +7984,9 @@ fn locked_coding_data_sharing_expanded_description_replaces_with_reason() {
         "expanded locked row must show the lock reason: {text:?}"
     );
     // Token from the live description so this survives copy edits.
+    // Skip the leading words that mirror the setting label ("Coding data
+    // retention") — the label legitimately appears in the locked row, so
+    // probe a description-unique fragment instead.
     let desc = s
         .registry
         .find("coding_data_sharing")
@@ -7607,6 +7994,7 @@ fn locked_coding_data_sharing_expanded_description_replaces_with_reason() {
         .description;
     let desc_head: String = desc
         .split_whitespace()
+        .skip(3)
         .take(3)
         .collect::<Vec<_>>()
         .join(" ");
