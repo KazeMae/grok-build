@@ -4430,14 +4430,15 @@ pub fn render_extensions_modal_with_locale(
         let i_is_action_key = extensions_action_keys(state.active_tab)
             .iter()
             .any(|&(ch, _)| ch == 'i');
-        if !i_is_action_key {
-            if !state.picker_state.search_active && crate::appearance::cache::load_vim_mode() {
-                shortcuts.push(Shortcut {
-                    label: extension_static(locale, "extensions.shortcut.search", "i search"),
-                    clickable: false,
-                    id: 0,
-                });
-            }
+        if !i_is_action_key
+            && !state.picker_state.search_active
+            && crate::appearance::cache::load_vim_mode()
+        {
+            shortcuts.push(Shortcut {
+                label: extension_static(locale, "extensions.shortcut.search", "i search"),
+                clickable: false,
+                id: 0,
+            });
         }
     }
 

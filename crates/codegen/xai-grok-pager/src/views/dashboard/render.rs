@@ -102,7 +102,7 @@ const GROUP_HEADER_HEIGHT: u16 = 2;
 /// The user must press Space to peek (which routes the permission question and options into the
 /// peek panel) and then a number key to answer.
 #[allow(clippy::too_many_arguments)]
-pub fn render_dashboard(
+pub(crate) fn render_dashboard(
     buf: &mut Buffer,
     area: Rect,
     state: &mut DashboardState,
@@ -148,7 +148,7 @@ pub fn render_dashboard(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn render_dashboard_with_locale(
+pub(crate) fn render_dashboard_with_locale(
     buf: &mut Buffer,
     area: Rect,
     state: &mut DashboardState,

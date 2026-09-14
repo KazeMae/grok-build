@@ -1,8 +1,8 @@
 # 入门指南
 
-> **社区构建说明：** 这是非官方简体中文发行版。它使用命令 `grok-zh`，
+> **社区构建说明：** 这是非官方简体中文发行版。它使用命令 `grok`，
 > 并有意与官方程序共用 `~/.grok` 和 `GROK_HOME`，因此会话、凭据和配置
-> 保持一致。xAI 官方安装器不会安装或更新 `grok-zh` 可执行文件。
+> 保持一致。xAI 官方安装器不会安装或更新 `grok` 可执行文件。
 
 Grok Build 是 SpaceXAI 推出的终端 AI 编程助手。它以 TUI（终端用户界面）
 运行，能够理解代码库、执行 Shell 命令、编辑文件、搜索网页并管理任务。
@@ -17,9 +17,9 @@ Agent Client Protocol（ACP）集成到编辑器中。
 社区 Windows 包由本仓库 Releases 和 `CI` 工作流生成。
 Release ZIP 下载后只需解压一次；所有 `release-v*` 包（包括
 `release-v1.0.12-rc.1`）需先打开唯一的
-`grok-zh-<version>-windows-x86_64-gnu` 目录，旧版与 `v1.0.8` 桥接包则直接使用
+`grok-<version>-windows-x86_64-gnu` 目录，旧版与 `v1.0.8` 桥接包则直接使用
 解压目录。包内的 `Install-GrokZh.ps1` 可自动加入用户 `Path`，默认提供
-`grok-zh`、`agent-zh`，并支持由用户显式接管 `grok`、`agent`。完整说明也会
+`grok`、`agent-zh`，并支持由用户显式接管 `grok`、`agent`。完整说明也会
 作为包内的 `INSTALL-WINDOWS.md` 提供，并可在
 [仓库中在线查看](https://github.com/Catapult291/GrokZen/blob/zh-dev/packaging/windows/INSTALL-WINDOWS.md)。
 
@@ -33,7 +33,7 @@ macOS ARM64 与 Linux x86_64 GNU 的 `release-v*` 归档同样只含一个与归
 验证安装：
 
 ```bash
-grok-zh --version
+grok --version
 ```
 
 带更新器的版本只读取本仓库的 Immutable GitHub Releases，只接受当前平台的完整归档及其
@@ -46,14 +46,14 @@ grok-zh --version
 `Ctrl+U` 才会退出旧 TUI、下载并安装；显式开启设置中的“自动更新”后才允许后台预下载。
 交互式下载会显示已下载大小、百分比、速度和预计剩余时间；后台更新或输出重定向时进度条
 自动隐藏。版本严格使用与上游一致的三段 SemVer，不定义第四段社区修订号。
-随后重新运行 `grok-zh`。默认通道为稳定版；`grok-zh update --alpha` 可显式选择预发布版，
-`grok-zh update --stable` 可切回稳定版。
+随后重新运行 `grok`。默认通道为稳定版；`grok update --alpha` 可显式选择预发布版，
+`grok update --stable` 可切回稳定版。
 
 在 Grove 配置中启用 `[clone] enabled = true` 后，可以通过 Grove 提取仓库
 （macOS 使用 NFS，Linux 使用 FUSE）：
 
 ```bash
-grok-zh clone <url> [dir]
+grok clone <url> [dir]
 ```
 
 默认会对所选分支进行深度为 1 的检出。需要完整历史时请传入
@@ -66,19 +66,19 @@ grok-zh clone <url> [dir]
 运行以下命令启动 Grok：
 
 ```bash
-grok-zh
+grok
 ```
 
 首次启动时，Grok 会打开浏览器并引导你通过 grok.com 完成身份验证。登录后，
 凭据会保存在 `~/.grok/auth.json`，可跨会话持续使用，并由 `grok` 与
-`grok-zh` 共享。Grok 会自动刷新凭据；无法继续续期时，会提示你重新登录。
+`grok` 共享。Grok 会自动刷新凭据；无法继续续期时，会提示你重新登录。
 
 如果更希望使用 API 密钥（例如 CI/CD 或无法打开浏览器的环境），请设置
 `XAI_API_KEY` 环境变量：
 
 ```bash
 export XAI_API_KEY="xai-..."
-grok-zh
+grok
 ```
 
 浏览器登录、API 密钥、OIDC、外部身份提供方和设备代码流程的完整说明见
@@ -129,7 +129,7 @@ Vim 模式。
 也可以开启始终批准模式：
 
 - 按 `Ctrl+O` 切换始终批准模式。
-- 启动时使用 `--yolo`：`grok-zh --yolo`。
+- 启动时使用 `--yolo`：`grok --yolo`。
 - 在提示输入框中输入 `/always-approve` 切换该模式。
 
 ---
@@ -139,12 +139,12 @@ Vim 模式。
 ### 会话
 
 每段对话都是一个**会话**。会话会自动保存到 `~/.grok/sessions/`，由 `grok`
-与 `grok-zh` 共享，并可稍后恢复。每个会话都会记录完整对话历史、工具调用、
+与 `grok` 共享，并可稍后恢复。每个会话都会记录完整对话历史、工具调用、
 文件编辑和任务状态。
 
 - 新建会话：`Ctrl+N` 或 `/new`。
 - 恢复旧会话：在 TUI 中输入 `/resume`，或从 CLI 使用 `--resume <ID>`。
-- 继续最近的会话：`grok-zh -c`。
+- 继续最近的会话：`grok -c`。
 
 ### 回滚区
 
@@ -197,44 +197,44 @@ Grok 内置以下工具：
 
 ```bash
 # 启动交互式 TUI，并将初始提示作为第一轮任务提交
-grok-zh "fix the failing auth test and run it"
+grok "fix the failing auth test and run it"
 
 # 在新 Git 工作树中提交初始提示。请使用带等号的 --worktree=<name>，
-# 避免提示被当作工作树名称；例如 `grok-zh -w "refactor module X"`
+# 避免提示被当作工作树名称；例如 `grok -w "refactor module X"`
 # 会把 "refactor module X" 当作工作树标签，而不是提示。
-grok-zh --worktree=feat "refactor module X"
+grok --worktree=feat "refactor module X"
 
 # 让工作树基于指定分支（例如 main），而不是当前 HEAD
-grok-zh -w --ref main "implement feature from main"
+grok -w --ref main "implement feature from main"
 
 # 在指定项目目录中启动
-grok-zh --cwd ~/projects/my-app
+grok --cwd ~/projects/my-app
 
 # 添加项目专用规则
-grok-zh --rules "Always use TypeScript. Prefer functional components."
+grok --rules "Always use TypeScript. Prefer functional components."
 
 # 自动批准所有工具执行
-grok-zh --yolo
+grok --yolo
 
 # 使用指定模型
-grok-zh -m grok-build
+grok -m grok-build
 
 # 恢复旧会话
-grok-zh --resume <session-id>
+grok --resume <session-id>
 
 # 继续最近的会话
-grok-zh -c
+grok -c
 
 # 实验性回滚区原生渲染模式。该选择会被记住：通过 --minimal 或
-# --fullscreen（也可用 /minimal 或 /fullscreen）选择后，普通 `grok-zh`
+# --fullscreen（也可用 /minimal 或 /fullscreen）选择后，普通 `grok`
 # 下次会继续使用上次选择的模式。
-grok-zh --minimal
+grok --minimal
 
 # 返回标准全屏 TUI，并将该模式设为默认
-grok-zh --fullscreen
+grok --fullscreen
 
 # 无头模式（供脚本使用）
-grok-zh -p "Explain this codebase"
+grok -p "Explain this codebase"
 ```
 
 ---
@@ -244,7 +244,7 @@ grok-zh -p "Explain this codebase"
 使用无头模式以非交互方式运行 Grok，适用于脚本、CI/CD 和自动化：
 
 ```bash
-grok-zh -p "Your prompt here"
+grok -p "Your prompt here"
 ```
 
 输出格式：
@@ -258,7 +258,7 @@ grok-zh -p "Your prompt here"
 CI/CD 示例：
 
 ```bash
-grok-zh -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
+grok -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
 ```
 
 ---

@@ -43,7 +43,7 @@ Grok 为每个会话使用单独的目录，并按工作目录分组。它会对
 ```
 
 `summary.json` 是索引条目。它记录会话摘要和生成的标题、模型 ID、创建和更新时间
-戳、消息计数，以及分叉或恢复会话的父会话引用。它还会记录最近一轮摘要和会话回顾，供列表界面展示。`updates.jsonl` 是驱动 `/resume` 和会话恢复的权威对话日志。逐轮令牌与费用总计可通过 `grok-zh usage` 查看。
+戳、消息计数，以及分叉或恢复会话的父会话引用。它还会记录最近一轮摘要和会话回顾，供列表界面展示。`updates.jsonl` 是驱动 `/resume` 和会话恢复的权威对话日志。逐轮令牌与费用总计可通过 `grok usage` 查看。
 
 ### 会话标题
 
@@ -111,7 +111,7 @@ dashboard 和 `/resume` 中显示的会话标题会根据对话自动生成。�
 按 ID 或标题恢复指定会话：
 
 ```bash
-grok-zh --resume <session-id-or-title>
+grok --resume <session-id-or-title>
 ```
 
 不是会话 ID 的值会与当前目录的会话标题匹配，忽略字母大小写（简单的小写比较），
@@ -119,11 +119,11 @@ grok-zh --resume <session-id-or-title>
 于自动生成的重复项；否则命令会报错并列出匹配的 ID。UUID 形状的值始终按会话 ID
 处理，从不按标题处理。脚本应优先使用 ID。
 
-不带值运行 `grok-zh --resume`，会恢复当前目录最近的会话。
+不带值运行 `grok --resume`，会恢复当前目录最近的会话。
 
 ### 从欢迎屏幕恢复
 
-启动 `grok-zh` 时，欢迎屏幕会列出当前目录的最近会话。选择一个即可恢复。
+启动 `grok` 时，欢迎屏幕会列出当前目录的最近会话。选择一个即可恢复。
 
 ---
 
@@ -209,7 +209,7 @@ Yes, and don't ask again / No）。“Yes, and don't ask again”会关闭该设
 
 - 会话标题（设置后）
 - Shell 版本
-- 身份验证方式（OAuth 与 API key；API-key 会话还会建议使用 `grok-zh login` 登录 SuperGrok）
+- 身份验证方式（OAuth 与 API key；API-key 会话还会建议使用 `grok login` 登录 SuperGrok）
 - 会话 ID
 - 工作目录
 - 模型（coding 模型还会显示模型哈希）
@@ -224,13 +224,13 @@ Yes, and don't ask again / No）。“Yes, and don't ask again”会关闭该设
 
 ```bash
 # 每次都新建会话（默认）
-grok-zh -p "Hello"
+grok -p "Hello"
 
 # 按 ID 或标题恢复现有会话（不存在时出错）
-grok-zh -p "Continue where we left off" -r <session-id-or-title>
+grok -p "Continue where we left off" -r <session-id-or-title>
 
 # 继续当前目录中最近的会话
-grok-zh -p "What were we doing?" -c
+grok -p "What were we doing?" -c
 ```
 
 在无头模式中，使用 `-r`/`--resume` 恢复现有会话（会话不存在时出错），或使用
@@ -248,7 +248,7 @@ Code 的防覆盖模型一致（客户端在写入 cwd 下预检；顺序使用�
 要读回会话 ID，请请求 JSON 输出：
 
 ```bash
-grok-zh -p "Hello" --output-format json | jq -r '.sessionId'
+grok -p "Hello" --output-format json | jq -r '.sessionId'
 ```
 
 ---
@@ -284,38 +284,38 @@ await connection.request("session/set_config_option", {
 
 ---
 
-## `grok-zh sessions` 子命令
+## `grok sessions` 子命令
 
-从命令行列出或搜索会话。`grok-zh sessions` 需要一个子命令：
+从命令行列出或搜索会话。`grok sessions` 需要一个子命令：
 
 ```bash
 # 列出当前目录的最近会话
-grok-zh sessions list
+grok sessions list
 
 # 限制结果数量（默认 20）
-grok-zh sessions list --limit 50
+grok sessions list --limit 50
 
 # 按关键词搜索会话（匹配标题和提示）
-grok-zh sessions search "rate limit"
+grok sessions search "rate limit"
 ```
 
-`grok-zh sessions list` 显示当前工作目录的会话，并按 worktree 标签分组。每行列出
-会话 ID、创建和更新时间、来源状态以及摘要。`grok-zh sessions search` 会将本地
+`grok sessions list` 显示当前工作目录的会话，并按 worktree 标签分组。每行列出
+会话 ID、创建和更新时间、来源状态以及摘要。`grok sessions search` 会将本地
 SQLite 索引与远程结果合并。
 
 ---
 
 <a id="the-grok-usage-subcommand"></a>
-## `grok-zh usage` 子命令
+## `grok usage` 子命令
 
 打印某个会话持久保存的令牌与费用用量。请使用该命令，不要直接读取会话文件：
 
 ```bash
 # 会话总计和每个已记录轮次
-grok-zh usage <session-id>
+grok usage <session-id>
 
 # 指定一个轮次
-grok-zh usage <session-id> 3
+grok usage <session-id> 3
 ```
 
 输出为 JSON，包含 `sessionId`、`updatedAt`、`session` 和 `turns`。指定轮次时使用同一封装结构，但 `turns` 只有一个元素。会话总计覆盖完整对话，包括恢复或分叉继承的历史。`costUsdTicks` 以每美元 10¹⁰ tick 计（除以 `1e10` 即美元）；不存在的轮次号会报错。TUI 中的交互式额度与计费入口仍是 `/usage`。
@@ -333,11 +333,11 @@ Worktree 会话在内部通过 `x.ai/git/worktree/*` 扩展方法管理。关键
 - **Apply**：将 worktree 更改合并回主工作目录
 - **Remove**：会话结束后清理 worktree
 
-使用 `grok-zh -w -r <session-id>` 在新的 worktree 中恢复会话。
+使用 `grok -w -r <session-id>` 在新的 worktree 中恢复会话。
 
 ### 检查磁盘用量
 
-`grok-zh du`（别名：`grok-zh disk-usage`）报告 grok 主目录（`~/.grok`）在磁盘上
+`grok du`（别名：`grok disk-usage`）报告 grok 主目录（`~/.grok`）在磁盘上
 占用的空间。它会按从大到小列出每个顶层目录，然后列出每个 worktree 的大小、类型、
 年龄、标签和路径。注册表未跟踪的 worktree 会显示为 `untracked`。传入 `--json` 可
 获取相同报告的机器可读形式。
@@ -355,16 +355,16 @@ Worktrees
     380.0 GB  session             12d ago    my-fix ~/.grok/worktrees/xai/worktree-abc
      32.3 GB  untracked (session) 40d ago           ~/.grok/worktrees/xai/worktree-old
 
-To reclaim space, run `grok-zh worktree gc --max-age 7d --dry-run`, then the same command without `--dry-run`. Without `--max-age`, gc expires nothing.
-Untracked rows are not in the registry, so gc never visits them. Remove one with `grok-zh worktree rm --dry-run <path>`, then without `--dry-run`.
+To reclaim space, run `grok worktree gc --max-age 7d --dry-run`, then the same command without `--dry-run`. Without `--max-age`, gc expires nothing.
+Untracked rows are not in the registry, so gc never visits them. Remove one with `grok worktree rm --dry-run <path>`, then without `--dry-run`.
 ```
 
-`AGE` 是 `grok-zh worktree gc` 衡量的值：从 worktree 上次访问起经过的时间，或者从
+`AGE` 是 `grok worktree gc` 衡量的值：从 worktree 上次访问起经过的时间，或者从
 创建起经过的时间（以较近者为准）。会话和智能体活动会更新它；留在目录中的 Shell
 或编辑器不会更新它。未跟踪的 worktree 没有注册表条目，因此其年龄取自其下方最新
 文件。
 
-大小在 Unix 上是物理块计数，在其他系统上是逻辑文件大小，与 `grok-zh worktree show`
+大小在 Unix 上是物理块计数，在其他系统上是逻辑文件大小，与 `grok worktree show`
 报告的内容一致。Worktree 克隆与源共享存储，每个副本都完整计数，因此总量可能超过
 `du -sh` 和实际正在使用的空间。当总量超过卷上的已用空间时，报告会说明这一点。
 `--json` 会将相同数字放在 `volume_capacity_bytes` 和 `volume_available_bytes` 中。
@@ -374,7 +374,7 @@ Untracked rows are not in the registry, so gc never visits them. Remove one with
 `null`）。指向目录的顶层符号链接（例如迁移后的 `worktrees`）会计入
 `unfollowed_dir_symlinks`；其目标不计入总量，但其下方的行仍会计算大小。报告无法读取
 的目录和无法获取状态的条目分别计入 `unreadable_dirs` 和 `unstatable_entries`。运行
-`RUST_LOG=debug grok-zh du` 可列出它们的名称。
+`RUST_LOG=debug grok du` 可列出它们的名称。
 
 `--json` 中的每个 worktree 行还带有 Unix 秒表示的 `created_at`、`last_accessed_at`
 和 `last_modified_at`，以及 `repo_name` 和 `git_ref`。未跟踪行的注册表字段为 `null`。
@@ -384,11 +384,11 @@ Untracked rows are not in the registry, so gc never visits them. Remove one with
 字段携带相同的值：`read`、`absent`、`busy`、`unopenable` 或 `corrupt`。`busy` 表示
 注册表被另一个进程占用，应重试。`unopenable` 表示权限或 I/O 问题，应检查文件。
 `corrupt` 是唯一需要删除的情况：删除报告所列的文件，然后运行
-`grok-zh worktree db rebuild`。
+`grok worktree db rebuild`。
 
-要回收空间，运行 `grok-zh worktree gc --max-age 7d`，它会删除超过指定年龄的已跟踪
+要回收空间，运行 `grok worktree gc --max-age 7d`，它会删除超过指定年龄的已跟踪
 worktree。不带 `--max-age` 时 gc 不会使任何内容过期，并且只访问注册表跟踪的 worktree。
-使用 `grok-zh worktree rm <path>` 删除未跟踪的 worktree。两个命令都接受 `--dry-run`
+使用 `grok worktree rm <path>` 删除未跟踪的 worktree。两个命令都接受 `--dry-run`
 并报告将执行的操作：gc 会统计将删除的 worktree 数量，`rm` 会列出路径。两者都不会
 检查工作树中是否有未提交或未推送的工作，因此请先阅读预览。
 
@@ -406,7 +406,7 @@ ACP 会话更新事件。这种格式支持：
 - 易于调试（每一行都是有效 JSON）
 
 较小的状态文件——`summary.json`、`plan.json` 和 `signals.json`——使用普通 JSON 而
-不是 JSONL。JSONL 是会话内容的事实来源；`grok-zh sessions search` 还会在会话标题
+不是 JSONL。JSONL 是会话内容的事实来源；`grok sessions search` 还会在会话标题
 和提示上维护本地 SQLite FTS5 索引，以便快速关键词搜索。
 
 ### 会话元数据

@@ -91,6 +91,6 @@ fn localizes_banner_without_losing_version_values_or_detection() {
     assert!(text.contains("版本不一致"));
     assert!(text.contains("0.2.121"));
     assert!(text.contains("1.0.0"));
-    assert!(text.contains("grok-zh"));
+    assert!(text.contains("grok"));
     assert!(is_version_mismatch_banner(&text));
 }

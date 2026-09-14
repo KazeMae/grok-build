@@ -72,8 +72,8 @@ pub enum Command {
 Terminal）时，这会让复制功能正常工作。包装命令的终端也会与窗口大小保持同步。
 
 示例：
-  grok-zh wrap docker exec -it my-container bash
-  grok-zh wrap kubectl exec -it my-pod -- bash
+  grok wrap docker exec -it my-container bash
+  grok wrap kubectl exec -it my-pod -- bash
 
 更多信息见 ~/.grok/README.grok-build-zh.md。
 ")]
@@ -154,10 +154,10 @@ pub struct WrapArgs {
     )]
     pub command: Vec<String>,
 }
-/// 按 PID 指定正在运行的 leader 进程（用于 `grok-zh leader` / `grok-zh workspace`）。
+/// 按 PID 指定正在运行的 leader 进程（用于 `grok leader` / `grok workspace`）。
 #[derive(Debug, clap::Args, Clone, Default)]
 pub struct LeaderTargetArgs {
-    /// 来自 `grok-zh leader list` 的 leader 进程 ID。
+    /// 来自 `grok leader list` 的 leader 进程 ID。
     #[arg(long)]
     pub pid: Option<u32>,
 }
@@ -309,13 +309,13 @@ impl AgentArgs {
                 Ok(canonical) if canonical.is_dir() => Some(canonical),
                 Ok(_) => {
                     eprintln!(
-                        "grok-zh: --plugin-dir {}: not a directory; skipping",
+                        "grok: --plugin-dir {}: not a directory; skipping",
                         p.display()
                     );
                     None
                 }
                 Err(e) => {
-                    eprintln!("grok-zh: --plugin-dir {}: {e}; skipping", p.display());
+                    eprintln!("grok: --plugin-dir {}: {e}; skipping", p.display());
                     None
                 }
             })
@@ -391,7 +391,7 @@ pub struct LeaderArgs {
 }
 #[derive(Debug, Clone, Parser)]
 #[command(
-    name = "grok-zh",
+    name = "grok",
     version = xai_grok_version::full_version(),
     about = "Grok Build 中文社区版 TUI",
     disable_version_flag = true,
@@ -759,8 +759,8 @@ pub struct PagerArgs {
     /// Run standalone even when leader mode is configured.
     #[arg(long, conflicts_with = "leader", hide = true)]
     pub no_leader: bool,
-    /// 交互式会话的初始提示，例如 `grok-zh "fix the bug"` 或
-    /// `grok-zh --worktree=feat "create this feature"`。
+    /// 交互式会话的初始提示，例如 `grok "fix the bug"` 或
+    /// `grok --worktree=feat "create this feature"`。
     #[arg(
         value_name = "PROMPT",
         conflicts_with_all = &["single",

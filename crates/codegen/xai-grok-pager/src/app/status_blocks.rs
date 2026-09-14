@@ -275,8 +275,7 @@ pub(crate) fn session_usage_block_text_with_locale(
         };
     }
 
-    let mut rows = Vec::new();
-    rows.push(
+    let mut rows = vec![
         status_text(
             locale,
             "status.usage.input_tokens",
@@ -284,7 +283,7 @@ pub(crate) fn session_usage_block_text_with_locale(
         )
         .replace("{input}", &group_thousands(t.input_tokens))
         .replace("{cached}", &group_thousands(t.cached_read_tokens)),
-    );
+    ];
     rows.push(
         status_text(
             locale,

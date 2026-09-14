@@ -9,6 +9,7 @@ use crate::prompt_images::PastedImage;
 use crate::render::SafeBuf;
 use crate::util::format_bytes;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn paint_path_line(
     buf: &mut Buffer,
     x: u16,

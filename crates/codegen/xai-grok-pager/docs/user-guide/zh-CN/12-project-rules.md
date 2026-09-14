@@ -178,7 +178,7 @@ my-monorepo/
 无需编辑文件即可为单个会话添加规则，传递 `--rules`（别名为 `--append-system-prompt`）：
 
 ```bash
-grok-zh --rules "始终使用 TypeScript。优先使用函数式组件。"
+grok --rules "始终使用 TypeScript。优先使用函数式组件。"
 ```
 
 Grok 会将此文本附加到会话的系统提示中。若要使用 `--system-prompt-override`（别名为 `--system-prompt`）完全替换系统提示，Grok 会逐字使用该文本，并跳过默认系统提示和 `--rules`。（相较之下，使用 `--rules` 传入的文本会包在 `<human_rules>` 块中，然后附加到默认提示。）
@@ -227,10 +227,10 @@ CLAUDE.local.md
 <a id="inspecting-loaded-rules"></a>
 ## 检查已加载的规则
 
-使用 `grok-zh inspect` 查看所有已加载的项目指令：
+使用 `grok inspect` 查看所有已加载的项目指令：
 
 ```bash
-grok-zh inspect
+grok inspect
 ```
 
 此命令会显示它找到的每个项目指令文件、文件路径以及大致 token 数。用它确认 Grok 是否加载了你的规则。

@@ -53,7 +53,7 @@ export OTEL_LOGS_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf  # or grpc
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.corp.example:4318
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <collector-token>"
-grok-zh
+grok
 ```
 
 单独设置 GROK_EXTERNAL_OTEL=1 **不会启用任何内容**——还必须至少选择一个 exporter。反过来，仅有 OTEL_* 变量而没有主开关也不会启用任何内容。
@@ -156,7 +156,7 @@ otel_log_tool_content = false
 
 之后到达的机群策略仍会生效；它只能*收紧*设置（禁用流或强制关闭内容开关），绝不会启用本地配置未启用的内容。
 
-如果 collector 完全收不到数据，请检查调试日志（grok-zh --debug）中的 external otel: 行——它们记录流是否解析了配置，以及当前是在导出还是被抑制。
+如果 collector 完全收不到数据，请检查调试日志（grok --debug）中的 external otel: 行——它们记录流是否解析了配置，以及当前是在导出还是被抑制。
 
 ## Resource 属性
 

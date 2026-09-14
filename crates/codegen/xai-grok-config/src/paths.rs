@@ -11,8 +11,8 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-/// Canonical Chinese application path: `<grok-home>/bin/grok-zh` (Unix) or
-/// `grok-zh.exe` (Windows).
+/// Canonical application path: `<grok-home>/bin/grok` (Unix) or
+/// `grok.exe` (Windows).
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())
 }

@@ -37,7 +37,7 @@ pub use render::{
     render_dashboard_session_header_with_locale, render_dashboard_session_overlay,
     render_popup_overlay, render_popup_overlay_with_locale,
 };
-pub use render::{render_dashboard, render_dashboard_with_locale};
+pub(crate) use render::{render_dashboard, render_dashboard_with_locale};
 pub use row::{
     DashboardRow, RowBadge, build_rows, build_rows_with_roster, classify_subagent,
     classify_top_level, roster_activity_to_state, sort_rows,

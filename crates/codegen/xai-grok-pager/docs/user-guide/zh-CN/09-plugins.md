@@ -23,12 +23,12 @@
 市场源可以是 GitHub 仓库、任意主机上的 git URL 或本地文件夹。从命令行添加：
 
 ```bash
-grok-zh plugin marketplace add my-org/team-plugins                  # GitHub 简写（owner/repo）
-grok-zh plugin marketplace add https://gitlab.com/acme/plugins.git  # 任意 git 主机，包含 https:// 和 .git
-grok-zh plugin marketplace add ./my-marketplace                     # 本地文件夹
+grok plugin marketplace add my-org/team-plugins                  # GitHub 简写（owner/repo）
+grok plugin marketplace add https://gitlab.com/acme/plugins.git  # 任意 git 主机，包含 https:// 和 .git
+grok plugin marketplace add ./my-marketplace                     # 本地文件夹
 ```
 
-使用 `grok-zh plugin marketplace list`、`grok-zh plugin marketplace update [<name>]` 和 `grok-zh plugin marketplace remove <url>` 列出、刷新和移除源。
+使用 `grok plugin marketplace list`、`grok plugin marketplace update [<name>]` 和 `grok plugin marketplace remove <url>` 列出、刷新和移除源。
 
 也可以在配置中声明源，让它们始终存在。
 
@@ -72,7 +72,7 @@ path = "~/dev/my-plugins"
 添加市场后，按名称安装插件。也可以直接从仓库或本地路径安装：
 
 ```bash
-grok-zh plugin install deploy-tools --trust
+grok plugin install deploy-tools --trust
 ```
 
 安装源接受多种形式：
@@ -81,7 +81,7 @@ grok-zh plugin install deploy-tools --trust
 - 完整 git URL（`https://github.com/user/repo.git`）或 SSH（`git@github.com:user/repo.git`）；
 - 本地路径（`./local-dir` 或 `/absolute/path`）。
 
-运行不带 `--trust` 的 `grok-zh plugin install <source>` 时，Grok 会显示来源，警告安装将激活插件的钩子、MCP 服务器和技能，然后停止。添加 `--trust` 才会继续。只从你信任的来源安装插件（参阅[信任与安全](#trust-and-security)）。
+运行不带 `--trust` 的 `grok plugin install <source>` 时，Grok 会显示来源，警告安装将激活插件的钩子、MCP 服务器和技能，然后停止。添加 `--trust` 才会继续。只从你信任的来源安装插件（参阅[信任与安全](#trust-and-security)）。
 
 插件技能会出现在斜杠菜单中。技能名称有歧义时，Grok 会显示带插件名称前缀的限定形式，例如 `/deploy-tools:release`。若要加载新安装的插件，在 Plugins 选项卡中按 `r`，或启动新会话。
 
@@ -94,12 +94,12 @@ grok-zh plugin install deploy-tools --trust
 ### 从命令行
 
 ```bash
-grok-zh plugin list [--json] [--available]   # 已安装插件（--available 需要 --json）
-grok-zh plugin uninstall <name> [--confirm] [--keep-data]   # 别名：rm、remove
-grok-zh plugin update [<name>]               # 省略名称则更新每个插件
-grok-zh plugin enable <name>
-grok-zh plugin disable <name>
-grok-zh plugin details <name>                # 显示插件组件清单
+grok plugin list [--json] [--available]   # 已安装插件（--available 需要 --json）
+grok plugin uninstall <name> [--confirm] [--keep-data]   # 别名：rm、remove
+grok plugin update [<name>]               # 省略名称则更新每个插件
+grok plugin enable <name>
+grok plugin disable <name>
+grok plugin details <name>                # 显示插件组件清单
 ```
 
 <a id="in-the-terminal-ui"></a>
@@ -145,7 +145,7 @@ disabled = ["user/a1b2c3d4/noisy-plugin"]    # 要跳过的名称或 ID
 enabled = ["project/9f8e7d6c/team-tools"]    # 要强制启用的名称或 ID
 ```
 
-插件默认关闭；将插件列在 `enabled` 中可启用，列在 `disabled` 中则会发现它但跳过加载。每个条目可以是普通插件名称（来自 `grok-zh plugin list`）或完整 ID（`<scope>/<hash>/<name>`）。
+插件默认关闭；将插件列在 `enabled` 中可启用，列在 `disabled` 中则会发现它但跳过加载。每个条目可以是普通插件名称（来自 `grok plugin list`）或完整 ID（`<scope>/<hash>/<name>`）。
 
 若要完全隐藏插件和钩子界面，请在 `~/.grok/pager.toml` 中设置 `disable_plugins = true`。
 
@@ -159,7 +159,7 @@ enabled = ["project/9f8e7d6c/team-tools"]    # 要强制启用的名称或 ID
 启用插件会加载其技能、命令和智能体。信任是独立的控制项，用于决定插件代码是否运行：即使插件已启用，其钩子、MCP 服务器和 LSP 服务器在你信任它之前仍保持不活动。Grok 会自动信任 `~/.grok/plugins/` 中的插件；`.grok/plugins/` 中的项目插件需要信任。安装时使用 `--trust` 授予信任：
 
 ```bash
-grok-zh plugin install <source> --trust
+grok plugin install <source> --trust
 ```
 
 受信任插件的 `.mcp.json` 服务器会像其他 MCP 配置一样附加到会话，子智能体会继承它们。插件智能体（`plugin-name:agent-name`）默认使用父会话的 MCP 服务器，与 `~/.grok/agents/` 下的用户智能体相同；可用 `mcpInheritance` frontmatter 限制该集合（参阅[子智能体](16-subagents.md#mcp-inheritance)）。出于安全原因，插件智能体 frontmatter 不能声明 `mcpServers` 或钩子，也不能设置 `permissionMode: bypassPermissions`。
@@ -246,11 +246,11 @@ Grok 从 `.grok-plugin/marketplace.json` 读取索引，也接受 `.grok-plugin/
 <a id="check-and-share-it"></a>
 ### 检查并共享
 
-发布前用 `grok-zh plugin validate [<path>]` 验证插件，用清单版本运行 `grok-zh plugin tag [<path>] [--push]` 标记发布。然后将仓库地址提供给其他人。他们添加一次市场，再安装所需插件：
+发布前用 `grok plugin validate [<path>]` 验证插件，用清单版本运行 `grok plugin tag [<path>] [--push]` 标记发布。然后将仓库地址提供给其他人。他们添加一次市场，再安装所需插件：
 
 ```bash
-grok-zh plugin marketplace add my-org/my-org-plugins   # GitHub 简写、git URL 或本地路径
-grok-zh plugin install gdrive --trust
+grok plugin marketplace add my-org/my-org-plugins   # GitHub 简写、git URL 或本地路径
+grok plugin install gdrive --trust
 ```
 
 若要自动为所有人安装而不要求每个人逐一操作，请参阅[在组织中分发](#distribute-across-an-organization)。
@@ -275,7 +275,7 @@ grok-zh plugin install gdrive --trust
 name = "My Org Plugins"
 git = "https://github.com/my-org/my-org-plugins.git"
 
-# 插件在启用前保持关闭。列出插件名称（来自 `grok-zh plugin list`）
+# 插件在启用前保持关闭。列出插件名称（来自 `grok plugin list`）
 # 或完整 ID（`<scope>/<hash>/<name>`）。
 [plugins]
 enabled = ["gdrive"]
@@ -345,15 +345,15 @@ disable_plugins = true
 <a id="troubleshooting"></a>
 ## 故障排查
 
-**安装的插件没有显示。** 插件在启用前处于关闭状态。检查 `grok-zh plugin list`，然后将插件名称或 ID 添加到 `[plugins].enabled`，或在 Plugins 选项卡中按 `Space`。在 Plugins 选项卡中按 `r`，或启动新会话重新加载。
+**安装的插件没有显示。** 插件在启用前处于关闭状态。检查 `grok plugin list`，然后将插件名称或 ID 添加到 `[plugins].enabled`，或在 Plugins 选项卡中按 `Space`。在 Plugins 选项卡中按 `r`，或启动新会话重新加载。
 
 **插件的钩子或 MCP 服务器不运行。** 在插件受信任前它们保持不活动。使用 `--trust` 重新安装，或将插件放在 `~/.grok/plugins/` 下（自动受信任）。参阅[信任与安全](#trust-and-security)。
 
-**市场中的技能或 MCP 服务器缺失。** 使用 `grok-zh plugin marketplace update` 刷新源，确认插件已安装并启用；如果组织限制了源，检查市场仍在允许范围内（参阅[在组织中分发](#distribute-across-an-organization)）。有些 MCP 服务器需要登录，在完成身份验证前不会出现。
+**市场中的技能或 MCP 服务器缺失。** 使用 `grok plugin marketplace update` 刷新源，确认插件已安装并启用；如果组织限制了源，检查市场仍在允许范围内（参阅[在组织中分发](#distribute-across-an-organization)）。有些 MCP 服务器需要登录，在完成身份验证前不会出现。
 
 **安装因未固定版本而被拒绝。** 你的部署要求固定提交。安装精确提交（`owner/repo@<sha>`），或使用 `plugin-index.json` 发布 `sha` 值的市场。参阅[要求固定版本](#require-pinned-versions)。
 
-**查看具体加载了什么。** 运行 `grok-zh inspect`（添加 `--json` 获取机器可读输出），列出发现的每个插件，以及它提供的技能、智能体、钩子和 MCP 服务器；每项都会标有 `plugin: <name>` 来源。
+**查看具体加载了什么。** 运行 `grok inspect`（添加 `--json` 获取机器可读输出），列出发现的每个插件，以及它提供的技能、智能体、钩子和 MCP 服务器；每项都会标有 `plugin: <name>` 来源。
 
 ---
 

@@ -9,7 +9,7 @@ Grok 支持多种身份验证方式，包括交互式浏览器登录、企业单
 首次启动时，Grok 会打开浏览器，引导你通过 grok.com 完成身份验证：
 
 ```bash
-grok-zh
+grok
 ```
 
 Grok 会将凭据保存在 `~/.grok/auth.json` 中，并在各个会话间复用。Grok 会在后台自动刷新访问令牌。令牌无法刷新时，Grok 会提示你重新登录。没有服务器提供的过期时间的凭据，其有效期默认为 30 天。
@@ -27,17 +27,17 @@ Grok 会将凭据保存在 `~/.grok/auth.json` 中，并在各个会话间复用
 要切换账户或解决身份验证问题，请运行：
 
 ```bash
-grok-zh login
+grok login
 ```
 
-运行 `grok-zh login` 会重新启动登录流程，并替换缓存的会话。默认情况下，它会打开浏览器，通过位于 `auth.x.ai` 的 SpaceXAI OAuth 登录。传入标志可选择其他流程：
+运行 `grok login` 会重新启动登录流程，并替换缓存的会话。默认情况下，它会打开浏览器，通过位于 `auth.x.ai` 的 SpaceXAI OAuth 登录。传入标志可选择其他流程：
 
 | 标志 | 说明 |
 |------|-------------|
 | `--oauth` | 通过位于 `auth.x.ai` 的 SpaceXAI OAuth 登录。这是默认方式，因此该标志可省略。 |
 | `--device-auth`（别名 `--device-code`） | 在无头或远程环境中使用设备代码流程登录。 |
 
-要退出登录，请运行 `grok-zh logout`。该命令不接受标志，并会清除缓存的凭据。
+要退出登录，请运行 `grok logout`。该命令不接受标志，并会清除缓存的凭据。
 
 ---
 
@@ -47,10 +47,10 @@ grok-zh login
 
 ```bash
 export XAI_API_KEY="xai-..."
-grok-zh
+grok
 ```
 
-没有活动会话令牌时，Grok 会将 API 密钥作为回退。如果你已经以交互方式登录，保存的会话令牌优先。要回退到 API 密钥，请运行 `grok-zh logout` 或删除 `~/.grok/auth.json`。
+没有活动会话令牌时，Grok 会将 API 密钥作为回退。如果你已经以交互方式登录，保存的会话令牌优先。要回退到 API 密钥，请运行 `grok logout` 或删除 `~/.grok/auth.json`。
 
 ---
 
@@ -88,7 +88,7 @@ export GROK_OIDC_CLIENT_ID="0oa1b2c3d4e5f6g7h8i9"
 export GROK_CLI_CHAT_PROXY_BASE_URL="https://grok-proxy.acme.com/v1"
 ```
 
-### 3. 运行 `grok-zh`
+### 3. 运行 `grok`
 
 CLI 会通过 `{issuer}/.well-known/openid-configuration` 发现端点，打开 IdP 登录页面，并将令牌保存在 `~/.grok/auth.json` 中。它会通过保存的 `refresh_token` 静默自动刷新令牌。
 
@@ -183,7 +183,7 @@ export GROK_AUTH_TOKEN_TTL=3600
 Grok 会按两种不同的契约运行你的二进制文件，`GROK_AUTH_EXPIRED` 用于区分它们。每次运行都会完全替换保存的凭据，因此每次调用（包括刷新）都要输出相同的 JSON 字段（例如 `issuer`）。
 
 - **`GROK_AUTH_EXPIRED=1` —— 无头刷新。** Grok 正在基于已有凭据重新签发令牌：可能是令牌即将过期轮换，也可能是服务器拒绝了令牌。此时没有人观察。stdin 已关闭，stderr 会被吞掉，二进制文件在几秒后就会被终止。请静默签发令牌或以非零状态退出——绝不要阻塞。
-- **未设置 —— 登录。** `grok-zh login`、登录界面，或 Grok 在无头运行无法签发令牌时执行的升级流程。用户正在等待，stderr 会传给用户，并且你有 300 秒——足以完成一次浏览器往返或设备代码流程。
+- **未设置 —— 登录。** `grok login`、登录界面，或 Grok 在无头运行无法签发令牌时执行的升级流程。用户正在等待，stderr 会传给用户，并且你有 300 秒——足以完成一次浏览器往返或设备代码流程。
 
 ```bash
 #!/bin/sh
@@ -227,7 +227,7 @@ echo "{\"access_token\": \"$TOKEN\", \"expires_in\": 3600}"
 对于本地没有浏览器可用的无头环境（SSH 会话、Docker 容器、远程虚拟机）：
 
 ```bash
-grok-zh login --device-auth    # 或：grok-zh login --device-code
+grok login --device-auth    # 或：grok login --device-code
 ```
 
 该命令会在终端打印 URL 和代码。在任意设备上打开 URL，输入代码并完成身份验证。Grok 会持续轮询，直到登录得到确认。
@@ -307,7 +307,7 @@ Grok 按以下顺序（从高到低）为每个请求解析凭据：
 在 TUI 中，将 `GROK_LOG_FILE` 设置为绝对路径即可把日志写入该文件：
 
 ```bash
-GROK_LOG_FILE=/tmp/grok.log RUST_LOG=debug grok-zh
+GROK_LOG_FILE=/tmp/grok.log RUST_LOG=debug grok
 tail -f /tmp/grok.log
 ```
 
@@ -316,7 +316,7 @@ tail -f /tmp/grok.log
 在无头模式中，日志会写入 stderr。将其重定向到文件：
 
 ```bash
-RUST_LOG=debug grok-zh -p "hello" 2> /tmp/grok.log
+RUST_LOG=debug grok -p "hello" 2> /tmp/grok.log
 ```
 
 ### 常见日志消息
@@ -331,7 +331,7 @@ RUST_LOG=debug grok-zh -p "hello" 2> /tmp/grok.log
 
 ### 常见修复
 
-- **“Authentication failed”** —— 运行 `grok-zh logout` 清除缓存的凭据，然后运行 `grok-zh login` 重新登录。
+- **“Authentication failed”** —— 运行 `grok logout` 清除缓存的凭据，然后运行 `grok login` 重新登录。
 - **令牌过快过期** —— 设置 `auth_token_ttl`，或在身份提供方的 JSON 输出中返回 `expires_in`。
 - **OIDC 重定向失败** —— 确保你的 IdP 允许环回重定向 URI（`http://127.0.0.1/callback`）。
 - **找不到外部身份提供方** —— 检查 `auth_provider_command` 路径正确且二进制文件可执行。

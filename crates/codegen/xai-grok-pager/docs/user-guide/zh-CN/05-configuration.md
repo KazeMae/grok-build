@@ -147,7 +147,7 @@ default_selected_permission = "allow_once"
 <a id="screen-mode"></a>
 #### 屏幕模式
 
-`[ui] screen_mode` 是直接运行 `grok-zh` 时的**默认渲染模式**。可在 `/settings` → **默认屏幕模式**中设置（需重启），或手动编辑 `config.toml`——两种方式都会写入该文件。CLI 标志（`--minimal` / `--fullscreen`）和斜杠命令（`/minimal` / `/fullscreen`）仅作用于当前会话，**不会**写入此键；使用斜杠命令切换后，反向命令只会在该会话中将你切回。
+`[ui] screen_mode` 是直接运行 `grok` 时的**默认渲染模式**。可在 `/settings` → **默认屏幕模式**中设置（需重启），或手动编辑 `config.toml`——两种方式都会写入该文件。CLI 标志（`--minimal` / `--fullscreen`）和斜杠命令（`/minimal` / `/fullscreen`）仅作用于当前会话，**不会**写入此键；使用斜杠命令切换后，反向命令只会在该会话中将你切回。
 
 | 值 | 行为 |
 |-------|----------|
@@ -388,7 +388,7 @@ Codex 的 `skills`、`rules`、`agents`、`mcps` 和 `hooks` 单元格是预留�
 
 每个单元格都可以通过环境变量或 `config.toml` 设置；名称参见环境变量参考。解析优先级：环境变量 > config.toml > 默认值（开启）。
 
-`grok-zh inspect` 会将仍需在会话启动时解析的单元格报告为 `?`，直到获得值；具有显式环境变量或 TOML 值的单元格则使用该值。受影响的发现条目在 JSON 中报告 `compatibilityStatus: "unresolved"`，在人类可读输出中报告 `[compat unresolved]`。
+`grok inspect` 会将仍需在会话启动时解析的单元格报告为 `?`，直到获得值；具有显式环境变量或 TOML 值的单元格则使用该值。受影响的发现条目在 JSON 中报告 `compatibilityStatus: "unresolved"`，在人类可读输出中报告 `[compat unresolved]`。
 
 <a id="plugins"></a>
 ### 插件
@@ -589,9 +589,9 @@ required_maximum_version = "0.2.200" # 高于此版本时拒绝启动
 
 - `minimum_version`（`GROK_MINIMUM_VERSION`）是软性防降级下限。更新器会跳过低于它的目标并保留当前版本；它从不阻止启动。
 - `maximum_version`（`GROK_MAXIMUM_VERSION`）是软性上限。更新器会将目标限制在此版本，绝不安装更高版本。
-- `required_minimum_version`（`GROK_REQUIRED_MINIMUM_VERSION`）和 `required_maximum_version`（`GROK_REQUIRED_MAXIMUM_VERSION`）是硬性边界。如果正在运行的版本超出范围，CLI 会在启动时退出，并指示用户安装获批准的版本。`grok-zh update` 和 `grok-zh --version` 仍可运行，使超出范围的安装能够恢复。
+- `required_minimum_version`（`GROK_REQUIRED_MINIMUM_VERSION`）和 `required_maximum_version`（`GROK_REQUIRED_MAXIMUM_VERSION`）是硬性边界。如果正在运行的版本超出范围，CLI 会在启动时退出，并指示用户安装获批准的版本。`grok update` 和 `grok --version` 仍可运行，使超出范围的安装能够恢复。
 - 各配置层的边界只会收紧：下限取最高值，上限取最低值，因此无法放宽托管边界，用户或环境边界也无法取消托管硬边界。无效值会被忽略，避免错误策略阻止启动。
-- 显式执行 `grok-zh update --version X` 时允许高于上限，以便从过新安装恢复；低于硬下限则会被拒绝。
+- 显式执行 `grok update --version X` 时允许高于上限，以便从过新安装恢复；低于硬下限则会被拒绝。
 
 <a id="enterprise-deployment"></a>
 ### 企业部署

@@ -7,12 +7,12 @@ Grok 可以连接自定义模型端点，以使用其他提供商、自托管模
 <a id="default-models"></a>
 ## 默认模型
 
-默认情况下，Grok 使用 SpaceXAI 托管的模型，新会话从 `grok-4.5` 开始。默认模型无需配置。使用 `grok-zh login` 或 API 密钥完成身份验证，然后启动会话。
+默认情况下，Grok 使用 SpaceXAI 托管的模型，新会话从 `grok-4.5` 开始。默认模型无需配置。使用 `grok login` 或 API 密钥完成身份验证，然后启动会话。
 
 列出所有可用模型：
 
 ```bash
-grok-zh models
+grok models
 ```
 
 ---
@@ -24,7 +24,7 @@ grok-zh models
 ### CLI 标志
 
 ```bash
-grok-zh -p "你好" -m grok-build
+grok -p "你好" -m grok-build
 ```
 
 <a id="slash-command"></a>
@@ -118,7 +118,7 @@ Grok 按以下顺序解析 API 密钥：
 
 1. 模型配置中的 `api_key` 字段
 2. `env_key` 指定的环境变量（可以是单个字符串或名称数组）。第一个已设置且非空的值胜出（例如，为 SSH `LC_*` 转发设置 `env_key = ["ANTHROPIC_AUTH_TOKEN", "LC_ANTHROPIC_AUTH_TOKEN"]`）
-3. 已登录会话的 token（来自 `grok-zh login`），用于自身没有 `api_key`/`env_key` 的模型
+3. 已登录会话的 token（来自 `grok login`），用于自身没有 `api_key`/`env_key` 的模型
 4. `XAI_API_KEY` 环境变量（全局回退；为兼容旧版本，Grok 也接受 `GROK_CODE_XAI_API_KEY`）
 
 <a id="context-window"></a>
@@ -326,7 +326,7 @@ temperature = 0.8
 ```bash
 export GROK_MODELS_BASE_URL="https://api.acme.com/v1"
 export XAI_API_KEY="xai-..."
-grok-zh
+grok
 ```
 
 <a id="config-file-alternative"></a>
@@ -346,7 +346,7 @@ api_key = "my-api-key"
 <a id="auth-behavior"></a>
 ### 身份验证行为
 
-设置 `models_base_url` 后，Grok 使用 API 密钥身份验证（`Authorization: Bearer`），而不是会话身份验证。不需要运行 `grok-zh login`——API 密钥就足够了。
+设置 `models_base_url` 后，Grok 使用 API 密钥身份验证（`Authorization: Bearer`），而不是会话身份验证。不需要运行 `grok login`——API 密钥就足够了。
 
 ---
 
@@ -384,13 +384,13 @@ supports_backend_search = true
 
 ```bash
 # 列出可用模型（包括自定义模型）
-grok-zh models
+grok models
 
 # 通过斜杠命令在 TUI 中使用
 /model my-model
 
 # 在无头模式中使用
-grok-zh -p "你好" -m my-model
+grok -p "你好" -m my-model
 
 # 在 config.toml 中设为默认值：
 [models]
@@ -436,7 +436,7 @@ telemetry = false
 
 ```bash
 # 列出可用模型
-grok-zh models
+grok models
 
 # 检查 config.toml 中的 [model.*] 区段是否有拼写错误
 ```
@@ -455,7 +455,7 @@ curl -s https://api.example.com/v1/models \
 ### 调试日志
 
 ```bash
-RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok-zh
+RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok
 tail -f /tmp/grok.log
 ```
 

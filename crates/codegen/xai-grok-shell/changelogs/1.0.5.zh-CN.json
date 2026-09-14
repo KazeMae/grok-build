@@ -46,7 +46,7 @@
   },
   {
     "category": "fixes",
-    "description": "**`grok-zh inspect`** 的输出通过管道传给提前关闭管道的命令时不再崩溃。",
+    "description": "**`grok inspect`** 的输出通过管道传给提前关闭管道的命令时不再崩溃。",
     "breaking_change": false
   },
   {

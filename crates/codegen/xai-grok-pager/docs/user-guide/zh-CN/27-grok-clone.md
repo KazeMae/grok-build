@@ -1,11 +1,11 @@
 # grok clone
 
-`grok-zh clone` 会将 Git 仓库提取到 Grove 内容存储中，并挂载一个投影工作树
+`grok clone` 会将 Git 仓库提取到 Grove 内容存储中，并挂载一个投影工作树
 （macOS 使用 NFS，Linux 使用 FUSE）。使用前必须在 Grove 配置
 （`~/.config/grove/config.toml`）中启用 `[clone] enabled = true`。
 
 ```bash
-grok-zh clone <url> [dir] [--branch NAME] [--cone PATH]... [--full-history]
+grok clone <url> [dir] [--branch NAME] [--cone PATH]... [--full-history]
 ```
 
 ## 历史记录

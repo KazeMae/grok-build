@@ -6,15 +6,15 @@ Grok Build 以全屏 TUI 运行。它依赖终端提供颜色、剪贴板、键�
 <a id="diagnose-and-fix-terminal-problems"></a>
 ## 诊断和修复终端问题
 
-在 Grok 中运行 `/doctor`，检查当前会话并查看可用修复。如果 Grok 无法启动，请在 Shell 中运行 `grok-zh doctor`。使用 `grok-zh doctor --json` 获取机器可读的报告。
+在 Grok 中运行 `/doctor`，检查当前会话并查看可用修复。如果 Grok 无法启动，请在 Shell 中运行 `grok doctor`。使用 `grok doctor --json` 获取机器可读的报告。
 
 Doctor 会检查终端、多路复用器、颜色支持、键盘与换行行为、剪贴板路径，以及在包含音频捕获时的麦克风可用性。应用内命令还可以检查实时会话详情，例如通知焦点跟踪和沙箱配置文件冲突。
 
-报告可能包含问题或建议，但仍会成功退出。通过管道传输时，`grok-zh doctor --json` 报告的颜色能力不变。麦克风检查不会开始录音，因此 Doctor 无法检测只有在捕获过程中表现为静音的 macOS 权限失败。
+报告可能包含问题或建议，但仍会成功退出。通过管道传输时，`grok doctor --json` 报告的颜色能力不变。麦克风检查不会开始录音，因此 Doctor 无法检测只有在捕获过程中表现为静音的 macOS 权限失败。
 
 `/terminal-setup`、`/terminal-check` 和 `/terminal-info` 仍是 `/doctor` 的别名。
 
-当 Doctor 发现明确不健康的 tmux 设置时，`/doctor fix` 会列出可用的自动修复。一次应用一个指定的修复，例如 `/doctor fix tmux-clipboard` 或 `grok-zh doctor fix dcs-passthrough --yes`。
+当 Doctor 发现明确不健康的 tmux 设置时，`/doctor fix` 会列出可用的自动修复。一次应用一个指定的修复，例如 `/doctor fix tmux-clipboard` 或 `grok doctor fix dcs-passthrough --yes`。
 
 Doctor 可以持久化以下四个 tmux 选项：
 
@@ -109,13 +109,13 @@ X11 的 **PRIMARY** 和 **CLIPBOARD** 是分开的：
 
 Apple Terminal 不支持 OSC 52，因此远程复制无法到达本地剪贴板。每次复制仍会保存到备份文件（默认是 `~/.grok/last-copy.txt`；使用 `GROK_COPY_FILE` 覆盖）；传送未经验证或剪贴板不可达时，提示会显示该路径。你也可以使用 `/copy <file>` 或 `/minimal`。
 
-若要直接转发剪贴板，请在本地计算机上通过 `grok-zh wrap` 运行 SSH 命令，例如 `grok-zh wrap ssh user@host`。同一命令也可以包装容器和 pod Shell。连接意外断开后，它还会恢复终端模式。
+若要直接转发剪贴板，请在本地计算机上通过 `grok wrap` 运行 SSH 命令，例如 `grok wrap ssh user@host`。同一命令也可以包装容器和 pod Shell。连接意外断开后，它还会恢复终端模式。
 
-不使用 `grok-zh wrap` 的 SSH 会话会显示一次性提示“运行 `/doctor` 查看详情和修复方法。”通过 wrap 启动会话后，该提示不再出现。可通过 `/settings` → **显示上下文提示** → **SSH wrap** 关闭，或在 `$GROK_HOME/config.toml` 的 `[ui.contextual_hints]` 下设置 `ssh_wrap = false`。此设置不会隐藏 Doctor 建议。
+不使用 `grok wrap` 的 SSH 会话会显示一次性提示“运行 `/doctor` 查看详情和修复方法。”通过 wrap 启动会话后，该提示不再出现。可通过 `/settings` → **显示上下文提示** → **SSH wrap** 关闭，或在 `$GROK_HOME/config.toml` 的 `[ui.contextual_hints]` 下设置 `ssh_wrap = false`。此设置不会隐藏 Doctor 建议。
 
-对于重复使用 SSH 的场景，Doctor 提供 `grok-zh doctor fix ssh-wrap`。它还会显示一次性命令、将要修改的文件，以及应绕过别名的情况。ID `terminal.ssh-wrap` 仍被接受，并会出现在 JSON 中。
+对于重复使用 SSH 的场景，Doctor 提供 `grok doctor fix ssh-wrap`。它还会显示一次性命令、将要修改的文件，以及应绕过别名的情况。ID `terminal.ssh-wrap` 仍被接受，并会出现在 JSON 中。
 
-> **警告**：`grok-zh wrap` 处于实验阶段，可能无法在每种设置中工作。
+> **警告**：`grok wrap` 处于实验阶段，可能无法在每种设置中工作。
 
 <a id="iterm2"></a>
 #### iTerm2
@@ -126,7 +126,7 @@ iTerm2 可能需要授予 OSC 52 剪贴板访问权限。运行 `/doctor`；其�
 ### 全屏或备用屏幕未激活
 
 Zellij 和 tmux 控制模式可能限制备用屏幕。Grok 通常会在这些环境中使用内联模式。运行 `/doctor` 查看检测到的情况。
-你可以在 `~/.grok/pager.toml` 中配置 `[terminal] alt_screen`，或运行 `grok-zh --no-alt-screen` 确认内联模式可用。
+你可以在 `~/.grok/pager.toml` 中配置 `[terminal] alt_screen`，或运行 `grok --no-alt-screen` 确认内联模式可用。
 
 <a id="zellij-keybindings-interfere-with-grok"></a>
 ### Zellij 快捷键干扰 Grok
@@ -165,7 +165,7 @@ VS Code、Cursor、Windsurf 和 Zed 终端使用 xterm.js；它只部分实现 K
 
 大约 10 秒没有转录内容后，Grok 会停止捕获，并显示 **“未检测到语音。语音已停止。”** 以及麦克风修复步骤。在 macOS 上，被拒绝的麦克风授权可能看起来和静音一样，因为权限属于承载 Grok 的终端。打开 **System Settings → Privacy & Security → Microphone**，启用该终端并重新启动它。如果访问权限已开启，请在 **System Settings → Sound → Input** 下检查输入设备和音量，然后重试。
 
-运行 `grok-zh doctor`，或在语音模式开启时运行 `/doctor`。**Voice** 部分会显示 Grok 将使用的麦克风。如果没有可用输入设备，Doctor 会显示 `voice.no-input-device` 及后续步骤。当 macOS 被动提供静音时，Doctor 无法检测被拒绝的 macOS 麦克风访问权限。
+运行 `grok doctor`，或在语音模式开启时运行 `/doctor`。**Voice** 部分会显示 Grok 将使用的麦克风。如果没有可用输入设备，Doctor 会显示 `voice.no-input-device` 及后续步骤。当 macOS 被动提供静音时，Doctor 无法检测被拒绝的 macOS 麦克风访问权限。
 
 在 macOS 上，每次听写都会使用一个短生命周期的捕获辅助进程，因此捕获结束时音频栈的内存会释放。如果辅助进程本身可能有问题，可设置 `GROK_VOICE_CAPTURE=inprocess`，使用进程内回退进行对比。
 

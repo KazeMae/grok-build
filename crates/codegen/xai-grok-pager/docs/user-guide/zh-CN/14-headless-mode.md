@@ -11,7 +11,7 @@
 以非交互方式传入提示会触发无头模式。最常用的是 `-p` 标志（`--single` 的简写）；`--prompt-json` 和 `--prompt-file` 也会触发该模式：
 
 ```bash
-grok-zh -p "Your prompt here"
+grok -p "Your prompt here"
 ```
 
 Grok 会处理提示，运行所需工具，并将结果打印到 stdout。响应完成后进程退出。
@@ -58,13 +58,13 @@ Grok 会处理提示，运行所需工具，并将结果打印到 stdout。响�
 
 ```bash
 # 只允许只读工具
-grok-zh -p "Explain this codebase" --tools "read_file,grep,list_dir"
+grok -p "Explain this codebase" --tools "read_file,grep,list_dir"
 
 # 移除网页访问和文件编辑
-grok-zh -p "Review this code" --disallowed-tools "web_search,web_fetch,search_replace"
+grok -p "Review this code" --disallowed-tools "web_search,web_fetch,search_replace"
 
 # 移除 Shell 访问
-grok-zh -p "Review this code" --disallowed-tools "run_terminal_cmd"
+grok -p "Review this code" --disallowed-tools "run_terminal_cmd"
 ```
 
 `--disallowed-tools` 还支持特殊的 `Agent` 条目，用来控制子智能体生成：
@@ -77,10 +77,10 @@ grok-zh -p "Review this code" --disallowed-tools "run_terminal_cmd"
 
 ```bash
 # 阻止智能体生成任何子智能体
-grok-zh -p "Fix this bug" --disallowed-tools "Agent"
+grok -p "Fix this bug" --disallowed-tools "Agent"
 
 # 只阻止 explore 子智能体
-grok-zh -p "Refactor this module" --disallowed-tools "Agent(explore)"
+grok -p "Refactor this module" --disallowed-tools "Agent(explore)"
 ```
 
 `--tools` 保留所选智能体配置的注入策略：标准配置会在应用允许列表之前注入已启用的可选工具，而精选配置保持严格限制。最终工具集保留请求的工具以及始终启用的 MCP 元工具。同时提供两个标志时，以 `--disallowed-tools` 为准。
@@ -106,13 +106,13 @@ grok-zh -p "Refactor this module" --disallowed-tools "Agent(explore)"
 
 ```bash
 # 拒绝匹配 "rm*" 的 Shell 命令
-grok-zh -p "Clean up this project" --deny "Bash(rm*)"
+grok -p "Clean up this project" --deny "Bash(rm*)"
 
 # 允许 npm 命令，拒绝 sudo
-grok-zh -p "Set up the project" --allow "Bash(npm*)" --deny "Bash(sudo*)"
+grok -p "Set up the project" --allow "Bash(npm*)" --deny "Bash(sudo*)"
 
 # 允许所有 bash 命令（自动批准而不提示）
-grok-zh -p "Build the project" --allow "Bash"
+grok -p "Build the project" --allow "Bash"
 ```
 
 `--allow` 和 `--deny` 可以重复使用。拒绝规则优先于允许规则。
@@ -298,14 +298,14 @@ Messages API 的 `citations_delta` 携带被引用文本跨度（例如网页搜
 
 `modelUsage` 携带 grok 跟踪的每模型令牌和开销字段，以及归属于活动模型的 `webSearchRequests`。reducer 跟踪单个全局网页搜索计数，而不是按模型计数，因此总数会落到当前或最后一个模型，其他行保持 `0`。当某模型的开销未知或被隐藏时，其每模型 `modelUsage.*.costUSD` 为 `0`。这与顶层 `total_cost_usd` 的失败关闭为零行为相同。`json` 格式在部分情况下完全省略开销浮点数，但此流保留字段并设为 `0`。`contextWindow` 是当前模型真实的总上下文窗口（与 grok 用于自动压缩的值相同），只出现在当前模型行。其他行省略它；当前行在窗口未知时也省略。grok 没有 `maxOutputTokens` 目录，因此完全省略该键。没有每模型明细时，`modelUsage` 为 `{}`。
 
-与 `streaming-json` 一样，该流是只读的。工具批准及其他双向流程使用 ACP 接口（`grok-zh agent`）。
+与 `streaming-json` 一样，该流是只读的。工具批准及其他双向流程使用 ACP 接口（`grok agent`）。
 
 ---
 
 <a id="session-management-in-headless-mode"></a>
 ## 无头模式下的会话管理
 
-默认情况下，每次 `grok-zh -p` 调用都会创建全新会话。要在多次调用之间保持上下文，请使用会话标志。
+默认情况下，每次 `grok -p` 调用都会创建全新会话。要在多次调用之间保持上下文，请使用会话标志。
 
 <a id="named-sessions-s"></a>
 ### 命名会话（`-s`）
@@ -314,13 +314,13 @@ Messages API 的 `citations_delta` 携带被引用文本跨度（例如网页搜
 
 ```bash
 # 启动无头会话并捕获其 ID
-grok-zh -p "Review the changes in this PR" --output-format json | jq -r '.sessionId'
+grok -p "Review the changes in this PR" --output-format json | jq -r '.sessionId'
 
 # 在同一会话中继续
-grok-zh -p "Now check for security issues" --resume "<id>"
+grok -p "Now check for security issues" --resume "<id>"
 
 # 可选：使用客户端选择的 UUID 创建（不得已存在）
-grok-zh -p "hello" --session-id "$(uuidgen | tr '[:upper:]' '[:lower:]')" --output-format json
+grok -p "hello" --session-id "$(uuidgen | tr '[:upper:]' '[:lower:]')" --output-format json
 ```
 
 > **注意：** `-s/--session-id` 只创建新会话（UUID 有效；已在使用时会报错）。要恢复会话，请使用 `-r`。
@@ -332,11 +332,11 @@ grok-zh -p "hello" --session-id "$(uuidgen | tr '[:upper:]' '[:lower:]')" --outp
 
 ```bash
 # 从之前的 JSON 响应获取会话 ID
-grok-zh -p "Remember: the secret number is 42" --output-format json
+grok -p "Remember: the secret number is 42" --output-format json
 # 输出包含 "sessionId": "abc123"
 
 # 恢复该确切会话
-grok-zh -p "What's the secret number?" --resume abc123
+grok -p "What's the secret number?" --resume abc123
 ```
 
 <a id="continue-c"></a>
@@ -345,7 +345,7 @@ grok-zh -p "What's the secret number?" --resume abc123
 `-c/--continue` 标志会继续当前工作目录中最近的会话：
 
 ```bash
-grok-zh -p "Continue where we left off" -c
+grok -p "Continue where we left off" -c
 ```
 
 <a id="extracting-session-ids"></a>
@@ -354,7 +354,7 @@ grok-zh -p "Continue where we left off" -c
 使用 `--output-format json` 并解析 `sessionId` 字段：
 
 ```bash
-grok-zh -p "Hello" --output-format json | jq -r '.sessionId'
+grok -p "Hello" --output-format json | jq -r '.sessionId'
 ```
 
 ---
@@ -369,10 +369,10 @@ grok-zh -p "Hello" --output-format json | jq -r '.sessionId'
 
 ```bash
 # 将输出写入文件
-grok-zh -p "Generate a README" > README.md
+grok -p "Generate a README" > README.md
 
 # 使用 jq 解析 JSON 输出
-grok-zh -p "List files" --output-format json | jq -r '.text'
+grok -p "List files" --output-format json | jq -r '.text'
 ```
 
 <a id="standard-input"></a>
@@ -382,12 +382,12 @@ grok-zh -p "List files" --output-format json | jq -r '.text'
 
 ```bash
 # 通过命令替换将 git diff 作为上下文
-grok-zh -p "Write a concise commit message for these changes:
+grok -p "Write a concise commit message for these changes:
 
 $(git diff --staged)"
 
 # 或从文件读取提示
-grok-zh --prompt-file ./prompt.txt
+grok --prompt-file ./prompt.txt
 ```
 
 ---
@@ -399,7 +399,7 @@ grok-zh --prompt-file ./prompt.txt
 ### 自动代码审查
 
 ```bash
-grok-zh -p "Review changes for bugs and security issues." \
+grok -p "Review changes for bugs and security issues." \
   --output-format json --yolo | jq -r '.text' > review.md
 ```
 
@@ -407,7 +407,7 @@ grok-zh -p "Review changes for bugs and security issues." \
 ### 提交前钩子
 
 ```bash
-grok-zh -p "Review staged changes for obvious bugs. Reply OK if fine, or list issues." \
+grok -p "Review staged changes for obvious bugs. Reply OK if fine, or list issues." \
   --yolo --output-format json | jq -r '.text' | grep -q "^OK" || exit 1
 ```
 
@@ -416,7 +416,7 @@ grok-zh -p "Review staged changes for obvious bugs. Reply OK if fine, or list is
 
 ```bash
 for file in src/*.js; do
-  grok-zh -p "Migrate $file from CommonJS to ES modules." --yolo
+  grok -p "Migrate $file from CommonJS to ES modules." --yolo
 done
 ```
 
@@ -443,7 +443,7 @@ class GrokChat:
         self.env = {**os.environ}
 
     def _build_cmd(self, prompt, model, stream):
-        return ["grok-zh", "-p", prompt, "-m", model, "--cwd", self.cwd,
+        return ["grok", "-p", prompt, "-m", model, "--cwd", self.cwd,
                 "--output-format", "streaming-json" if stream else "json",
                 "--yolo"]
 
@@ -499,7 +499,7 @@ asyncio.run(main())
 #!/bin/bash
 # 运行代码审查；发现问题时以失败状态退出
 
-RESULT=$(grok-zh -p "Review this PR for bugs. Output JSON with 'issues' array." \
+RESULT=$(grok -p "Review this PR for bugs. Output JSON with 'issues' array." \
   --output-format json --yolo | jq -r '.text')
 
 ISSUE_COUNT=$(echo "$RESULT" | jq '.issues | length' 2>/dev/null || echo "0")
@@ -521,8 +521,8 @@ echo "No issues found"
 `--always-approve`（别名 `--yolo`，与 `--permission-mode bypassPermissions` 相同）会在没有交互式权限提示的情况下运行工具调用。拒绝规则、钩子和管理员锁仍然适用（见 [权限与安全](22-permissions-and-safety.md#permission-modes)）。
 
 ```bash
-grok-zh -p "Format all files" --always-approve
-grok-zh -p "Run the tests and fix any failures" --cwd ~/projects/my-app --always-approve
+grok -p "Format all files" --always-approve
+grok -p "Run the tests and fix any failures" --cwd ~/projects/my-app --always-approve
 ```
 
 智能体服务器和 SDK 见 [智能体模式](15-agent-mode.md#automation-and-sdks)。
@@ -545,7 +545,7 @@ grok-zh -p "Run the tests and fix any failures" --cwd ~/projects/my-app --always
 
 ```bash
 export XAI_API_KEY="xai-..."
-grok-zh -p "Run the test suite" --yolo
+grok -p "Run the test suite" --yolo
 ```
 
 ---
@@ -568,8 +568,8 @@ grok-zh -p "Run the test suite" --yolo
 无头使用可通过以下方式之一进行身份验证：
 
 - **`XAI_API_KEY`**：CI 中最简单的方式。见上面的[环境变量](#environment-variables-for-headless)。
-- **`grok-zh login --device-auth`**（或 `--device-code`）：目标机器无需浏览器。见[身份验证 > 设备代码流程](02-authentication.md#device-code-flow)。
-- **`grok-zh login`**：在有图形界面的机器上使用基于浏览器的 OAuth2。
+- **`grok login --device-auth`**（或 `--device-code`）：目标机器无需浏览器。见[身份验证 > 设备代码流程](02-authentication.md#device-code-flow)。
+- **`grok login`**：在有图形界面的机器上使用基于浏览器的 OAuth2。
 
 如果之前登录过，会自动使用缓存的凭据。
 
@@ -580,8 +580,8 @@ grok-zh -p "Run the test suite" --yolo
 
 - 无头模式默认启动**全新会话**。使用 `-r/--resume` 或 `-c/--continue` 在调用之间保持上下文。
 - `--output-format json` 响应始终包含 `sessionId`，可将其用于后续调用的 `--resume`。
-- 将 `--yolo` 与 `--rules` 组合以设置护栏：`grok-zh -p "..." --yolo --rules "Never delete files"`。
-- 调试时提高日志级别并捕获 stderr：`RUST_LOG=debug grok-zh -p "..." 2> debug.log`。
+- 将 `--yolo` 与 `--rules` 组合以设置护栏：`grok -p "..." --yolo --rules "Never delete files"`。
+- 调试时提高日志级别并捕获 stderr：`RUST_LOG=debug grok -p "..." 2> debug.log`。
 
 ---
 
@@ -626,7 +626,7 @@ Grok 将数据存储在 `~/.grok`（使用 `GROK_HOME` 覆盖；见[无头模式
 ```bash
 export XAI_API_KEY="xai-..."
 export GROK_DISABLE_AUTOUPDATER=1
-grok-zh -p "..." --no-auto-update
+grok -p "..." --no-auto-update
 ```
 
 ---
@@ -675,6 +675,6 @@ grok-zh -p "..." --no-auto-update
 - 保存截至最后一次已完成工具调用的会话状态
 - 工具所做的文件修改**不会回滚**
 - SIGINT（`128 + 2`）的退出代码为 **130**，SIGTERM（`128 + 15`）的退出代码为 **143**；CI 流水线可以将它们与普通错误（退出代码 `1`）区分开
-- 恢复：`grok-zh -p "continue" --resume "<id>"` 或 `grok-zh -p "continue" --continue`
+- 恢复：`grok -p "continue" --resume "<id>"` 或 `grok -p "continue" --continue`
 
 有关命名会话以及 `-s`/`-r`/`-c` 标志的详情，请见[无头模式下的会话管理](#session-management-in-headless-mode)。

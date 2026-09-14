@@ -26,7 +26,7 @@
 ### 每会话标志
 
 ```bash
-grok-zh --experimental-memory
+grok --experimental-memory
 ```
 
 <a id="environment-variable"></a>
@@ -34,7 +34,7 @@ grok-zh --experimental-memory
 
 ```bash
 export GROK_MEMORY=1
-grok-zh
+grok
 ```
 
 <a id="config-file-persistent"></a>
@@ -52,7 +52,7 @@ enabled = true
 即使其他设置启用了记忆，也可以将其禁用：
 
 ```bash
-grok-zh --no-memory
+grok --no-memory
 ```
 
 或者：
@@ -358,19 +358,19 @@ lambda = 0.7             # 0.0 = 最大多样性，1.0 = 纯相关性
 
 ```bash
 # 清除工作区记忆（MEMORY.md、sessions/ 和 index.sqlite）。这是默认范围。
-grok-zh memory clear
+grok memory clear
 
 # 显式指定同一范围
-grok-zh memory clear --workspace
+grok memory clear --workspace
 
 # 清除全局 MEMORY.md
-grok-zh memory clear --global
+grok memory clear --global
 
 # 同时清除工作区和全局记忆
-grok-zh memory clear --all
+grok memory clear --all
 
 # 跳过确认提示（-y 是短形式）
-grok-zh memory clear --yes
+grok memory clear --yes
 ```
 
 要从 Shell 编辑记忆，请直接在编辑器中打开文件，例如 `$EDITOR ~/.grok/memory/MEMORY.md`。
@@ -493,8 +493,8 @@ enabled = true    # 默认值
 <a id="memory-not-working"></a>
 ### 记忆不起作用
 
-1. 确认记忆已启用：检查 `grok-zh inspect` 输出。
-2. 检查标志：`grok-zh --experimental-memory` 或 `GROK_MEMORY=1`。
+1. 确认记忆已启用：检查 `grok inspect` 输出。
+2. 检查标志：`grok --experimental-memory` 或 `GROK_MEMORY=1`。
 3. 检查是否有 `--no-memory` 或 `GROK_MEMORY=0` 覆盖你的配置。
 
 <a id="memory-not-appearing-in-sessions"></a>
@@ -517,6 +517,6 @@ $EDITOR ~/.grok/memory/MEMORY.md
 ### 调试日志
 
 ```bash
-RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok-zh
+RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok
 grep "memory" /tmp/grok.log
 ```

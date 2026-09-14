@@ -258,7 +258,7 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
         ),
     );
 }
-/// `grok-zh setup`: rendering + exit codes only; fetch logic lives in `xai_grok_shell::managed_config`.
+/// `grok setup`: rendering + exit codes only; fetch logic lives in `xai_grok_shell::managed_config`.
 /// `json` prints the served configuration instead of installing it.
 async fn run_setup_command(json: bool, locale: &LocaleContext) {
     use xai_grok_shell::managed_config::{self, SetupOutcome};
@@ -468,7 +468,7 @@ async fn kill_leaders(locale: &LocaleContext) -> Result<()> {
                     localized_cli_template(
                         locale,
                         "cli.leader.kill.stale_lock",
-                        "  PID {pid} is not a grok-zh process, removing stale lock",
+                        "  PID {pid} is not a grok process, removing stale lock",
                         &[("{pid}", &pid.to_string())],
                     )
                 );
@@ -694,7 +694,7 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs, locale: &LocaleContext) -> 
             localized_cli_template(
                 locale,
                 "cli.workspace.sandbox_blocked",
-                "`grok-zh workspace` start/restart/resume is unavailable under sandbox profile '{profile}': those commands (re)activate shared-leader workspace exposure that this session cannot prove is confined by that profile. Disable the profile at the source that selected it (CLI, env, config, or a managed requirement).",
+                "`grok workspace` start/restart/resume is unavailable under sandbox profile '{profile}': those commands (re)activate shared-leader workspace exposure that this session cannot prove is confined by that profile. Disable the profile at the source that selected it (CLI, env, config, or a managed requirement).",
                 &[("{profile}", &profile_label)],
             )
         );
@@ -713,7 +713,7 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs, locale: &LocaleContext) -> 
                 "{}",
                 locale.named_text(
                     "cli.workspace.gate.disabled",
-                    "`grok-zh workspace` is not enabled for this account (gated by a server-side feature flag that is currently off)."
+                    "`grok workspace` is not enabled for this account (gated by a server-side feature flag that is currently off)."
                 )
             )
         }
@@ -722,7 +722,7 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs, locale: &LocaleContext) -> 
                 "{}",
                 locale.named_text(
                     "cli.workspace.settings_unknown",
-                    "Could not load your settings for `grok-zh workspace`. Check your network connection (run `grok-zh login` if you are signed out), then try again."
+                    "Could not load your settings for `grok workspace`. Check your network connection (run `grok login` if you are signed out), then try again."
                 )
             )
         }
@@ -792,7 +792,7 @@ async fn connect_workspace_control(
         anyhow::anyhow!(localized_cli_template(
             locale,
             "cli.workspace.leader_missing",
-            "no running leader for this environment ({error}). Start a grok-zh session, or run `grok-zh workspace start`.",
+            "no running leader for this environment ({error}). Start a grok session, or run `grok workspace start`.",
             &[("{error}", &e.to_string())],
         ))
     })
@@ -865,14 +865,14 @@ async fn workspace_start(
             "{}",
             locale.named_text(
                 "cli.workspace.requires_leader",
-                "`grok-zh workspace` requires leader mode (the workspace is shared via the leader).\nEnable it with `[cli] use_leader = true` in ~/.grok/config.toml, or pass --leader."
+                "`grok workspace` requires leader mode (the workspace is shared via the leader).\nEnable it with `[cli] use_leader = true` in ~/.grok/config.toml, or pass --leader."
             )
         );
     }
     let auth_hint = locale
         .named_text(
             "cli.workspace.auth.required",
-            "No cached credentials found. Run `grok-zh login` first.",
+            "No cached credentials found. Run `grok login` first.",
         )
         .into_owned();
     ensure_authenticated(
@@ -1452,7 +1452,7 @@ async fn forward_stdio_line_to_leader(
 }
 /// Emitted by both leader guards (server mode and leader-connect) so the two sites
 /// can't drift.
-const PLUGIN_DIR_LEADER_WARNING: &str = "grok-zh: --plugin-dir is ignored in leader mode; run with --no-leader to \
+const PLUGIN_DIR_LEADER_WARNING: &str = "grok: --plugin-dir is ignored in leader mode; run with --no-leader to \
      load per-process plugins";
 /// Run the `agent` subcommand, dispatching to the appropriate mode.
 #[tracing::instrument(level = "debug", skip_all)]
@@ -1568,7 +1568,7 @@ async fn run_agent_command(
         None,
     );
     if let Some(warning) = launch_yolo.blocked_warning {
-        eprintln!("grok-zh: {warning}");
+        eprintln!("grok: {warning}");
     }
     agent_config.default_yolo_mode = launch_yolo.yolo;
     agent_config.default_auto_mode = xai_grok_shell::util::config::effective_auto_for_launch(
@@ -2070,10 +2070,10 @@ impl WorkerCount {
                 used,
                 cores,
             } => Some(format!(
-                "grok-zh: clamped {GROK_WORKER_THREADS_ENV}={requested} to {used} (valid range is 1..={cores})"
+                "grok: clamped {GROK_WORKER_THREADS_ENV}={requested} to {used} (valid range is 1..={cores})"
             )),
             Self::Ignored { value, .. } => Some(format!(
-                "grok-zh: ignoring {GROK_WORKER_THREADS_ENV}={value:?} (not a valid integer)"
+                "grok: ignoring {GROK_WORKER_THREADS_ENV}={value:?} (not a valid integer)"
             )),
         }
     }
@@ -2384,10 +2384,10 @@ fn main() {
     xai_grok_pager::memory_trace::start(xai_grok_pager::memory_trace::default_dir());
     raise_fd_limit();
     if let Err(e) = xai_grok_config::validate_requirements() {
-        eprintln!("Couldn't start grok-zh: {e}");
+        eprintln!("Couldn't start grok: {e}");
         eprintln!();
         eprintln!(
-            "Update grok-zh to a version the policy allows, or ask your administrator \
+            "Update grok to a version the policy allows, or ask your administrator \
              to fix the managed requirements."
         );
         std::process::exit(2);
@@ -2407,7 +2407,7 @@ fn main() {
     if xai_grok_shell::util::config::load_crash_handler_enabled_sync() {
         let crash_dir = xai_grok_shell::util::grok_home::grok_home().join("crash");
         if let Some(report) = xai_crash_handler::check_previous_crash(&crash_dir) {
-            eprintln!("grok-zh crashed during your last session.");
+            eprintln!("grok crashed during your last session.");
             eprintln!("  Signal:  {}", report.signal_name);
             eprintln!("  Version: {}", report.app_version);
             eprintln!("  Report:  {}", report.report_path.display());
@@ -2436,7 +2436,7 @@ fn main() {
         .enable_all()
         .build()
         .unwrap_or_else(|e| {
-            eprintln!("grok-zh: failed to start tokio runtime with {workers} workers: {e}");
+            eprintln!("grok: failed to start tokio runtime with {workers} workers: {e}");
             shutdown_and_flush_telemetry(1);
         });
     let result = run_and_shutdown(
@@ -2569,7 +2569,7 @@ async fn async_main(
                     };
                     anyhow::bail!(
                         "top-level {flag} applies to the pager TUI, not the agent subcommand. \
-                         Use `grok-zh agent {flag}` instead."
+                         Use `grok agent {flag}` instead."
                     );
                 }
                 enforce_version_policy_or_exit();
@@ -2807,7 +2807,7 @@ async fn async_main(
             None,
         );
         if let Some(warning) = launch_yolo.blocked_warning {
-            eprintln!("grok-zh: {warning}");
+            eprintln!("grok: {warning}");
         }
         let json_schema = args
             .json_schema
@@ -3247,7 +3247,7 @@ mod tests {
         );
         assert_eq!(
             resolve_worker_override("100000", cores).notice().unwrap(),
-            "grok-zh: clamped GROK_WORKER_THREADS=100000 to 360 (valid range is 1..=360)"
+            "grok: clamped GROK_WORKER_THREADS=100000 to 360 (valid range is 1..=360)"
         );
     }
     #[test]
@@ -3260,7 +3260,7 @@ mod tests {
         }
         assert_eq!(
             resolve_worker_override("abc", cores).notice().unwrap(),
-            "grok-zh: ignoring GROK_WORKER_THREADS=\"abc\" (not a valid integer)"
+            "grok: ignoring GROK_WORKER_THREADS=\"abc\" (not a valid integer)"
         );
     }
     #[test]
@@ -3274,7 +3274,7 @@ mod tests {
             let mut output = Vec::new();
             write_version(&mut output, label).unwrap();
             let output = String::from_utf8(output).unwrap();
-            assert!(output.starts_with("grok-zh "));
+            assert!(output.starts_with("grok "));
             assert!(output.contains(env!("VERSION_WITH_COMMIT")));
             assert!(output.ends_with(expected_suffix), "{output:?}");
         }

@@ -265,15 +265,15 @@ fn all_tmux_finding_metadata_uses_stable_automatic_fix_ids_without_schema_change
         [
             (
                 crate::diagnostics::TMUX_CLIPBOARD_ID,
-                "grok-zh doctor fix terminal.tmux-clipboard",
+                "grok doctor fix terminal.tmux-clipboard",
             ),
             (
                 crate::diagnostics::DCS_PASSTHROUGH_ID,
-                "grok-zh doctor fix terminal.dcs-passthrough",
+                "grok doctor fix terminal.dcs-passthrough",
             ),
             (
                 crate::diagnostics::TMUX_EXTENDED_KEYS_ID,
-                "grok-zh doctor fix terminal.tmux-extended-keys",
+                "grok doctor fix terminal.tmux-extended-keys",
             ),
         ]
     );
@@ -519,7 +519,7 @@ fn clipboard_delivery_findings_own_remediation_while_fix_fact_stays_compatible()
             },
             crate::clipboard::ClipboardDelivery::Unverified,
             crate::diagnostics::CLIPBOARD_DELIVERY_UNVERIFIED_ID,
-            "grok-zh wrap <ssh command> or /minimal",
+            "grok wrap <ssh command> or /minimal",
         ),
         (
             TerminalContext {

@@ -177,7 +177,7 @@ Grok 会询问保存技能的位置：
 /commit fix the build
 ```
 
-要浏览技能，请输入 `/` 打开斜杠命令菜单。Grok 会列出每个内置命令和技能，并在输入时筛选。若要改用命令行列出技能，请运行 `grok-zh inspect`（参阅[查看技能详情](#viewing-skill-details)）。
+要浏览技能，请输入 `/` 打开斜杠命令菜单。Grok 会列出每个内置命令和技能，并在输入时筛选。若要改用命令行列出技能，请运行 `grok inspect`（参阅[查看技能详情](#viewing-skill-details)）。
 
 <a id="qualified-names"></a>
 ### 限定名称
@@ -192,7 +192,7 @@ Grok 会询问保存技能的位置：
 
 在斜杠菜单输入 `/login` 时会显示两行，右对齐的标记分别是 **built-in** 或 **skill · plugin-name**，以便区分。若希望技能使用裸 `/name`，请重命名技能（或其目录）。
 
-`grok-zh inspect` 会用 `[collides with /login → /acme:login]` 标记冲突技能。
+`grok inspect` 会用 `[collides with /login → /acme:login]` 标记冲突技能。
 
 <a id="automatic-invocation"></a>
 ### 自动调用
@@ -206,11 +206,11 @@ Grok 能在识别到相关任务时自行调用技能。Grok 会将提示与技�
 <a id="viewing-skill-details"></a>
 ## 查看技能详情
 
-运行 `grok-zh inspect` 查看 Grok 发现的每项技能以及其他配置：
+运行 `grok inspect` 查看 Grok 发现的每项技能以及其他配置：
 
 ```bash
-grok-zh inspect          # 人类可读摘要
-grok-zh inspect --json   # 机器可读报告
+grok inspect          # 人类可读摘要
+grok inspect --json   # 机器可读报告
 ```
 
 在人类可读输出中，Skills 部分会列出每项技能的名称及来源——`project`、`user`、`bundled`、`config`（`[skills].paths` 条目）、`server`（从受管工作区的技能存储同步的技能）或 `plugin: <name>`。通过 `[skills].disabled` 或禁用的厂商界面停用的技能会标记为 `[disabled]`。
@@ -224,9 +224,9 @@ grok-zh inspect --json   # 机器可读报告
 <a id="bundled-and-plugin-skills"></a>
 ## 捆绑技能和插件技能
 
-Grok 将平台技能与个人技能分开分发。捆绑技能缓存于 `~/.grok/bundled/skills/` 下；Grok 不会将它们写入 `~/.grok/skills/`。同名的本地、仓库或用户技能会覆盖捆绑副本。`grok-zh inspect` 会按实际来源标记每个定义。（同名插件技能不会覆盖原生技能，而是以限定的 `plugin:name` 形式继续可用。）
+Grok 将平台技能与个人技能分开分发。捆绑技能缓存于 `~/.grok/bundled/skills/` 下；Grok 不会将它们写入 `~/.grok/skills/`。同名的本地、仓库或用户技能会覆盖捆绑副本。`grok inspect` 会按实际来源标记每个定义。（同名插件技能不会覆盖原生技能，而是以限定的 `plugin:name` 形式继续可用。）
 
-技能也可以来自插件。安装包含技能的插件后，它们会与用户和项目技能一起出现。`grok-zh inspect` 会将插件提供的每项技能标为 `plugin: <name>` 来源。
+技能也可以来自插件。安装包含技能的插件后，它们会与用户和项目技能一起出现。`grok inspect` 会将插件提供的每项技能标为 `plugin: <name>` 来源。
 
 更多关于安装提供技能的插件的信息，请参阅[插件指南](09-plugins.md)。
 

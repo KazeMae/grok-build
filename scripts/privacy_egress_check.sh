@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# Privacy egress check: run release `grok-zh` through a local CONNECT proxy and
+# Privacy egress check: run release `grok` through a local CONNECT proxy and
 # fail if denylisted destinations appear in the host log.
 #
 # Does not require MITM / TLS interception — only CONNECT hostnames are recorded.
 #
-# 移植自 gork-build 0060-egress-guard；二进制名按 D1 决策适配为 grok-zh。
+# 移植自 gork-build 0060-egress-guard；二进制名按 D1 决策适配为 grok。
 # `update` 段的 vendor 拒绝断言依赖阶段 2（0040 × community-build）融合后的行为。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-BIN="${GROK_ZH_BIN:-target/release/grok-zh}"
+BIN="${GROK_ZH_BIN:-target/release/xai-grok-pager}"
 if [[ ! -x "$BIN" ]]; then
-  echo "Building release grok-zh..."
+  echo "Building release grok..."
   cargo build -p xai-grok-pager-bin --release
-  BIN=target/release/grok-zh
+  BIN=target/release/xai-grok-pager
 fi
 
 BASE_TMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-WORKDIR="${PRIVACY_EGRESS_WORKDIR:-$(mktemp -d "${BASE_TMP}/grok-zh-privacy-egress.XXXXXX")}"
+WORKDIR="${PRIVACY_EGRESS_WORKDIR:-$(mktemp -d "${BASE_TMP}/grok-privacy-egress.XXXXXX")}"
 mkdir -p "$WORKDIR"
 LOG="$WORKDIR/hosts.txt"
 PROXY_PORT="${PRIVACY_EGRESS_PORT:-18080}"
@@ -92,7 +92,7 @@ if [[ ! -s "$LOG" ]] || ! grep -Fiq 'positive-control.test' "$LOG"; then
   echo "log contents:"; cat "$LOG" || true
   exit 1
 fi
-echo "positive control recorded host; clearing log before grok-zh smoke"
+echo "positive control recorded host; clearing log before grok smoke"
 : >"$LOG"
 
 export HTTP_PROXY="http://${LISTEN}"
@@ -108,31 +108,31 @@ mkdir -p "$GROK_HOME"
 export GROK_TELEMETRY_ENABLED=1
 export GROK_TELEMETRY_TRACE_UPLOAD=1
 
-echo "==> grok-zh --version"
+echo "==> grok --version"
 "$BIN" --version
 
-echo "==> grok-zh --help (smoke)"
+echo "==> grok --help (smoke)"
 "$BIN" --help >/dev/null
 
-echo "==> grok-zh update (must refuse vendor install without dialing x.ai)"
+echo "==> grok update (must refuse vendor install without dialing x.ai)"
 UPDATE_EC=0
 UPDATE_OUT="$("$BIN" update 2>&1)" || UPDATE_EC=$?
 echo "$UPDATE_OUT" | head -40
 if ! echo "$UPDATE_OUT" | grep -qiE 'never installs from vendor|rebuild from source|Auto-update is not available|privacy build never'; then
-  echo "FAIL: grok-zh update did not print a vendor/privacy refusal (exit ${UPDATE_EC})"
+  echo "FAIL: grok update did not print a vendor/privacy refusal (exit ${UPDATE_EC})"
   echo "$UPDATE_OUT"
   exit 1
 fi
 echo "update path reported privacy/manual messaging (ok, exit ${UPDATE_EC})"
 
 if ! kill -0 "$PROXY_PID" 2>/dev/null; then
-  echo "FAIL: proxy died during grok-zh smoke"
+  echo "FAIL: proxy died during grok smoke"
   exit 1
 fi
 
 sleep 1
 
-echo "==> Host log after grok-zh:"
+echo "==> Host log after grok:"
 if [[ -s "$LOG" ]]; then
   sort -u "$LOG" | tee "$WORKDIR/hosts.unique.txt"
 else

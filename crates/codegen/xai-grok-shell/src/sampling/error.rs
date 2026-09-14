@@ -121,7 +121,7 @@ pub(crate) fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
                     format!(
                         "{message}\n\nYou have an API key set (XAI_API_KEY). \
                          Your cached OAuth session is being used instead. \
-                         To use your API key, run `grok-zh logout` or type /logout in the TUI."
+                         To use your API key, run `grok logout` or type /logout in the TUI."
                     )
                 } else {
                     message
@@ -814,8 +814,8 @@ mod tests {
             let data = acp_err.data.unwrap();
             let msg = data.as_str().unwrap();
             assert!(
-                msg.contains("grok-zh logout"),
-                "should suggest grok-zh logout when API key is available: {msg}"
+                msg.contains("grok logout"),
+                "should suggest grok logout when API key is available: {msg}"
             );
             assert!(
                 msg.contains("/logout"),
@@ -840,7 +840,7 @@ mod tests {
             let data = acp_err.data.unwrap();
             let msg = data.as_str().unwrap();
             assert!(
-                !msg.contains("grok-zh logout"),
+                !msg.contains("grok logout"),
                 "should NOT suggest logout when no API key is available: {msg}"
             );
         });
@@ -862,7 +862,7 @@ mod tests {
             let data = acp_err.data.unwrap();
             let msg = data.as_str().unwrap();
             assert!(
-                !msg.contains("grok-zh logout"),
+                !msg.contains("grok logout"),
                 "should NOT suggest logout for non-subscription 403: {msg}"
             );
         });

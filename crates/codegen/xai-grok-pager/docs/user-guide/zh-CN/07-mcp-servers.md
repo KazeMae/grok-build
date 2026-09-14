@@ -84,45 +84,45 @@ headers = { "x-mcp-session-id" = "{{session_id}}" }
 
 ```bash
 # 列出已配置的 MCP 服务器
-grok-zh mcp list
-grok-zh mcp list --json          # 机器可读输出
+grok mcp list
+grok mcp list --json          # 机器可读输出
 
 # 添加 stdio 服务器。-- 后的所有内容都是服务器命令，因此 -y 等标志
-# 会传给服务器，而不会被 grok-zh 解析
-grok-zh mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /path/to/dir
+# 会传给服务器，而不会被 grok 解析
+grok mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /path/to/dir
 
 # 添加带环境变量的 stdio 服务器（-e 可重复使用）
-grok-zh mcp add postgres -e DATABASE_URL=postgres://localhost/mydb -- npx -y @modelcontextprotocol/server-postgres
+grok mcp add postgres -e DATABASE_URL=postgres://localhost/mydb -- npx -y @modelcontextprotocol/server-postgres
 
 # 添加远程 HTTP 服务器
-grok-zh mcp add --transport http sentry https://mcp.sentry.dev/mcp
+grok mcp add --transport http sentry https://mcp.sentry.dev/mcp
 
 # 添加带身份验证标头的远程服务器（--header 可重复使用）
-grok-zh mcp add --transport http api https://mcp.example.com/mcp --header "Authorization: Bearer YOUR_TOKEN"
+grok mcp add --transport http api https://mcp.example.com/mcp --header "Authorization: Bearer YOUR_TOKEN"
 
 # 添加远程 SSE 服务器
-grok-zh mcp add --transport sse linear https://mcp.linear.app/sse
+grok mcp add --transport sse linear https://mcp.linear.app/sse
 
 # 移除服务器
-grok-zh mcp remove github
+grok mcp remove github
 
 # 启用或禁用本地/TOML（或兼容来源）的服务器
-grok-zh mcp enable github
-grok-zh mcp disable github
+grok mcp enable github
+grok mcp disable github
 
 # 诊断服务器的配置和连接性
-grok-zh mcp doctor               # 检查每个已配置的服务器
-grok-zh mcp doctor github        # 检查一个服务器
-grok-zh mcp doctor --json        # 机器可读输出
+grok mcp doctor               # 检查每个已配置的服务器
+grok mcp doctor github        # 检查一个服务器
+grok mcp doctor --json        # 机器可读输出
 ```
 
 传输方式默认为 `stdio`；对于远程服务器，请传入 `--transport http` 或 `--transport sse`。
 
-默认情况下，`grok-zh mcp add` 会写入 `~/.grok/config.toml`（`--scope user`）。使用 `--scope project` 可改为写入当前目录的 `.grok/config.toml`，该文件可以提交并与团队共享（参阅[项目范围的 MCP 服务器](#project-scoped-mcp-servers)）。标头和环境变量值会原样存储，因此请使用 `${VAR}` 引用密钥，而不要将密钥直接粘贴到已提交的项目配置中（参阅[配置示例](#example-configurations)）。`grok-zh mcp list` 会显示两个作用域中的服务器，将项目范围的服务器标为 `(project)`，将禁用的服务器标为 `(disabled)`。
+默认情况下，`grok mcp add` 会写入 `~/.grok/config.toml`（`--scope user`）。使用 `--scope project` 可改为写入当前目录的 `.grok/config.toml`，该文件可以提交并与团队共享（参阅[项目范围的 MCP 服务器](#project-scoped-mcp-servers)）。标头和环境变量值会原样存储，因此请使用 `${VAR}` 引用密钥，而不要将密钥直接粘贴到已提交的项目配置中（参阅[配置示例](#example-configurations)）。`grok mcp list` 会显示两个作用域中的服务器，将项目范围的服务器标为 `(project)`，将禁用的服务器标为 `(disabled)`。
 
-`grok-zh mcp remove` 会搜索两个作用域，移除服务器后退出码为 0。找不到名称，或名称同时在用户和项目作用域中定义时退出码为 1——请传入 `--scope` 指定要移除哪一个。
+`grok mcp remove` 会搜索两个作用域，移除服务器后退出码为 0。找不到名称，或名称同时在用户和项目作用域中定义时退出码为 1——请传入 `--scope` 指定要移除哪一个。
 
-`grok-zh mcp enable` / `disable` 会将个人开关状态持久化到用户的 `~/.grok/config.toml`（`disabled_mcp_servers`，以及条目存在时的 `[mcp_servers.<name>].enabled`）。作用域包括：
+`grok mcp enable` / `disable` 会将个人开关状态持久化到用户的 `~/.grok/config.toml`（`disabled_mcp_servers`，以及条目存在时的 `[mcp_servers.<name>].enabled`）。作用域包括：
 
 - **已知名称：** 用户/项目 Grok TOML、已在禁用列表中的名称、兼容来源（`.mcp.json`、Claude、Cursor）以及**插件** MCP 服务器（与 doctor/`/mcps` 使用相同发现逻辑）。
 - **仅启用操作：** 如果 cwd 最近的项目定义带有粘滞的 `enabled = false`，只清除该键（保留注释）；禁用操作不会重写项目配置。
@@ -224,7 +224,7 @@ MCP 工具会使用服务器名称命名空间，以避免冲突：
 
 所有来源按优先级合并：config.toml > Claude > Cursor > `.mcp.json`。来源优先级较高的服务器在名称冲突时优先。
 
-默认会扫描 Claude 和 Cursor MCP 来源。若要停用某个厂商的扫描，请在 `~/.grok/config.toml` 设置 `[compat.<vendor>] mcps = false`，或设置相应环境变量（`GROK_CURSOR_MCPS_ENABLED`、`GROK_CLAUDE_MCPS_ENABLED`）。详情请参阅[配置](05-configuration.md#harness-compatibility)。使用 `grok-zh inspect` 可查看加载了哪些 MCP 服务器及其厂商来源（`[cursor]`、`[claude]`）。
+默认会扫描 Claude 和 Cursor MCP 来源。若要停用某个厂商的扫描，请在 `~/.grok/config.toml` 设置 `[compat.<vendor>] mcps = false`，或设置相应环境变量（`GROK_CURSOR_MCPS_ENABLED`、`GROK_CLAUDE_MCPS_ENABLED`）。详情请参阅[配置](05-configuration.md#harness-compatibility)。使用 `grok inspect` 可查看加载了哪些 MCP 服务器及其厂商来源（`[cursor]`、`[claude]`）。
 
 ---
 
@@ -337,7 +337,7 @@ tool_timeouts = { slow_analysis = 300, quick_lookup = 10 }
 
 如果子智能体列出 `search_tool` / `use_tool` 却返回空目录，请检查：
 
-1. 父会话确实连接了该服务器（参阅扩展 / `grok-zh inspect`）；
+1. 父会话确实连接了该服务器（参阅扩展 / `grok inspect`）；
 2. 智能体的 `mcpInheritance` 不是 `none`，也不是排除该服务器的过滤器；
 3. 插件智能体不能在 frontmatter 中声明自己的 `mcpServers`——它们只能看到父会话已连接的服务器。
 
@@ -368,18 +368,18 @@ tail -f ~/.grok/logs/mcp/filesystem.stderr.log
 <a id="viewing-server-status"></a>
 ### 查看服务器状态
 
-使用 `grok-zh inspect` 查看所有已加载的 MCP 服务器及其来源：
+使用 `grok inspect` 查看所有已加载的 MCP 服务器及其来源：
 
 ```bash
-grok-zh inspect          # 人类可读
-grok-zh inspect --json   # 机器可读
+grok inspect          # 人类可读
+grok inspect --json   # 机器可读
 ```
 
 <a id="debug-logging"></a>
 ### 调试日志
 
 ```bash
-RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok-zh
+RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok
 tail -f /tmp/grok.log
 ```
 

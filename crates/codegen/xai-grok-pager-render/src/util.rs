@@ -34,7 +34,7 @@ pub fn display_grok_home_prefix_for(home: &Path) -> String {
         return format!("~/{}", xai_grok_product::DATA_DIR_NAME);
     }
     let name = xai_grok_product::HOME_ENV;
-    if std::env::var_os(name).is_some_and(|value| PathBuf::from(value) == home) {
+    if std::env::var_os(name).is_some_and(|value| Path::new(&value) == home) {
         return format!("${name}");
     }
     format!("${}", xai_grok_product::HOME_ENV)

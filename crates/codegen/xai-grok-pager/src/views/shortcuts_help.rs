@@ -473,13 +473,12 @@ pub fn filter_entries_with_locale(
                 }
                 let key_text = hint_key_display(h);
                 let key_pretty = hint_key_pretty(h);
-                let identity =
-                    (*action_id)
-                        .map(ExpandKey::Action)
-                        .or_else(|| match (long_help, &h.label) {
-                            (Some(_), Cow::Borrowed(label)) => Some(ExpandKey::Pseudo(label)),
-                            _ => None,
-                        });
+                let identity = (*action_id).map(ExpandKey::Action).or_else(|| {
+                    long_help.and_then(|_| match &h.label {
+                        Cow::Borrowed(label) => Some(ExpandKey::Pseudo(label)),
+                        _ => None,
+                    })
+                });
                 let english_desc = hint_description(h);
                 let desc =
                     localized_entry_text(locale, identity, "description", english_desc.as_str());

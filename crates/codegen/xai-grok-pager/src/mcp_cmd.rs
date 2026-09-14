@@ -13,19 +13,19 @@ use crate::util::display_user_grok_path;
 const ADD_AFTER_HELP: &str = "\
 示例：
   # 添加 stdio 服务器（-- 之后的内容均为服务器命令）
-  grok-zh mcp add xcode -- xcrun mcpbridge
+  grok mcp add xcode -- xcrun mcpbridge
 
   # 添加带环境变量的 stdio 服务器
-  grok-zh mcp add postgres -e DATABASE_URL=postgres://localhost/mydb -- npx -y @modelcontextprotocol/server-postgres
+  grok mcp add postgres -e DATABASE_URL=postgres://localhost/mydb -- npx -y @modelcontextprotocol/server-postgres
 
   # 添加远程 HTTP 服务器
-  grok-zh mcp add --transport http sentry https://mcp.sentry.dev/mcp
+  grok mcp add --transport http sentry https://mcp.sentry.dev/mcp
 
   # 添加带身份验证请求头的远程服务器
-  grok-zh mcp add --transport http api https://mcp.example.com/mcp --header \"Authorization: Bearer YOUR_TOKEN\"
+  grok mcp add --transport http api https://mcp.example.com/mcp --header \"Authorization: Bearer YOUR_TOKEN\"
 
   # 写入项目配置（./.grok/config.toml），而不是 ~/.grok/config.toml
-  grok-zh mcp add --scope project github -- npx -y @modelcontextprotocol/server-github";
+  grok mcp add --scope project github -- npx -y @modelcontextprotocol/server-github";
 
 #[derive(Debug, clap::Args, Clone)]
 pub struct McpArgs {
@@ -126,7 +126,7 @@ pub struct AddArgs {
     command_or_url: Option<String>,
 
     /// 传给服务器命令的参数。请放在 `--` 之后，使 `-y` 等参数传给
-    /// 服务器而不是 grok-zh。
+    /// 服务器而不是 grok。
     #[arg(value_name = "ARGS")]
     args: Vec<String>,
 
@@ -213,7 +213,7 @@ fn run_list(json: bool, locale: &LocaleContext) -> Result<()> {
             "{}",
             locale.named_text(
                 "mcp.list.empty",
-                "No MCP servers configured. Run `grok-zh mcp add --help` to get started."
+                "No MCP servers configured. Run `grok mcp add --help` to get started."
             )
         );
     } else {
@@ -436,7 +436,7 @@ fn resolve_add_with_locale(args: &AddArgs, locale: &LocaleContext) -> Result<Res
                     "{}",
                     locale.named_text(
                         "mcp.error.command_required",
-                        "A command is required for stdio servers. Usage: grok-zh mcp add <name> -- <command> [args...]"
+                        "A command is required for stdio servers. Usage: grok mcp add <name> -- <command> [args...]"
                     )
                 );
             };
@@ -483,7 +483,7 @@ fn resolve_add_with_locale(args: &AddArgs, locale: &LocaleContext) -> Result<Res
                 warnings.push(localized_mcp_template(
                     locale,
                     "mcp.warning.url_as_stdio",
-                    "Warning: '{command}' looks like a URL, but it is being added as a stdio command because --transport was not specified.\nFor a remote server, use: grok-zh mcp add --transport http {name} {suggested_url}",
+                    "Warning: '{command}' looks like a URL, but it is being added as a stdio command because --transport was not specified.\nFor a remote server, use: grok mcp add --transport http {name} {suggested_url}",
                     &[
                         ("{command}", command),
                         ("{name}", &args.name),
@@ -515,7 +515,7 @@ fn resolve_add_with_locale(args: &AddArgs, locale: &LocaleContext) -> Result<Res
                     localized_mcp_template(
                         locale,
                         "mcp.error.url_required",
-                        "A URL is required for {label} servers. Usage: grok-zh mcp add --transport {label} <name> <url>",
+                        "A URL is required for {label} servers. Usage: grok mcp add --transport {label} <name> <url>",
                         &[("{label}", label)],
                     )
                 );
@@ -825,7 +825,7 @@ async fn run_set_enabled(name: &str, enabled: bool, locale: &LocaleContext) -> R
                 "{}",
                 locale.named_text(
                     "mcp.list.empty",
-                    "No MCP servers configured. Run `grok-zh mcp add --help` to get started."
+                    "No MCP servers configured. Run `grok mcp add --help` to get started."
                 )
             );
         }
@@ -1004,7 +1004,7 @@ async fn run_remove(
                 localized_mcp_template(
                     locale,
                     "mcp.remove.choose_scope",
-                    "Specify which one to remove, e.g.: grok-zh mcp remove {name} --scope project",
+                    "Specify which one to remove, e.g.: grok mcp remove {name} --scope project",
                     &[("{name}", name)],
                 )
             );

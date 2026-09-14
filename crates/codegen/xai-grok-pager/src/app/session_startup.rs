@@ -812,7 +812,7 @@ async fn most_recent_session_id(
         .ok_or_else(|| {
             anyhow::anyhow!(locale.named_text(
                 "session.startup.no_session_for_cwd",
-                "No session found for current directory. Use 'grok-zh' to start a new session.",
+                "No session found for current directory. Use 'grok' to start a new session.",
             ))
         })?;
     Ok((first.info.id.to_string(), first.display_title_opt()))

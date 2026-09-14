@@ -2282,7 +2282,7 @@ impl MvpAgent {
         if relay_sync_enabled {
             tracing::info!("[grok] Relay sync: ENABLED");
         } else if tui_mode && relay_config_enabled && !has_xai_auth {
-            tracing::info!("[grok-zh] Relay sync: DISABLED (no auth - run 'grok-zh login' first)");
+            tracing::info!("[grok] Relay sync: DISABLED (no auth - run 'grok login' first)");
         } else if tui_mode && !relay_config_enabled {
             tracing::debug!("Relay sync: DISABLED (not configured in config.toml or env)");
         } else {

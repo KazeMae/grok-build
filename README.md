@@ -1,4 +1,4 @@
-> **Personal fork:** [KazeMae/grok-build](https://github.com/KazeMae/grok-build) maintains local compatibility fixes on `main`, plus a Simplified Chinese / privacy overlay (`grok-zh`) ported from [GrokZen](https://github.com/Catapult291/GrokZen).
+> **Personal fork:** [KazeMae/grok-build](https://github.com/KazeMae/grok-build) maintains local compatibility fixes on `main`, plus a Simplified Chinese / privacy overlay ported from [GrokZen](https://github.com/Catapult291/GrokZen). The executable name stays `grok`.
 > Official auto-update is unchanged. GrokZen installers are not included.
 > See [FORK.md](FORK.md) and [DEVELOPER.md](DEVELOPER.md).
 > The installation commands below download official binaries, not this fork's patched build.

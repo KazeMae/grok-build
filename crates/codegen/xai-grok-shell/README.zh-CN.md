@@ -1,6 +1,6 @@
 # Grok Build 简体中文社区版
 
-`grok-zh` 是基于 xAI 官方 Grok Build 源码维护的非官方简体中文社区版本。它尽量保持官方命令、协议和配置格式兼容，使用独立程序名提供中文 TUI，并与官方 `grok` 共用用户数据。
+`grok` 是基于 xAI 官方 Grok Build 源码维护的非官方简体中文社区版本。它尽量保持官方命令、协议和配置格式兼容，使用独立程序名提供中文 TUI，并与官方 `grok` 共用用户数据。
 
 > 这是社区构建，不代表 xAI 官方发布。登录、模型、计费、云端会话、共享链接和服务可用性仍由官方服务端决定。
 
@@ -8,22 +8,22 @@
 
 ## 快速开始
 
-Windows 云构建包下载后只需解压一次。要自动安装并把 `grok-zh`、`agent-zh`
+Windows 云构建包下载后只需解压一次。要自动安装并把 `grok`、`agent-zh`
 加入当前用户 `Path`，请参阅包内的 `INSTALL-WINDOWS.md`，或在
 [仓库中在线查看](https://github.com/Catapult291/GrokZen/blob/zh-dev/packaging/windows/INSTALL-WINDOWS.md)。
 
 ```powershell
 # 交互式 TUI
-.\grok-zh.exe
+.\grok.exe
 
 # 指定项目目录
-.\grok-zh.exe --cwd C:\path\to\project
+.\grok.exe --cwd C:\path\to\project
 
 # 查看完整 CLI 帮助
-.\grok-zh.exe --help
+.\grok.exe --help
 
 # 查看子命令帮助
-.\grok-zh.exe doctor --help
+.\grok.exe doctor --help
 ```
 
 首次启动会引导登录和文件夹信任。请只信任你了解的工作目录；自动批准或宽松权限模式可能允许模型读写文件、执行命令或访问网络。
@@ -32,12 +32,12 @@ Windows 云构建包下载后只需解压一次。要自动安装并把 `grok-zh
 
 两个程序入口使用以下约定：
 
-- 可执行文件：`grok-zh.exe`
+- 可执行文件：`grok.exe`
 - 与官方版共用的用户数据目录：`~/.grok`
 - 两个程序共同使用的目录覆盖：`GROK_HOME`
 - 运行时内置帮助：`~/.grok/README.grok-build-zh.md`
 
-会话、删除操作、登录状态、用户配置、第三方 API、模型、MCP、插件、技能和缓存都直接使用这套共享目录，不需要复制或同步。不要把社区测试包中的可执行文件覆盖到官方程序安装位置；官方安装脚本也不能用于安装或更新 `grok-zh`。
+会话、删除操作、登录状态、用户配置、第三方 API、模型、MCP、插件、技能和缓存都直接使用这套共享目录，不需要复制或同步。不要把社区测试包中的可执行文件覆盖到官方程序安装位置；官方安装脚本也不能用于安装或更新 `grok`。
 
 项目内的 `.grok/` 仍是上游兼容的项目级配置目录，名称不会翻译或改名。这样，同一项目可继续与官方版、团队配置和现有协议工具互操作。
 
@@ -56,7 +56,7 @@ Windows 云构建包下载后只需解压一次。要自动安装并把 `grok-zh
 
 默认使用浏览器登录。界面中的 `/login` 可重新认证，`/logout` 可退出当前账号。API Key、OIDC 或外部认证提供程序仍沿用官方配置格式；配置键和值不要翻译。
 
-凭据保存在共享的 `~/.grok/auth.json`。在 `grok` 或 `grok-zh` 中登录、退出或设置 API Key，都会影响另一入口。不要把凭据文件提交到 Git，也不要在问题报告中粘贴 token、API Key 或完整认证日志。
+凭据保存在共享的 `~/.grok/auth.json`。在 `grok` 或 `grok` 中登录、退出或设置 API Key，都会影响另一入口。不要把凭据文件提交到 Git，也不要在问题报告中粘贴 token、API Key 或完整认证日志。
 
 登录、订阅状态、模型权限和速率限制由官方或你配置的认证服务决定，Fork 无法保证这些服务始终可用。
 
@@ -104,7 +104,7 @@ Windows 云构建包下载后只需解压一次。要自动安装并把 `grok-zh
 
 项目规则通常使用仓库中的 `AGENTS.md`。上层目录和更靠近当前文件的规则可能共同生效；修改前应确认作用域。
 
-配置键沿用官方格式。升级上游版本后，配置能力可能变化；以 `grok-zh --help`、设置界面和当前源码为准。
+配置键沿用官方格式。升级上游版本后，配置能力可能变化；以 `grok --help`、设置界面和当前源码为准。
 
 ## 会话与数据
 
@@ -112,7 +112,7 @@ Windows 云构建包下载后只需解压一次。要自动安装并把 `grok-zh
 
 ```powershell
 $env:GROK_HOME = 'C:\temp\grok-test-home'
-.\grok-zh.exe
+.\grok.exe
 ```
 
 测试结束后先退出程序，再决定是否保留该目录。不要在 Grok 任务运行期间移动、删除或编辑会话文件。
@@ -137,8 +137,8 @@ MCP server、技能、插件和 Hooks 继续使用官方兼容格式：
 查看当前构建支持的精确参数：
 
 ```powershell
-.\grok-zh.exe --help
-.\grok-zh.exe agent --help
+.\grok.exe --help
+.\grok.exe agent --help
 ```
 
 自动化脚本应显式检查退出码和结构化输出，不要依赖已经翻译的自然语言提示做解析。
@@ -148,8 +148,8 @@ MCP server、技能、插件和 Hooks 继续使用官方兼容格式：
 遇到问题时，先运行：
 
 ```powershell
-.\grok-zh.exe doctor
-.\grok-zh.exe doctor --help
+.\grok.exe doctor
+.\grok.exe doctor --help
 ```
 
 报告问题时建议提供：
@@ -165,13 +165,13 @@ MCP server、技能、插件和 Hooks 继续使用官方兼容格式：
 
 ## 更新策略
 
-社区版默认关闭后台自动下载，只查询并显示版本提示。不要运行官方安装脚本来“更新”社区版，否则可能安装或覆盖官方程序而不是 `grok-zh.exe`。
+社区版默认关闭后台自动下载，只查询并显示版本提示。不要运行官方安装脚本来“更新”社区版，否则可能安装或覆盖官方程序而不是 `grok.exe`。
 
 正式社区更新来自本仓库的不可变 Releases（`release-v*`），并经过 `zh-dev` 测试。
-内置更新器只读取该发布源，通过 `Ctrl+U` 或 `grok-zh update` 手动触发下载与安装；
+内置更新器只读取该发布源，通过 `Ctrl+U` 或 `grok update` 手动触发下载与安装；
 官方 npm、GitHub、x.ai 与 GCS 更新源始终禁用。
 
-Windows 包附带社区安装器，可默认安装为 `grok-zh`、`agent-zh`，或由用户显式选择接管
+Windows 包附带社区安装器，可默认安装为 `grok`、`agent-zh`，或由用户显式选择接管
 `grok`、`agent`；它不启用官方自动更新源。
 
 ## 许可证

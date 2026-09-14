@@ -294,6 +294,7 @@ fn content_target(
 
 /// Render the active prompt-anchored dropdown into the band directly above `prompt_area`. Reuses the shared
 /// dropdown chrome and item renderers so the look matches the full TUI.
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     buf: &mut Buffer,
     viewport_area: Rect,

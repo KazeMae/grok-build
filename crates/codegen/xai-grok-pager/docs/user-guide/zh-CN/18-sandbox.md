@@ -12,13 +12,13 @@
 
 ```bash
 # 使用 workspace 沙箱运行（到处可读，仅可写 CWD + 临时目录 + ~/.grok/）
-grok-zh --sandbox workspace
+grok --sandbox workspace
 
 # 只读模式（到处可读，仅可写 ~/.grok/ + 临时目录）
-grok-zh --sandbox read-only
+grok --sandbox read-only
 
 # 限制最严格的配置（可读 CWD + 系统路径 + ~/.grok，可写 CWD + ~/.grok/sessions + 临时目录，不允许子进程联网）
-grok-zh --sandbox strict
+grok --sandbox strict
 ```
 
 ---
@@ -110,7 +110,7 @@ deny = ["/data/shared-secrets", "**/.env", "**/*.pem"]
 使用自定义配置：
 
 ```bash
-grok-zh --sandbox project
+grok --sandbox project
 ```
 
 自定义配置不能复用内置名称。`--sandbox devbox` 始终运行内置的 `devbox` 配置，会
@@ -173,7 +173,7 @@ grok-zh --sandbox project
 
 ## 工作原理
 
-沙箱在启动时使用内核原语应用于**整个 `grok-zh` 进程**，而不是按命令包装。这样所有
+沙箱在启动时使用内核原语应用于**整个 `grok` 进程**，而不是按命令包装。这样所有
 工具操作都会受到覆盖：
 
 - `read_file`、`search_replace`、`list_dir` —— 在进程内受 Landlock/Seatbelt 限制
@@ -186,7 +186,7 @@ grok-zh --sandbox project
   中。如果原本会启用 leader 模式，启动时会显示一行说明
 - 如果内置配置应用失败，Grok 会发出警告并在不强制执行的情况下继续（见
   [平台支持](#platform-support)），但仍会拒绝 leader，工具不会被委派到其他位置
-- `grok-zh workspace start`、`restart` 和 `resume` 不可用；`pause`、`stop` 和 `status`
+- `grok workspace start`、`restart` 和 `resume` 不可用；`pause`、`stop` 和 `status`
   仍可用
 
 要使用被拒绝的命令，请在选择该配置的来源处禁用它。
@@ -198,7 +198,7 @@ grok-zh --sandbox project
 ## 恢复会话
 
 会话启动时使用的配置会随会话保存，并在会话生命周期内**固定不变**。恢复会话时
-（`grok-zh --resume <id>`、`grok-zh --continue` 或 `grok-zh -r`），Grok 会自动恢复
+（`grok --resume <id>`、`grok --continue` 或 `grok -r`），Grok 会自动恢复
 同一配置——因此使用 `--sandbox workspace` 启动的会话不会悄然以更严格的默认配置回来，
 导致原本有效的命令失效。
 

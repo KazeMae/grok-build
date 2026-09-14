@@ -1,7 +1,7 @@
 [
   {
     "category": "fixes",
-    "description": "**`grok-zh inspect`** 现在会正确地将 Claude 绕过锁显示为提示性限制，而不是强制限制。",
+    "description": "**`grok inspect`** 现在会正确地将 Claude 绕过锁显示为提示性限制，而不是强制限制。",
     "breaking_change": false
   },
   {
@@ -46,7 +46,7 @@
   },
   {
     "category": "features",
-    "description": "**`grok-zh usage <session-id>`** 现在会显示已持久化的逐轮 token 和费用数据。",
+    "description": "**`grok usage <session-id>`** 现在会显示已持久化的逐轮 token 和费用数据。",
     "breaking_change": false
   },
   {

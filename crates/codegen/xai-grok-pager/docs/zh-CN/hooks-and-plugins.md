@@ -103,7 +103,7 @@ Grok Build 支持**钩子**（事件驱动的 shell 命令）和**插件**（技
 
 ### 添加 Marketplace 源
 
-在 Marketplace 选项卡按 `a`（或运行 `grok-zh plugin marketplace add <source>`），并提供 git URL、GitHub 简写（`owner/repo`）或本地目录路径（`/absolute`、`~/dir` 或 `./relative`）。本地路径会作为 `path` 源保存，适合从现有检出目录开发 Marketplace。
+在 Marketplace 选项卡按 `a`（或运行 `grok plugin marketplace add <source>`），并提供 git URL、GitHub 简写（`owner/repo`）或本地目录路径（`/absolute`、`~/dir` 或 `./relative`）。本地路径会作为 `path` 源保存，适合从现有检出目录开发 Marketplace。
 
 源会写入 `~/.grok/config.toml`：
 

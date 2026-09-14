@@ -1135,12 +1135,12 @@ pub(crate) fn localize_session_info_text(
         .map(|row| {
             let trimmed = row.trim_start();
             let indent = &row[..row.len() - trimmed.len()];
-            if trimmed.starts_with("Run `grok-zh login`") {
+            if trimmed.starts_with("Run `grok login`") {
                 return format!(
                     "{indent}{}",
                     locale.named_static_text(
                         "usage.modal.session.login_upsell",
-                        "Run `grok-zh login` to use your SuperGrok subscription instead.",
+                        "Run `grok login` to use your SuperGrok subscription instead.",
                     )
                 );
             }
@@ -1823,13 +1823,13 @@ mod tests {
     #[test]
     fn zh_locale_localizes_minimal_session_info_without_changing_values() {
         let text = localize_session_info_text(
-            "  Title: demo\n  Auth method: OAuth\n  Run `grok-zh login` to use your SuperGrok subscription instead.\n  Session ID: sid-123\n  Working directory: C:\\repo\n  Model: grok-build",
+            "  Title: demo\n  Auth method: OAuth\n  Run `grok login` to use your SuperGrok subscription instead.\n  Session ID: sid-123\n  Working directory: C:\\repo\n  Model: grok-build",
             &zh_locale(),
         );
         for needle in [
             "标题: demo",
             "身份验证方式: OAuth",
-            "运行 `grok-zh login`",
+            "运行 `grok login`",
             "会话 ID: sid-123",
             "工作目录: C:\\repo",
             "模型: grok-build",

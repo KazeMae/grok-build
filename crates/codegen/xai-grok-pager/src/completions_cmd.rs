@@ -1,4 +1,4 @@
-//! `grok-zh completions <shell>` — generate shell completion scripts.
+//! `grok completions <shell>` — generate shell completion scripts.
 //!
 //! Used by the installers and npm postinstall; must stay side-effect free (no network, auth, tracing, or tokio).
 
@@ -52,8 +52,8 @@ fn fix_zsh_root_prompt_positional(script: &str) -> String {
             r#"words=($line[1] "${words[@]}")"#,
         ),
         (
-            r#"curcontext="${curcontext%:*:*}:grok-zh-command-$line[2]:""#,
-            r#"curcontext="${curcontext%:*:*}:grok-zh-command-$line[1]:""#,
+            r#"curcontext="${curcontext%:*:*}:grok-command-$line[2]:""#,
+            r#"curcontext="${curcontext%:*:*}:grok-command-$line[1]:""#,
         ),
         (r#"case $line[2] in"#, r#"case $line[1] in"#),
     ] {
@@ -97,18 +97,15 @@ mod tests {
             "root dispatch must be shifted to $line[1]"
         );
         assert!(
-            fixed.contains(r#"curcontext="${curcontext%:*:*}:grok-zh-command-$line[1]:""#),
+            fixed.contains(r#"curcontext="${curcontext%:*:*}:grok-command-$line[1]:""#),
             "root dispatch context must use $line[1]"
         );
         // Subcommand dispatch blocks (already on $line[1]) must survive.
         assert!(
-            fixed.contains("grok-zh-worktree-command-$line[1]"),
+            fixed.contains("grok-worktree-command-$line[1]"),
             "nested subcommand dispatch must be untouched"
         );
         // The subcommand list itself must still be offered at the root.
-        assert!(
-            fixed.contains("_grok-zh_commands"),
-            "root command list intact"
-        );
+        assert!(fixed.contains("_grok_commands"), "root command list intact");
     }
 }

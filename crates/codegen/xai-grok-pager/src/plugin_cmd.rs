@@ -103,7 +103,7 @@ pub enum PluginCommand {
     /// 按名称卸载已安装的插件
     #[command(visible_alias = "rm", visible_alias = "remove")]
     Uninstall {
-        /// 插件名称（以 `grok-zh plugin list` 显示为准）。
+        /// 插件名称（以 `grok plugin list` 显示为准）。
         name: String,
         /// 对包含多个插件的仓库跳过确认。
         #[arg(long)]
@@ -229,7 +229,7 @@ fn trust_prompt(subject: &str, source_arg: &str) -> String {
         "Installing {subject} requires confirmation.\n\
          Plugins can run hooks, MCP servers, and skills on your machine, so installation needs explicit trust.\n\
          \n\
-         To proceed, re-run with --trust:\n  grok-zh plugin install {source_arg} --trust"
+         To proceed, re-run with --trust:\n  grok plugin install {source_arg} --trust"
     )
 }
 
@@ -272,7 +272,7 @@ fn cmd_list(json: bool, available: bool) -> Result<()> {
         }
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else if repos.is_empty() {
-        println!("No plugins installed. Run `grok-zh plugin install --help` to get started.");
+        println!("No plugins installed. Run `grok plugin install --help` to get started.");
     } else {
         for (repo_key, repo) in &repos {
             let mp = repo
@@ -484,7 +484,7 @@ fn cmd_install_marketplace(
                     .unwrap_or(&mref.name);
                 println!(
                     "Plugin \"{}\" is already installed from {}. \
-                     Run `grok-zh plugin update {}` to update it.",
+                     Run `grok plugin update {}` to update it.",
                     mref.name, outcome.source_display_name, update_name,
                 );
                 return Ok(());
@@ -539,7 +539,7 @@ fn cmd_uninstall(name: &str, confirm: bool, keep_data: bool) -> Result<()> {
             "Plugin \"{name}\" belongs to repo \"{repo_key}\" which also contains:\n\
              {}\n\n\
              Uninstalling will remove all {total} plugin(s). To proceed:\n\
-               grok-zh plugin uninstall {name} --confirm",
+               grok plugin uninstall {name} --confirm",
             other_plugins
                 .iter()
                 .map(|p| format!("  - {p}"))
@@ -612,7 +612,7 @@ fn cmd_enable(name: &str) -> Result<()> {
     if registry.find_plugin(name).is_none() {
         bail!(
             "Plugin \"{name}\" not found.\n\
-               Run `grok-zh plugin list` to see installed plugins."
+               Run `grok plugin list` to see installed plugins."
         );
     }
     if let Err(e) = xai_grok_shell::config::remove_disabled_plugin(name) {
@@ -629,7 +629,7 @@ fn cmd_disable(name: &str) -> Result<()> {
     if registry.find_plugin(name).is_none() {
         bail!(
             "Plugin \"{name}\" not found.\n\
-               Run `grok-zh plugin list` to see installed plugins."
+               Run `grok plugin list` to see installed plugins."
         );
     }
     if let Err(e) = xai_grok_shell::config::remove_enabled_plugin(name) {
@@ -646,7 +646,7 @@ fn cmd_details(name: &str) -> Result<()> {
     let (repo_key, repo, _) = registry.find_plugin(name).ok_or_else(|| {
         anyhow::anyhow!(
             "Plugin \"{name}\" not found.\n\
-             Run `grok-zh plugin list` to see installed plugins."
+             Run `grok plugin list` to see installed plugins."
         )
     })?;
 
@@ -726,7 +726,7 @@ fn cmd_tag(path: &str, push: bool, force: bool, dry_run: bool) -> Result<()> {
     let version = match load_manifest(&root) {
         Ok(ManifestLoadResult::Found(m)) => m.version.ok_or_else(|| {
             anyhow::anyhow!(
-                "No `version` field in plugin.json. Set a version to use `grok-zh plugin tag`."
+                "No `version` field in plugin.json. Set a version to use `grok plugin tag`."
             )
         })?,
         Ok(ManifestLoadResult::NotFound) => bail!("No plugin.json found in {path}."),
@@ -836,7 +836,7 @@ fn marketplace_list(
     } else if sources.is_empty() {
         println!(
             "No marketplace sources configured.\n\
-             Run `grok-zh plugin marketplace add --help` to get started."
+             Run `grok plugin marketplace add --help` to get started."
         );
     } else {
         for s in sources {
@@ -1218,7 +1218,7 @@ mod tests {
         );
         assert!(msg.contains("hooks, MCP servers, and skills"));
         assert!(msg.contains(
-            "To proceed, re-run with --trust:\n  grok-zh plugin install sentry@xai-org/plugin-marketplace --trust"
+            "To proceed, re-run with --trust:\n  grok plugin install sentry@xai-org/plugin-marketplace --trust"
         ));
         assert!(!msg.contains("Error"));
         assert!(!msg.contains("Failed"));
@@ -1234,10 +1234,7 @@ mod tests {
             ),
             "{git}"
         );
-        assert!(
-            git.ends_with("  grok-zh plugin install u/r --trust"),
-            "{git}"
-        );
+        assert!(git.ends_with("  grok plugin install u/r --trust"), "{git}");
         let local = trust_prompt("from directory /tmp/p", "./p");
         assert!(
             local.starts_with("Installing from directory /tmp/p requires confirmation."),

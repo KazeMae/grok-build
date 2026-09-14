@@ -21,7 +21,7 @@
   },
   {
     "category": "features",
-    "description": "**`grok-zh clone`** 现在可以将仓库提取到内容存储区，并挂载投影工作树。",
+    "description": "**`grok clone`** 现在可以将仓库提取到内容存储区，并挂载投影工作树。",
     "breaking_change": false
   },
   {

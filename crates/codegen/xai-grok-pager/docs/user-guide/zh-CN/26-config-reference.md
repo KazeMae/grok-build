@@ -25,7 +25,7 @@ Grok Build 还会按以下层级读取配置；后列层级优先，但 requirem
 7. `GROK_*` 环境变量。
 8. `--model`、`--sandbox`、`--yolo` 等 CLI 标志。
 
-运行 `grok-zh inspect` 或 `grok-zh inspect --json` 可查看最终生效的文件和值。
+运行 `grok inspect` 或 `grok inspect --json` 可查看最终生效的文件和值。
 
 ## config.toml
 
@@ -576,7 +576,7 @@ Grok Build 还会按以下层级读取配置；后列层级优先，但 requirem
 | `ui.contextual_hints.plan_mode` | `boolean` | `yes` | `user` | 针对规划型提示建议使用计划模式（Shift+Tab）。 |
 | `ui.contextual_hints.send_now` | `boolean` | `yes` | `user` | 轮次中途排队后续提示后，空提示按 Enter 可立即发送。 |
 | `ui.contextual_hints.small_screen` | `boolean` | `yes` | `user` | 终端高度较小时建议 `/compact-mode`。 |
-| `ui.contextual_hints.ssh_wrap` | `boolean` | `yes` | `user` | SSH 缺少剪贴板接收端时建议 `grok-zh wrap`。 |
+| `ui.contextual_hints.ssh_wrap` | `boolean` | `yes` | `user` | SSH 缺少剪贴板接收端时建议 `grok wrap`。 |
 | `ui.contextual_hints.undo` | `boolean` | `yes` | `user` | 提示 Ctrl+Z 可恢复被清除的草稿。 |
 | `ui.contextual_hints.word_select` | `boolean` | `yes` | `user` | 使用折叠／导航选择双击后，提示设置中的“词选择”。 |
 | `ui.cursor_blink` | `boolean` | `yes` | `user` | 强制块状光标闪烁（true）或常亮（false）；未设置时继承终端。 |
@@ -598,7 +598,7 @@ Grok Build 还会按以下层级读取配置；后列层级优先，但 requirem
 | `prompt_suggestions.reasoning_effort` | `none / minimal / low / medium / high` | `yes` | `user` | 建议请求的推理强度；默认值和 `none` 禁用推理，其余值使用模型支持的强度。可由远程配置覆盖。 |
 | `ui.remember_tool_approvals` | `boolean` | `yes` | `user` | 显示按工具“始终允许”选项。也对应 `GROK_REMEMBER_TOOL_APPROVALS`。 |
 | `ui.render_mermaid` | `auto / on / off` | `yes` | `user` | Mermaid 代码围栏显示方式：可点击打开行或原始源文本。 |
-| `ui.screen_mode` | `fullscreen / minimal` | `yes` | `user` | 普通 `grok-zh` 的默认渲染模式；需要重启。 |
+| `ui.screen_mode` | `fullscreen / minimal` | `yes` | `user` | 普通 `grok` 的默认渲染模式；需要重启。 |
 | `ui.scroll_lines` | `integer` | `yes` | `user` | 每次滚动的行数（1–10）。也对应 `GROK_SCROLL_LINES`。 |
 | `ui.scroll_mode` | `auto / wheel / trackpad` | `yes` | `user` | 滚动输入分类。也对应 `GROK_SCROLL_MODE`。 |
 | `ui.scroll_speed` | `integer` | `yes` | `user` | 鼠标／触控板滚动速度倍数（1–100）。也对应 `GROK_SCROLL_SPEED`。 |
@@ -672,11 +672,11 @@ Grok Build 先读取 `/etc/grok/managed_config.toml`，再读取由控制台同�
 
 | 情况 | Grok Build 的处理 |
 | --- | --- |
-| 开发者设置了管理员固定的键 | 使用固定值；`grok-zh inspect` 会列出贡献该值的 requirements 文件。 |
+| 开发者设置了管理员固定的键 | 使用固定值；`grok inspect` 会列出贡献该值的 requirements 文件。 |
 | 开发者设置了 `managed_config.toml` 下发的键 | 使用开发者的值，`features.remote_fetch` 除外。必须强制时请改用固定值。 |
 | `requirements.toml` 缺失或签名验证失败 | 不应用固定值，Grok Build 仍会启动；设置 `fail_closed = true` 可改为拒绝启动。 |
 | 固定键使用了当前版本不认识的值 | 忽略该键，文件其余内容继续生效。 |
 
 ## 检查实际生效值
 
-在开发者机器上运行 `grok-zh inspect`。它会列出所有参与合并的配置文件，包括 requirements 和托管层，因此一条未生效的策略可以通过一个命令定位。
+在开发者机器上运行 `grok inspect`。它会列出所有参与合并的配置文件，包括 requirements 和托管层，因此一条未生效的策略可以通过一个命令定位。

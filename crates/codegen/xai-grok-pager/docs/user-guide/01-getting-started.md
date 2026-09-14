@@ -1,10 +1,10 @@
 # Getting Started
 
 > **Community build notice:** This is the unofficial Simplified Chinese
-> distribution. Its command is `grok-zh`; it intentionally shares `~/.grok`
+> distribution. Its command is `grok`; it intentionally shares `~/.grok`
 > and `GROK_HOME` with the official executable so sessions, credentials, and
 > configuration remain identical. The official xAI installer does not install
-> or update the `grok-zh` executable.
+> or update the `grok` executable.
 
 Grok Build is a terminal-based AI coding assistant from SpaceXAI. It runs as a TUI (Terminal User Interface) that understands your codebase, executes shell commands, edits files, searches the web, and manages tasks.
 
@@ -27,7 +27,7 @@ The plain `v1.0.8` bridge is Windows-only and keeps the legacy flat ZIP layout.
 Verify the installation:
 
 ```bash
-grok-zh --version
+grok --version
 ```
 
 Updater-enabled builds accept only the exact platform archive and checksum
@@ -58,16 +58,16 @@ and [Configuration reference](26-config-reference.md).
 Start Grok by running:
 
 ```bash
-grok-zh
+grok
 ```
 
-On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions and are shared by `grok` and `grok-zh`. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
+On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions and are shared by `grok` and `grok`. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
 
 If you prefer API key authentication (e.g., for CI/CD or environments without a browser), set the `XAI_API_KEY` environment variable instead:
 
 ```bash
 export XAI_API_KEY="xai-..."
-grok-zh
+grok
 ```
 
 See [Authentication](02-authentication.md) for the full set of auth options including OIDC, external auth providers, and device code flow.
@@ -107,7 +107,7 @@ The `@` operator opens a fuzzy file picker. By default it respects `.gitignore` 
 By default, Grok asks for permission before executing shell commands or editing files. You can approve individually or toggle always-approve mode:
 
 - Press `Ctrl+O` to toggle always-approve mode
-- Use the `--yolo` flag at launch: `grok-zh --yolo`
+- Use the `--yolo` flag at launch: `grok --yolo`
 - Type `/always-approve` in the prompt to toggle the mode
 
 ---
@@ -116,11 +116,11 @@ By default, Grok asks for permission before executing shell commands or editing 
 
 ### Sessions
 
-Every conversation is a **session**. Sessions are automatically saved to `~/.grok/sessions/`, shared by `grok` and `grok-zh`, and can be resumed later. Each session tracks the full conversation history, tool calls, file edits, and task state.
+Every conversation is a **session**. Sessions are automatically saved to `~/.grok/sessions/`, shared by `grok` and `grok`, and can be resumed later. Each session tracks the full conversation history, tool calls, file edits, and task state.
 
 - Start a new session: `Ctrl+N` or `/new`
 - Resume a previous session: `/resume` in the TUI, or `--resume <ID>` from the CLI
-- Continue the most recent session: `grok-zh -c`
+- Continue the most recent session: `grok -c`
 
 ### Scrollback
 
@@ -170,44 +170,44 @@ See [Slash Commands](04-slash-commands.md) for the complete reference.
 
 ```bash
 # Launch the interactive TUI and submit an initial prompt as the first turn
-grok-zh "fix the failing auth test and run it"
+grok "fix the failing auth test and run it"
 
 # Initial prompt in a new git worktree. Use --worktree=<name> (with `=`) so the
-# prompt isn't swallowed as the worktree name — `grok-zh -w "refactor module X"`
+# prompt isn't swallowed as the worktree name — `grok -w "refactor module X"`
 # would treat "refactor module X" as the worktree label, not the prompt.
-grok-zh --worktree=feat "refactor module X"
+grok --worktree=feat "refactor module X"
 
 # Base the worktree on a specific branch (e.g. main) instead of the current HEAD:
-grok-zh -w --ref main "implement feature from main"
+grok -w --ref main "implement feature from main"
 
 
 # Start in a specific project directory
-grok-zh --cwd ~/projects/my-app
+grok --cwd ~/projects/my-app
 
 # Add project-specific rules
-grok-zh --rules "Always use TypeScript. Prefer functional components."
+grok --rules "Always use TypeScript. Prefer functional components."
 
 # Auto-approve all tool executions
-grok-zh --yolo
+grok --yolo
 
 # Use a specific model
-grok-zh -m grok-build
+grok -m grok-build
 
 # Resume a previous session
-grok-zh --resume <session-id>
+grok --resume <session-id>
 
 # Continue the most recent session
-grok-zh -c
+grok -c
 
-# Experimental scrollback-native render mode. Sticky: plain `grok-zh` reopens in
+# Experimental scrollback-native render mode. Sticky: plain `grok` reopens in
 # the mode last chosen via --minimal/--fullscreen (or /minimal//fullscreen).
-grok-zh --minimal
+grok --minimal
 
 # Back to the standard fullscreen TUI (and make it sticky again)
-grok-zh --fullscreen
+grok --fullscreen
 
 # Headless mode (for scripts)
-grok-zh -p "Explain this codebase"
+grok -p "Explain this codebase"
 ```
 
 ---
@@ -217,7 +217,7 @@ grok-zh -p "Explain this codebase"
 Run Grok non-interactively for scripting, CI/CD, and automation:
 
 ```bash
-grok-zh -p "Your prompt here"
+grok -p "Your prompt here"
 ```
 
 Output formats:
@@ -231,7 +231,7 @@ Output formats:
 Example CI/CD usage:
 
 ```bash
-grok-zh -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
+grok -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
 ```
 
 ---

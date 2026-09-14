@@ -111,28 +111,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bin="target/${{ matrix.target }}/release/grok-zh"
+          bin="target/${{ matrix.target }}/release/xai-grok-pager"
           "$bin" --version
           if [[ -n "${GROK_VERSION:-}" ]]; then
             "$bin" --version | grep -qF "$GROK_VERSION"
           fi
 
-      # Ship the overlay binary under its installed name (`grok-zh`).
-      # Official auto-update is unchanged and still talks to x.ai; it does not
-      # consume these GitHub Release assets.
+      # Ship the binary under its installed name (`grok`); the build artifact
+      # is `xai-grok-pager` (see README).
       - name: Package
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist/pkg
-          cp "target/${{ matrix.target }}/release/grok-zh" dist/pkg/grok-zh
-          chmod +x dist/pkg/grok-zh
-          tar -czf "dist/grok-zh-${{ steps.version.outputs.version }}-${{ matrix.platform }}.tar.gz" -C dist/pkg grok-zh
+          cp "target/${{ matrix.target }}/release/xai-grok-pager" dist/pkg/grok
+          chmod +x dist/pkg/grok
+          tar -czf "dist/grok-${{ steps.version.outputs.version }}-${{ matrix.platform }}.tar.gz" -C dist/pkg grok
 
       - uses: actions/upload-artifact@v5
         with:
-          name: grok-zh-${{ matrix.platform }}
-          path: dist/grok-zh-*.tar.gz
+          name: grok-${{ matrix.platform }}
+          path: dist/grok-*.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -145,7 +144,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v5
         with:
-          pattern: grok-zh-*
+          pattern: grok-*
           path: dist
           merge-multiple: true
 

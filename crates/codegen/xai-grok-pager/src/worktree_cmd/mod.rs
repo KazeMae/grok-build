@@ -63,7 +63,7 @@ enum WorktreeCommand {
         #[arg(long)]
         max_age: Option<String>,
         /// 跳过活动进程与受保护路径检查；不会绕过工作内容安全检查，强制移除请使用
-        /// `grok-zh worktree rm`。
+        /// `grok worktree rm`。
         #[arg(short, long)]
         force: bool,
     },

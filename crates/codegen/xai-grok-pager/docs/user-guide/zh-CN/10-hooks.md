@@ -549,4 +549,4 @@ echo '{"decision": "allow"}'
 - **钩子没有运行？** 在非 VS Code 系列终端按 `Ctrl+L`（或在任何地方运行 `/hooks`），查看钩子是否已加载并匹配。
 - **项目钩子被忽略？** 文件夹可能不受信任。运行 `/hooks-trust`（或使用 `--trust` 重新启动）。
 - **找不到脚本？** 检查路径是否相对于 `.json` 文件，并且脚本可执行（`chmod +x`）。
-- **查看错误？** 使用 `RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok-zh` 启动以捕获日志，然后检查 `/tmp/grok.log`。
+- **查看错误？** 使用 `RUST_LOG=debug GROK_LOG_FILE=/tmp/grok.log grok` 启动以捕获日志，然后检查 `/tmp/grok.log`。

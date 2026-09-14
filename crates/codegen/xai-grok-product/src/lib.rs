@@ -21,8 +21,8 @@ pub const DISPLAY_NAME: &str = if PRIVACY_BUILD {
 } else {
     "Grok Build 中文社区版"
 };
-/// Command and executable stem for this overlay.
-pub const CLI_NAME: &str = "grok-zh";
+/// Command and executable stem. Same as official grok-build.
+pub const CLI_NAME: &str = "grok";
 /// Shared per-user data directory, relative to the user's home directory.
 ///
 /// The official and Simplified Chinese executables intentionally use the same
@@ -41,11 +41,7 @@ pub const OFFICIAL_CHANGELOG_SOURCE_ALLOWED: bool = true;
 
 /// Executable filename for the current platform.
 pub const fn executable_name() -> &'static str {
-    if cfg!(windows) {
-        "grok-zh.exe"
-    } else {
-        CLI_NAME
-    }
+    if cfg!(windows) { "grok.exe" } else { CLI_NAME }
 }
 
 #[cfg(test)]
@@ -80,7 +76,7 @@ mod tests {
         assert_eq!(HOME_ENV, "GROK_HOME");
         assert_eq!(LOCALE_ENV, "GROK_ZH_LOCALE");
         assert_eq!(DEFAULT_UI_LOCALE, "zh-CN");
-        assert_ne!(
+        assert_eq!(
             executable_name(),
             if cfg!(windows) { "grok.exe" } else { "grok" }
         );

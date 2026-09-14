@@ -1,7 +1,7 @@
 <a id="agent-mode-acp-and-ide-integration"></a>
 # 智能体模式（ACP）与 IDE 集成
 
-智能体模式将 Grok 作为长期运行的服务器，客户端通过 [ACP](https://agentclientprotocol.com)（JSON-RPC）与其通信。可从 IDE、SDK、评测 harness 和自定义应用使用。若要发送一次性提示并打印结果后退出，请改用 `grok-zh -p`（[无头模式](14-headless-mode.md)）。
+智能体模式将 Grok 作为长期运行的服务器，客户端通过 [ACP](https://agentclientprotocol.com)（JSON-RPC）与其通信。可从 IDE、SDK、评测 harness 和自定义应用使用。若要发送一次性提示并打印结果后退出，请改用 `grok -p`（[无头模式](14-headless-mode.md)）。
 
 ---
 
@@ -12,10 +12,10 @@
 
 ```bash
 # stdio（本地进程 / 许多 SDK）
-grok-zh agent --always-approve stdio
+grok agent --always-approve stdio
 
 # WebSocket 服务器
-grok-zh agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
 也可以在 `session/new` 上为每个会话设置始终批准：
@@ -51,7 +51,7 @@ grok-zh agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 stdio 是常见的本地集成路径。智能体在 stdin 和 stdout 上使用 JSON-RPC 通信：
 
 ```bash
-grok-zh agent --always-approve stdio
+grok agent --always-approve stdio
 ```
 
 典型客户端包括 IDE 扩展（Zed、Neovim、Emacs）、自定义工具和 ACP SDK。
@@ -62,8 +62,8 @@ grok-zh agent --always-approve stdio
 智能体选项适用于每种传输（`stdio`、`serve`、`headless`、`leader`）。它们放在 `agent` 之后、模式名称之前。模式专用标志放在模式之后（例如 `serve --bind`）。
 
 ```bash
-grok-zh agent --always-approve --model grok-build stdio
-grok-zh agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+grok agent --always-approve --model grok-build stdio
+grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
 | 标志 | 说明 |
@@ -80,7 +80,7 @@ grok-zh agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ## 服务器模式
 
 ```bash
-grok-zh agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
 客户端通过 WebSocket 连接，并使用 secret token 进行身份验证。如果省略 `--secret`，智能体会在启动时打印生成的 token；也可以设置 `GROK_AGENT_SECRET`。进程会在客户端重新连接之间保留状态。权限与其他入口一致；参见[权限与安全](22-permissions-and-safety.md)。
@@ -93,7 +93,7 @@ grok-zh agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 要通过互联网访问智能体，请将智能体连接到中继，并让浏览器指向同一个中继：
 
 ```bash
-grok-zh agent --always-approve headless --grok-ws-url wss://your-relay.example.com/ws
+grok agent --always-approve headless --grok-ws-url wss://your-relay.example.com/ws
 ```
 
 ---
@@ -119,7 +119,7 @@ grok-zh agent --always-approve headless --grok-ws-url wss://your-relay.example.c
 +-------------------+----------------------+
                     | 通过 stdio 的 JSON-RPC
 +-------------------v----------------------+
-|          grok-zh agent stdio             |
+|          grok agent stdio             |
 |                                          |
 |  +---------+  +---------+  +---------+   |
 |  | 会话管理器 |  | 工具注册表 |  | MCP 服务器 |   |
@@ -270,7 +270,7 @@ class GrokACPChat {
   constructor(private cwd = ".") {}
 
   async init() {
-    this.proc = spawn("grok-zh", ["agent", "--always-approve", "stdio"]);
+    this.proc = spawn("grok", ["agent", "--always-approve", "stdio"]);
     this.rl = readline.createInterface({ input: this.proc.stdout! });
 
     await this.request("initialize", {

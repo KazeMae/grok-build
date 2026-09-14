@@ -197,7 +197,7 @@ mod tests {
     fn bundled_metadata_is_the_community_chinese_release() {
         assert_eq!(BUILTIN_FILES.len(), 3);
         assert_eq!(BUILTIN_FILES[0].0, COMMUNITY_README);
-        assert!(BUILTIN_FILES[0].1.contains("grok-zh"));
+        assert!(BUILTIN_FILES[0].1.contains("grok"));
         assert!(BUILTIN_FILES[0].1.contains("简体中文社区版"));
         assert_eq!(BUILTIN_FILES[1].0, COMMUNITY_CHANGELOG_MD);
         let expected_heading = format!("# {} —", env!("CARGO_PKG_VERSION"));

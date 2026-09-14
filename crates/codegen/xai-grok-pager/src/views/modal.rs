@@ -717,10 +717,8 @@ pub(crate) fn filter_palette_entries_with_locale(
     let mut section_has_match = false;
     for entry in all {
         if matches!(entry.command, PaletteCommand::SectionHeader(_)) {
-            if let Some(h) = pending_header.take() {
-                if section_has_match {
-                    result.push(h);
-                }
+            if section_has_match && let Some(h) = pending_header.take() {
+                result.push(h);
             }
             pending_header = Some(entry);
             section_has_match = false;
@@ -741,10 +739,8 @@ pub(crate) fn filter_palette_entries_with_locale(
             }
         }
     }
-    if let Some(h) = pending_header {
-        if section_has_match {
-            result.push(h);
-        }
+    if section_has_match && let Some(h) = pending_header {
+        result.push(h);
     }
     result
 }

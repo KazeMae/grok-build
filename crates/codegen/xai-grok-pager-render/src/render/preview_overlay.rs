@@ -167,6 +167,7 @@ pub fn render_preview_overlay(
     Some(box_area)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_content_lines(
     buf: &mut Buffer,
     inner: Rect,

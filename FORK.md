@@ -14,9 +14,9 @@ The upstream license and notices remain unchanged.
 - `merge/upstream-<version>`: the review branch for one official synchronization.
   When the upstream package version repeats, append the short `SOURCE_REV` of the
   new snapshot, as in `merge/upstream-1.0.24-c4ea71cf`.
-- `merge/grokzen`: Simplified Chinese UI, compile-time privacy, and `grok-zh`
-  identity ported from [GrokZen](https://github.com/Catapult291/GrokZen). Official
-  auto-update and GrokZen installers are not part of this overlay.
+- `merge/grokzen`: Simplified Chinese UI and compile-time privacy ported from
+  [GrokZen](https://github.com/Catapult291/GrokZen). The executable remains `grok`.
+  Official auto-update and GrokZen installers are not part of this overlay.
 
 For a fresh clone:
 
@@ -144,9 +144,9 @@ Clippy run also compiles upstream test and bench targets, which currently fail f
 upstream reasons; run it with `--keep-going` when auditing, and treat only findings
 inside patched files as personal regressions.
 
-The artifact is `target/release/grok-zh`. Install it as a new versioned
+The artifact is `target/release/xai-grok-pager`. Install it as a new versioned
 binary under `~/.grok/bin/`, back up the existing binary and configuration, and
-atomically replace the `grok-zh` (or `grok`) symlink only after verification. Retain the old
+atomically replace the `grok` symlink only after verification. Retain the old
 binary for rollback. Running Grok sessions keep their old executable until restart.
 
 The official updater is **not** redirected to this fork. To retain a custom build,

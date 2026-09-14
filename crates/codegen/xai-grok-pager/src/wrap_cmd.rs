@@ -23,7 +23,7 @@ pub fn run(args: &WrapArgs) -> Result<()> {
     let program = args
         .command
         .first()
-        .ok_or_else(|| anyhow::anyhow!("grok-zh wrap: no command given"))?;
+        .ok_or_else(|| anyhow::anyhow!("grok wrap: no command given"))?;
 
     // Unix: derive both spawn plans up front from one env snapshot so the PTY attempt and its fallback route consistently
     // The wrapped run uses `$SHELL -i` when routing through the shell (rc files load, aliases expand; safe because it runs inside our PTY)
@@ -52,7 +52,7 @@ pub fn run(args: &WrapArgs) -> Result<()> {
             Err(e) => {
                 // PTY setup failed; keep the chosen route without our PTY so
                 // the command still works (just without clipboard forwarding).
-                eprintln!("grok-zh wrap: wrapped mode failed, running without PTY wrapping: {e}");
+                eprintln!("grok wrap: wrapped mode failed, running without PTY wrapping: {e}");
                 exec_command(&fallback.program, &fallback.args)
             }
         }

@@ -20,12 +20,12 @@
 | 交互式 TUI | 使用 auto 配合后台检查、减少提示，或使用 ask 自行批准每个操作 |
 | 脚本、SDK、CI、代理服务器 | Always-approve；添加 [deny 规则](#configuring-permissions)或钩子来设置硬限制 |
 
-如果尚未选择模式，新的交互式会话会使用当前默认值。一旦通过 `Shift+Tab`、`/settings`、`permission_mode` 配置项或 `--permission-mode` 标志选择模式，你的选择就始终优先并会被记住。无头运行（`grok-zh -p`）、`agent stdio` 和代理服务器始终以 **ask** 启动。
+如果尚未选择模式，新的交互式会话会使用当前默认值。一旦通过 `Shift+Tab`、`/settings`、`permission_mode` 配置项或 `--permission-mode` 标志选择模式，你的选择就始终优先并会被记住。无头运行（`grok -p`）、`agent stdio` 和代理服务器始终以 **ask** 启动。
 
 ```bash
-grok-zh -p "Run the tests" --always-approve
-grok-zh agent --always-approve stdio
-grok-zh agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+grok -p "Run the tests" --always-approve
+grok agent --always-approve stdio
+grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
 ACP 客户端可以在 session/new 上设置 "_meta": { "yoloMode": true }。参见[代理模式](15-agent-mode.md#automation-and-sdks)。
@@ -51,9 +51,9 @@ ACP 客户端可以在 session/new 上设置 "_meta": { "yoloMode": true }。参
 **CLI：**
 
 ```bash
-grok-zh --always-approve -p "Run the test suite"
-grok-zh --permission-mode auto
-grok-zh agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
+grok --always-approve -p "Run the test suite"
+grok --permission-mode auto
+grok agent --always-approve serve --bind 127.0.0.1:2419 --secret <token>
 ```
 
 **配置：**
@@ -94,14 +94,14 @@ deny = [
 ```
 
 ```bash
-grok-zh -p "Deploy the service" --always-approve --deny 'Bash(rm -rf *)'
+grok -p "Deploy the service" --always-approve --deny 'Bash(rm -rf *)'
 ```
 
 Deny 始终优先于 allow，也优先于 always-approve 的常规直通行为。参见[配置权限](#configuring-permissions)。
 
 ### Auto 模式
 
-在许多工具调用运行前先进行检查，以减少交互提示。日常本地工作通常会继续；其他调用可能被阻止或升级。在非交互会话中，被阻止的调用会失败并报告给模型（例如 Auto mode blocked this action …）。grok-zh -p、agent stdio 和 agent serve 的行为相同。
+在许多工具调用运行前先进行检查，以减少交互提示。日常本地工作通常会继续；其他调用可能被阻止或升级。在非交互会话中，被阻止的调用会失败并报告给模型（例如 Auto mode blocked this action …）。grok -p、agent stdio 和 agent serve 的行为相同。
 
 若自动化必须在无交互批准的情况下运行工具，请使用 always-approve（如需硬阻止则添加 deny 规则），不要只使用 auto。
 
@@ -217,7 +217,7 @@ allow = ["Bash(cargo test *)", "Bash(npm run build)"]
 ### 1. CLI 标志
 
 ```bash
-grok-zh -p "Review the API changes" \
+grok -p "Review the API changes" \
   --allow 'Bash(git *)' \
   --allow 'Bash(gh *)' \
   --allow 'Read' \
@@ -512,7 +512,7 @@ chmod +x ~/.grok/hooks/git-gh-only.sh
 ### 仅限无头 git 和 gh（CI 与自动化）
 
 ```bash
-grok-zh -p "Implement the feature using only git and GitHub CLI" \
+grok -p "Implement the feature using only git and GitHub CLI" \
   --allow 'Read' \
   --allow 'Grep' \
   --allow 'Bash(git *)' \

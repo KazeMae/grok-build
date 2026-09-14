@@ -9,7 +9,7 @@
 
 ## 打开仪表盘
 
-- **grok-zh dashboard** — 让 TUI 直接进入仪表盘。
+- **grok dashboard** — 让 TUI 直接进入仪表盘。
 - **/dashboard**（别名 **/agents-dashboard**、**/sessions**）— 在会话内部打开。
 - **Ctrl+\** — 与斜杠命令相同的视图。
 

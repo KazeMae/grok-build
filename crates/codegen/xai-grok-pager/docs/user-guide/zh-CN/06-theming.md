@@ -86,7 +86,7 @@ auto_light_theme = "grokday"
 | **macOS** | 读取 `AppleInterfaceStyle` 系统偏好 |
 | **Linux** | 查询 XDG Desktop Portal（`org.freedesktop.appearance.color-scheme`） |
 | **Windows** | 读取系统个性化注册表 |
-| **SSH / tmux / 无头模式** | 依次使用 `GROK_APPEARANCE` 或 `LC_GROK_APPEARANCE`（`dark`/`light`）、`COLORFGBG`，然后执行启动时 OSC 11 背景查询。`grok-zh wrap ssh …` 会根据本地操作系统主题写入 `LC_GROK_APPEARANCE`，使其在 SSH 进入登录 Shell 后仍然存在。只有在 tmux 服务器/会话创建时携带该环境变量（或 `update-environment` 包含它）时，新 tmux 会话才会继承。tmux ≥ 3.3 且 tmux 是直接终端（而非编辑器的 `:terminal`）时，OSC 11 会用 DCS 包裹；要到达外层模拟器还需要 `allow-passthrough`，并且回复是尽力获取的。 |
+| **SSH / tmux / 无头模式** | 依次使用 `GROK_APPEARANCE` 或 `LC_GROK_APPEARANCE`（`dark`/`light`）、`COLORFGBG`，然后执行启动时 OSC 11 背景查询。`grok wrap ssh …` 会根据本地操作系统主题写入 `LC_GROK_APPEARANCE`，使其在 SSH 进入登录 Shell 后仍然存在。只有在 tmux 服务器/会话创建时携带该环境变量（或 `update-environment` 包含它）时，新 tmux 会话才会继承。tmux ≥ 3.3 且 tmux 是直接终端（而非编辑器的 `:terminal`）时，OSC 11 会用 DCS 包裹；要到达外层模拟器还需要 `allow-passthrough`，并且回复是尽力获取的。 |
 
 运行后，Grok 每 5 秒轮询桌面 API 和环境提示。在本地桌面将操作系统从浅色切换为深色或反之，几秒内即可生效，无需重启。通过 SSH 时，包装命令写入的环境变量在该跳连接中固定。
 

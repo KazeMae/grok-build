@@ -11,7 +11,7 @@
 - **从 Shell：**
 
   ```bash
-  grok-zh --worktree=my-feature "refactor the auth module"
+  grok --worktree=my-feature "refactor the auth module"
   ```
 
   （请使用 `=`——否则提示内容会被当作工作树名称。）

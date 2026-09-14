@@ -29,7 +29,7 @@
 
 ## 查看发现的内容
 
-在仓库中运行 **`grok-zh inspect`**，即可查看 Grok 获取到的每个规则文件、
+在仓库中运行 **`grok inspect`**，即可查看 Grok 获取到的每个规则文件、
 技能和 MCP 服务器，并标注其来源。可在 `[compat.claude]` /
 `[compat.cursor]` 配置节中分别启用或停用每个兼容来源。
 

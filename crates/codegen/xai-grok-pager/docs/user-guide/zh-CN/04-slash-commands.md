@@ -152,7 +152,7 @@
 <a id="minimal-and-fullscreen"></a>
 ### `/minimal` 和 `/fullscreen`
 
-在当前进程中将会话切换到另一种渲染模式。`/minimal`（在全屏模式中提供）切换到实验性的回滚区原生模式；`/fullscreen`（在精简模式中提供；别名 `/full`）切回标准全屏模式。切换不会重启进程，因此正在运行的轮次会继续流式输出，编写器草稿、排队提示和权限模式也会保留；标记（精简模式中的已提交行、全屏模式中的 toast）会提醒如何切回。两者都只影响本次会话，不会修改 `config.toml`；`--minimal` / `--fullscreen` CLI 标志的作用域同样限于会话。要让普通 `grok-zh` 默认以指定模式打开，请使用 `/settings` → **默认屏幕模式**，或设置 `[ui] screen_mode`。（如果进程内切换在特殊终端中表现异常，可设置 `GROK_SCREEN_MODE_SWITCH=exec` 恢复旧的重启 pager 行为。）
+在当前进程中将会话切换到另一种渲染模式。`/minimal`（在全屏模式中提供）切换到实验性的回滚区原生模式；`/fullscreen`（在精简模式中提供；别名 `/full`）切回标准全屏模式。切换不会重启进程，因此正在运行的轮次会继续流式输出，编写器草稿、排队提示和权限模式也会保留；标记（精简模式中的已提交行、全屏模式中的 toast）会提醒如何切回。两者都只影响本次会话，不会修改 `config.toml`；`--minimal` / `--fullscreen` CLI 标志的作用域同样限于会话。要让普通 `grok` 默认以指定模式打开，请使用 `/settings` → **默认屏幕模式**，或设置 `[ui] screen_mode`。（如果进程内切换在特殊终端中表现异常，可设置 `GROK_SCREEN_MODE_SWITCH=exec` 恢复旧的重启 pager 行为。）
 
 有少数命令只能在两种模式之一中工作，因为另一种模式不存在它们驱动的界面：`/find`、`/jump`、`/timeline`、`/theme`、`/tutorial` 和 `/dashboard` 仅限全屏，而 `/expand` 仅限精简。`/workflow runs` 不同：它在全屏模式打开运行面板，在精简模式降级为文本概览，而不是拒绝执行。这些命令在不能运行它们的模式下会从命令菜单和面板中隐藏。即使你直接输入，Grok 也会说明原因，并指向真正有用的选项。如果只有另一种模式可用，就会提示切换模式：`/theme isn't available in minimal mode (minimal renders with your terminal's own palette). Run /fullscreen to switch this session.` 如果当前模式已经能以其他方式完成任务，则会改为说明该方式：`/expand isn't available in fullscreen mode: press Tab to focus the scrollback, then → on the block.` 其他命令在两种模式下都可用。注意，`--no-alt-screen` 在此仍算全屏，因此会保留仅限全屏的命令。
 
@@ -416,7 +416,7 @@ Shell 还支持子命令（`/plugins list`、`/plugins install <source>`、`/plu
 /usage manage
 ```
 
-若要查看任一本地会话持久保存的逐轮令牌与费用总计，请在 shell 中运行 `grok-zh usage <session-id> [turn]`。详见[会话管理](17-sessions.md#the-grok-usage-subcommand)。
+若要查看任一本地会话持久保存的逐轮令牌与费用总计，请在 shell 中运行 `grok usage <session-id> [turn]`。详见[会话管理](17-sessions.md#the-grok-usage-subcommand)。
 
 ### `/privacy`
 
