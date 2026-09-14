@@ -34,16 +34,13 @@ commits. Stage named files instead of the whole worktree.
 
 ## Current Version
 
-Version: `1.0.24+kazemae.3` (tag: `v1.0.24+kazemae.3`).
+Version: `1.0.24+kazemae.5` (tag: `v1.0.24+kazemae.5`).
 
-Upstream base: `37949780c144` (upstream package version `1.0.24`, `SOURCE_REV`
-`c4ea71cfdbcd`), merged in `27b1e223` without conflicts. That snapshot changed 695
-files and none of the twelve files the personal patches touch, so the merge needed no
-fixups. The upstream package version did not move; only the monorepo snapshot did, so
-the personal suffix carries the whole difference from the previous version.
-`SOURCE_REV` continues to identify the upstream monorepo snapshot, not fork commits.
-The `+keepalive.N` suffix of the initial version is retired; personal versions carry
-`+kazemae.N` because the fork holds more than the heartbeat patch.
+Upstream base is still `37949780c144` (upstream package version `1.0.24`,
+`SOURCE_REV` `c4ea71cfdbcd`). This version adds the GrokZen Simplified Chinese UI
+and compile-time privacy overlay on top of the keepalive and reasoning-omission
+patches. The executable name stays `grok` / `xai-grok-pager`. Official auto-update
+is unchanged; GrokZen installers are not included.
 
 Personal patches on top of that base:
 
@@ -57,8 +54,36 @@ Personal patches on top of that base:
   signatures on Messages, Anthropic `CA` and empty-id items on Responses. A
   mid-session backend switch then keeps the transcript instead of needing a lossy
   compact.
+- `1ab66565` ports GrokZen locale catalogs, default `zh-CN` UI, and the compile-time
+  `privacy` feature (Mixpanel / product events / OTLP export hard-off).
 
-Upstream still implements neither behavior, so both patches are required.
+Upstream still implements neither heartbeat ignore nor reasoning omission, so those
+two patches remain required.
+
+Validation of `1.0.24+kazemae.5` on macOS Apple Silicon (Rust 1.94.0):
+
+- GitHub Actions `fmt / clippy / build` passed on linux-x86_64 and macos-aarch64
+  for the overlay PR.
+- Local `cargo clippy --workspace -- -D warnings` and
+  `cargo build --locked -p xai-grok-pager-bin --release` are the install gate.
+
+## Previous Versions
+
+### 1.0.24+kazemae.4
+
+Tag `v1.0.24+kazemae.4` on `7953207e`, the GitHub Actions build/release pipeline.
+No overlay changes.
+
+### 1.0.24+kazemae.3
+
+Upstream base: `37949780c144` (upstream package version `1.0.24`, `SOURCE_REV`
+`c4ea71cfdbcd`), merged in `27b1e223` without conflicts. That snapshot changed 695
+files and none of the twelve files the personal patches touch, so the merge needed no
+fixups. The upstream package version did not move; only the monorepo snapshot did, so
+the personal suffix carries the whole difference from the previous version.
+`SOURCE_REV` continues to identify the upstream monorepo snapshot, not fork commits.
+The `+keepalive.N` suffix of the initial version is retired; personal versions carry
+`+kazemae.N` because the fork holds more than the heartbeat patch.
 
 Validation of `1.0.24+kazemae.3` on macOS Apple Silicon (Rust 1.94.0):
 
@@ -80,8 +105,6 @@ benches still call the removed `as_str`. Treat only findings inside patched file
 personal regressions. The earlier `1.0.24+kazemae.2` record listed just two findings
 because that run stopped at the first failing target; `--keep-going` reveals the rest
 on the same tree.
-
-## Previous Versions
 
 ### 1.0.24+kazemae.2
 
@@ -110,7 +133,7 @@ command below for this baseline; the tracing test itself is unchanged.
 ## Verify and Build
 
 Install the toolchain in `rust-toolchain.toml` and DotSlash as described in
-[README.md](README.md#building-from-source). Version `1.0.24+kazemae.3` uses
+[README.md](README.md#building-from-source). Version `1.0.24+kazemae.5` uses
 Rust 1.94.0.
 
 ```sh
@@ -124,7 +147,7 @@ rustfmt --edition 2024 --check \
 
 cargo clippy --locked --workspace --no-deps --keep-going -- -D warnings
 
-GROK_VERSION=1.0.24+kazemae.3 cargo build --locked -p xai-grok-pager-bin --release
+GROK_VERSION=1.0.24+kazemae.5 cargo build --locked -p xai-grok-pager-bin --release
 ./target/release/xai-grok-pager --version
 ```
 
