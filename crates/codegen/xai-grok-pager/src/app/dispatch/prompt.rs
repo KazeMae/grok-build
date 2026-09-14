@@ -547,6 +547,7 @@ pub(super) fn dispatch_send_prompt_submission(
     let auto_mode_gate_from_app = app.auto_mode_gate;
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
     let voice_stt_language_from_app = app.voice_config.language.clone();
+    let ui_locale_from_app = app.locale.locale().as_bcp47().to_string();
     let login_method_id_from_app = app.login_method_id.as_ref().map(|id| id.0.to_string());
     let leader_mode = app.leader_mode;
     let Some(agent) = app.agents.get_mut(&id) else {
@@ -642,6 +643,7 @@ pub(super) fn dispatch_send_prompt_submission(
                     auto_mode_gate: auto_mode_gate_from_app,
                     ask_user_question_timeout_enabled: ask_user_question_timeout_enabled_from_app,
                     voice_stt_language: voice_stt_language_from_app,
+                    ui_locale: ui_locale_from_app,
                 },
             };
 

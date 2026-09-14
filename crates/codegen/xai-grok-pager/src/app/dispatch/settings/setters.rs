@@ -132,6 +132,44 @@ pub(in crate::app::dispatch) fn set_screen_mode(app: &mut AppView, value: String
     }]
 }
 
+pub(super) fn set_ui_locale_inner(app: &mut AppView, canonical: &str) {
+    app.current_ui.locale = Some(canonical.to_string());
+    let locale = crate::locale::UiLocale::parse(canonical).unwrap_or(crate::locale::UiLocale::ZhCn);
+    app.locale = std::sync::Arc::new(crate::locale::LocaleContext::new(
+        crate::locale::ResolvedLocale {
+            locale,
+            source: crate::locale::LocaleSource::Config,
+        },
+    ));
+}
+
+/// Persist `[ui].locale` (`zh-CN` | `en-US`) and swap the live `LocaleContext`.
+pub(in crate::app::dispatch) fn set_ui_locale(app: &mut AppView, value: String) -> Vec<Effect> {
+    let canonical = crate::settings::canonical_ui_locale(Some(&value));
+    let live = app.locale.locale().as_bcp47();
+    let stored = app
+        .current_ui
+        .locale
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let already_stored =
+        stored.is_some_and(|s| crate::settings::canonical_ui_locale(Some(s)) == canonical);
+    if live == canonical && already_stored {
+        return vec![];
+    }
+    let prev = crate::settings::canonical_ui_locale(stored.or(Some(live)));
+    set_ui_locale_inner(app, canonical);
+    refresh_open_settings_modals(app);
+    tracing::info!(target: "settings", key = "locale", value = canonical, "setting changed");
+    show_setting_choice_toast(app, "locale", "UI language", canonical, canonical);
+    vec![Effect::PersistSetting {
+        key: "locale",
+        value: crate::settings::SettingValue::Enum(canonical),
+        rollback_value: crate::settings::SettingValue::Enum(prev),
+    }]
+}
+
 fn screen_mode_raw_matches_canonical(raw: Option<&str>, canonical: &str) -> bool {
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return false;

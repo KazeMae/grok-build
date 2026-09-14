@@ -10,6 +10,34 @@ use crate::session::SessionCommand;
 use agent_client_protocol::{self as acp};
 use tokio::sync::oneshot;
 use xai_grok_sampling_types::ReasoningEffort;
+
+fn contains_claude(s: &str) -> bool {
+    s.to_ascii_lowercase().contains("claude")
+}
+
+/// Catalog id, routing slug, or display name contains `claude` (case-insensitive).
+pub(crate) fn is_claude_model(catalog_id: &str, info: Option<&config::ModelInfo>) -> bool {
+    if contains_claude(catalog_id) {
+        return true;
+    }
+    let Some(info) = info else {
+        return false;
+    };
+    contains_claude(&info.model)
+        || info.id.as_deref().is_some_and(contains_claude)
+        || info.name.as_deref().is_some_and(contains_claude)
+}
+
+/// Lossy compact when `/model` lands on a Claude model from anything else.
+/// Claude→Claude stays a no-op; Claude→other does not compact.
+pub(crate) fn is_switch_onto_claude(
+    previous_id: &str,
+    previous: Option<&config::ModelInfo>,
+    next_id: &str,
+    next: &config::ModelInfo,
+) -> bool {
+    is_claude_model(next_id, Some(next)) && !is_claude_model(previous_id, previous)
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConfigNotice {
     Send,
@@ -59,11 +87,12 @@ pub(crate) async fn apply(
     let previous_model_id = handle.model_id.0.clone();
     let is_family_switch = {
         let models = agent.models_manager.models();
-        let old_family = config::find_model_by_id(&models, &previous_model_id)
-            .and_then(|e| e.info.model_family.as_deref());
-        matches!(
-            (old_family, model.info().model_family.as_deref()),
-            (Some(a), Some(b)) if a != b
+        let old_info = config::find_model_by_id(&models, &previous_model_id).map(|e| &e.info);
+        is_switch_onto_claude(
+            previous_model_id.as_ref(),
+            old_info,
+            model_id.0.as_ref(),
+            model.info(),
         )
     };
     let mut pending_rebuild_definition: Option<xai_grok_agent::AgentDefinition> = None;
@@ -356,4 +385,85 @@ async fn notify_config_options(agent: &MvpAgent, session_id: &acp::SessionId) {
             session_id.clone(),
             acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(options)),
         ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_claude_model, is_switch_onto_claude};
+    use crate::agent::config::ModelInfo;
+
+    fn info(slug: &str, name: Option<&str>) -> ModelInfo {
+        let mut info = ModelInfo::fallback(slug);
+        info.name = name.map(str::to_owned);
+        info
+    }
+
+    #[test]
+    fn claude_is_detected_in_catalog_id_slug_or_display_name() {
+        assert!(is_claude_model(
+            "uniapi-claude-fable-5.1",
+            Some(&info("claude-fable-5-1", Some("Claude Fable 5.1")))
+        ));
+        assert!(is_claude_model(
+            "custom",
+            Some(&info("claude-sonnet-4-6", None))
+        ));
+        assert!(is_claude_model(
+            "custom",
+            Some(&info("gpt", Some("Claude Opus")))
+        ));
+        assert!(is_claude_model("my-Claude-proxy", None));
+        assert!(!is_claude_model(
+            "uniapi-doubao-seed-evolving",
+            Some(&info("anthropic-doubao-seed-evolving", Some("Doubao")))
+        ));
+        assert!(!is_claude_model(
+            "grok-4.6",
+            Some(&info("grok-4.6", Some("Grok 4.6")))
+        ));
+    }
+
+    #[test]
+    fn compact_when_any_model_switches_onto_claude() {
+        let grok = info("grok-4.6", Some("Grok 4.6"));
+        let gpt = info("gpt-6-astra", Some("GPT 6 Astra"));
+        let claude = info("claude-fable-5-1", Some("Claude Fable 5.1"));
+        let other_claude = info("claude-sonnet-4-6", Some("Claude Sonnet 4.6"));
+        assert!(is_switch_onto_claude(
+            "grok-4.6",
+            Some(&grok),
+            "uniapi-claude-fable-5.1",
+            &claude
+        ));
+        assert!(is_switch_onto_claude(
+            "uniapi-gpt-6-astra",
+            Some(&gpt),
+            "claude-sonnet-4-6",
+            &other_claude
+        ));
+        assert!(is_switch_onto_claude(
+            "unknown-model",
+            None,
+            "claude-haiku-4-5",
+            &info("claude-haiku-4-5", None)
+        ));
+        assert!(!is_switch_onto_claude(
+            "uniapi-claude-fable-5.1",
+            Some(&claude),
+            "claude-sonnet-4-6",
+            &other_claude
+        ));
+        assert!(!is_switch_onto_claude(
+            "uniapi-claude-fable-5.1",
+            Some(&claude),
+            "grok-4.6",
+            &grok
+        ));
+        assert!(!is_switch_onto_claude(
+            "grok-4.6",
+            Some(&grok),
+            "uniapi-gpt-6-astra",
+            &gpt
+        ));
+    }
 }

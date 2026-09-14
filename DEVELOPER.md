@@ -8,7 +8,7 @@
 ## 社区 overlay 约定
 
 - 程序名：`grok`（构建产物 `xai-grok-pager`）；数据目录仍是 `~/.grok` / `GROK_HOME`。
-- 默认 UI locale：`zh-CN`，可用 `--locale en-US` 或 `GROK_ZH_LOCALE` 覆盖。
+- 默认 UI locale：`zh-CN`。设置 → 外观 → 界面语言 可切换 `zh-CN` / `en-US`（写入 `[ui].locale`，当场生效）。也可用 `--locale en-US` 或 `GROK_ZH_LOCALE` 覆盖这一次启动。
 - 语言包：`crates/codegen/xai-grok-locale`。产品名与路径：`crates/codegen/xai-grok-product`。
 - 隐私：`xai-grok-version` 的 `privacy` feature 默认开启。Mixpanel / 产品事件 / OTLP 导出在编译期关掉，不能靠环境变量或远端配置重新打开。
 - 自动更新：不要给 `xai-grok-update` 加 `community-build`，不要改官方更新源。

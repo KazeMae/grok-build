@@ -570,8 +570,9 @@ pub struct AppView {
     /// In-memory snapshot of the effective `UiConfig`.
     /// Seeded once at startup; updated synchronously by `set_X_inner` so dispatch stays sans-IO.
     pub current_ui: xai_grok_shell::agent::config::UiConfig,
-    /// Immutable UI locale resolved once at startup. This is deliberately
-    /// separate from voice/STT language and from server protocol locale fields.
+    /// UI locale for client-owned chrome. Resolved at startup, then replaced
+    /// when the settings modal writes `[ui].locale`. Separate from voice/STT
+    /// language and from server protocol locale fields.
     pub locale: Arc<crate::locale::LocaleContext>,
     /// Working directory.
     pub cwd: PathBuf,

@@ -224,6 +224,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         goal_classifier_enabled: false,
         goal_planner_enabled: false,
         goal_summary_enabled: false,
+        length_salvage_user_budget: None,
         length_salvage_remote_budget: None,
         goal_verifier_skeptic_count: 1,
         goal_role_models: Default::default(),

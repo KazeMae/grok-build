@@ -373,7 +373,7 @@ pub enum SessionCommand {
     SetSessionModel {
         sampling_config: xai_grok_sampler::SamplerConfig,
         use_concise: bool,
-        /// The two models declare differing `model_family`s, so a lossy compaction runs at switch end.
+        /// Switching onto a Claude-named model from anything else, so a lossy compaction runs at switch end.
         is_family_switch: bool,
         /// When `false`, skip the system prompt rewrite (concise/default swap).
         /// Set to `false` for forked sessions so mid-session model switches cannot contaminate the inherited prompt configuration.

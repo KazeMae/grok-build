@@ -1896,6 +1896,7 @@ pub(crate) async fn spawn_session_actor(
         goal_summary_enabled: effective_config
             .resolve_goal_summary_enabled(goal_enabled)
             .value,
+        length_salvage_user_budget: effective_config.session.length_salvage_budget,
         length_salvage_remote_budget: effective_config
             .remote_settings
             .as_ref()
