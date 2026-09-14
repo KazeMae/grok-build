@@ -1572,6 +1572,11 @@ pub struct SessionConfig {
     /// `Option<bool>` so `None` round-trips as absent on disk (managed config wins over default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load_envrc: Option<bool>,
+    /// Continue budget after a `max_tokens` truncation (`Length` stop).
+    /// `Some(0)` is explicit off. Unset falls through to `GROK_LENGTH_SALVAGE`, then remote
+    /// `length_salvage_budget`, then off. See `session::acp_session_impl::length_salvage`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length_salvage_budget: Option<u32>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

@@ -199,6 +199,13 @@ fn remote_budget_wires_into_the_resolver() {
             drain_persistence(persistence_rx);
             let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
             assert_eq!(actor.length_salvage_budget(), None, "off by default");
+            actor.length_salvage_user_budget = Some(2);
+            assert_eq!(
+                actor.length_salvage_budget(),
+                Some(2),
+                "user [session] length_salvage_budget feeds the resolver"
+            );
+            actor.length_salvage_user_budget = None;
             actor.length_salvage_remote_budget = Some(9);
             assert_eq!(
                 actor.length_salvage_budget(),

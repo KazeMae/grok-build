@@ -1201,6 +1201,14 @@ pub(crate) async fn persist_setting(
                 .await
                 .map_err(|e| e.to_string())
         }
+        "locale" => {
+            let SettingValue::Enum(s) = value else {
+                return Err(kind_mismatch("locale", "Enum", &value));
+            };
+            xai_grok_shell::util::config::set_ui_locale(s.to_string())
+                .await
+                .map_err(|e| e.to_string())
+        }
         "voice_keybind_enabled" => {
             let SettingValue::Bool(b) = value else {
                 return Err(kind_mismatch("voice_keybind_enabled", "Bool", &value));

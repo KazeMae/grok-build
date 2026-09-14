@@ -379,6 +379,14 @@ pub async fn set_screen_mode(value: String) -> Result<()> {
     .await
 }
 
+/// Persist `[ui].locale` (`zh-CN` | `en-US`). Empty clears the key.
+pub async fn set_ui_locale(value: String) -> Result<()> {
+    update_config(|cfg| {
+        cfg.ui.locale = if value.is_empty() { None } else { Some(value) };
+    })
+    .await
+}
+
 /// Persist `[cli].show_tips` via `update_config`.
 /// Restart-required: `resolve_tips` reads this once at startup.
 pub async fn set_show_tips(value: bool) -> Result<()> {

@@ -1618,6 +1618,9 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
         "screen_mode" => {
             let _ = dispatch(Action::SetScreenMode("minimal".to_string()), app);
         }
+        "locale" => {
+            let _ = dispatch(Action::SetUiLocale("en-US".to_string()), app);
+        }
         "voice_keybind_enabled" => {
             let _ = dispatch(Action::SetVoiceKeybindEnabled(false), app);
         }
@@ -1653,6 +1656,40 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
         }
     }
 }
+#[test]
+fn set_ui_locale_swaps_live_context_and_persists() {
+    let mut app = test_app_with_agent();
+    assert_eq!(app.locale.locale(), crate::locale::UiLocale::EnUs);
+    let effects = dispatch(Action::SetUiLocale("zh-CN".to_string()), &mut app);
+    assert_eq!(app.locale.locale(), crate::locale::UiLocale::ZhCn);
+    assert_eq!(app.current_ui.locale.as_deref(), Some("zh-CN"));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::PersistSetting {
+                key: "locale",
+                value: crate::settings::SettingValue::Enum("zh-CN"),
+                rollback_value: crate::settings::SettingValue::Enum("en-US"),
+            }]
+        ),
+        "expected persist of zh-CN with en-US rollback, got {effects:?}"
+    );
+    let effects = dispatch(Action::SetUiLocale("en-US".to_string()), &mut app);
+    assert_eq!(app.locale.locale(), crate::locale::UiLocale::EnUs);
+    assert_eq!(app.current_ui.locale.as_deref(), Some("en-US"));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::PersistSetting {
+                key: "locale",
+                value: crate::settings::SettingValue::Enum("en-US"),
+                ..
+            }]
+        ),
+        "expected persist of en-US, got {effects:?}"
+    );
+}
+
 #[test]
 fn set_compact_mode_toast_format() {
     let mut app = test_app_with_agent();

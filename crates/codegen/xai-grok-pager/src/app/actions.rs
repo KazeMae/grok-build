@@ -478,6 +478,9 @@ pub enum Action {
     SetHunkTrackerMode(String),
     /// Set default screen mode (`fullscreen` | `minimal`); restart-required.
     SetScreenMode(String),
+    /// Set client UI language (`zh-CN` | `en-US`). SHELL-owned; persisted to `[ui].locale`.
+    /// Live-applied by replacing `AppView::locale`.
+    SetUiLocale(String),
     /// Enable/disable the Ctrl+Space / F8 voice-dictation shortcut. SHELL-owned; persisted to `[ui].voice_keybind_enabled`.
     /// Takes effect on the next keypress; `/voice` is unaffected.
     SetVoiceKeybindEnabled(bool),

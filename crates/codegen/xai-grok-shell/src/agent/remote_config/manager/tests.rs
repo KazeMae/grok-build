@@ -1045,6 +1045,7 @@ fn make_model_entry(model_id: &str) -> ModelEntry {
     ModelEntry {
         info: config::ModelInfo::fallback(model_id),
         mtls_cert_dir: None,
+        bundled_catalog_entry: false,
         api_key: None,
         env_key: None,
         auth_provider: None,

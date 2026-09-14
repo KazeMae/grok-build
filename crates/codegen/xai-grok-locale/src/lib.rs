@@ -713,6 +713,15 @@ mod tests {
             context.setting_label("compact_mode", "Compact mode"),
             "紧凑模式"
         );
+        assert_eq!(context.setting_label("locale", "UI language"), "界面语言");
+        assert_eq!(
+            context.setting_choice_label("locale", "zh-CN", "简体中文"),
+            "简体中文"
+        );
+        assert_eq!(
+            context.setting_choice_label("locale", "en-US", "English"),
+            "English"
+        );
         assert_eq!(
             context.setting_choice_label("permission_mode", "always-approve", "Always approve"),
             "始终批准"

@@ -264,6 +264,21 @@ const SCREEN_MODE_CHOICES: &[EnumChoice] = &[
     },
 ];
 
+/// Client UI language. Display names stay in the language they name so the
+/// picker is findable after a mistaken switch. Canonicals match `UiLocale`.
+const UI_LOCALE_CHOICES: &[EnumChoice] = &[
+    EnumChoice {
+        canonical: "zh-CN",
+        display: "简体中文",
+        description: "Chinese UI (this distribution's default).",
+    },
+    EnumChoice {
+        canonical: "en-US",
+        display: "English",
+        description: "English UI.",
+    },
+];
+
 // Voice-capture-mode catalog. Alacritty 0.14 and earlier negotiates the protocol yet never reports releases, so
 // hold stays hidden there.
 const VOICE_CAPTURE_MODE_CHOICES: &[EnumChoice] = &[
@@ -511,6 +526,36 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 supports_preview: false,
             },
             restart_required: true,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
+            key: "locale",
+            category: SettingCategory::Appearance,
+            owner: SettingOwner::Shared,
+            label: "UI language",
+            description: "Language for grok's own menus, settings, and chrome. Does not \
+                          change model replies. Writes [ui] locale in config.toml and \
+                          applies immediately. --locale and GROK_ZH_LOCALE override this \
+                          for one launch.",
+            keywords: &[
+                "locale",
+                "language",
+                "chinese",
+                "english",
+                "zh",
+                "en",
+                "i18n",
+                "translation",
+                "中文",
+                "英文",
+                "语言",
+            ],
+            kind: SettingKind::Enum {
+                default: xai_grok_product::DEFAULT_UI_LOCALE,
+                choices: UI_LOCALE_CHOICES,
+                supports_preview: false,
+            },
+            restart_required: false,
             hidden_in_minimal: false,
         },
         SettingMeta {

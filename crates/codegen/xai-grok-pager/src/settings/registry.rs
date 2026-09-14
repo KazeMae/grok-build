@@ -278,6 +278,9 @@ pub struct PagerLocalSnapshot {
     /// Live `voice_config.language` at snapshot time.
     /// Lets the modal show the language actually in effect when `[ui].voice_stt_language` is unset but an explicit `[voice].language` applies.
     pub voice_stt_language: String,
+    /// Live UI locale BCP-47 tag from `AppView::locale` (for example `zh-CN` or `en-US`).
+    /// The modal reads this so CLI/`GROK_ZH_LOCALE` overrides show as the current choice when `[ui].locale` is unset.
+    pub ui_locale: String,
 }
 
 impl Default for PagerLocalSnapshot {
@@ -301,6 +304,7 @@ impl Default for PagerLocalSnapshot {
             auto_mode_gate: false,
             ask_user_question_timeout_enabled: None,
             voice_stt_language: xai_grok_voice::STT_LANGUAGE_DEFAULT.to_string(),
+            ui_locale: xai_grok_product::DEFAULT_UI_LOCALE.to_string(),
         }
     }
 }
@@ -333,6 +337,15 @@ pub fn canonical_hunk_tracker_mode(value: Option<&str>) -> &'static str {
         "agent_only"
     } else {
         "off"
+    }
+}
+
+/// Map a raw UI locale onto a registry choice.
+/// Unknown, blank, and `None` fall back to this distribution's default (`zh-CN`).
+pub fn canonical_ui_locale(value: Option<&str>) -> &'static str {
+    match value.and_then(crate::locale::UiLocale::parse) {
+        Some(crate::locale::UiLocale::EnUs) => "en-US",
+        Some(crate::locale::UiLocale::ZhCn) | None => xai_grok_product::DEFAULT_UI_LOCALE,
     }
 }
 
@@ -564,6 +577,10 @@ pub fn current_value_for(
         "screen_mode" => Some(SettingValue::Enum(canonical_screen_mode(
             ui.screen_mode.as_deref(),
         ))),
+        // Live `AppView::locale` wins so CLI / `GROK_ZH_LOCALE` show as the current choice.
+        "locale" => Some(SettingValue::Enum(canonical_ui_locale(Some(
+            &pager.ui_locale,
+        )))),
         // SHELL: whether the Ctrl+Space or F8 chord is active; None means true
         "voice_keybind_enabled" => {
             Some(SettingValue::Bool(ui.voice_keybind_enabled.unwrap_or(true)))
@@ -1077,6 +1094,18 @@ mod tests {
                     );
                     assert_eq!(*default, "fullscreen");
                 }
+                ("locale", SettingKind::Enum { default, .. }) => {
+                    assert_eq!(
+                        ui.locale, None,
+                        "test assumes UiConfig::default().locale is None",
+                    );
+                    assert_eq!(
+                        *default,
+                        xai_grok_product::DEFAULT_UI_LOCALE,
+                        "locale registry default must match the product UI default",
+                    );
+                    assert_eq!(*default, "zh-CN");
+                }
                 // render_mermaid: Option<String>; None reads as "auto"
                 ("render_mermaid", SettingKind::Enum { default, .. }) => {
                     assert_eq!(
@@ -1273,6 +1302,39 @@ mod tests {
         let ui = UiConfig::default();
         let pager = PagerLocalSnapshot::default();
         assert!(current_value_for("never-registered-key-xyzzy", &ui, &pager).is_none());
+    }
+
+    #[test]
+    fn canonical_ui_locale_maps_supported_tags_and_falls_back() {
+        assert_eq!(canonical_ui_locale(Some("en-US")), "en-US");
+        assert_eq!(canonical_ui_locale(Some("en_US.UTF-8")), "en-US");
+        assert_eq!(canonical_ui_locale(Some("zh-Hans-CN")), "zh-CN");
+        assert_eq!(canonical_ui_locale(Some("ZH_cn")), "zh-CN");
+        assert_eq!(canonical_ui_locale(Some("fr-FR")), "zh-CN");
+        assert_eq!(canonical_ui_locale(Some("")), "zh-CN");
+        assert_eq!(canonical_ui_locale(None), "zh-CN");
+    }
+
+    #[test]
+    fn locale_current_value_reads_live_snapshot() {
+        let pager = PagerLocalSnapshot {
+            ui_locale: "en-US".into(),
+            ..Default::default()
+        };
+        let ui = UiConfig::default();
+        assert_eq!(
+            current_value_for("locale", &ui, &pager),
+            Some(SettingValue::Enum("en-US")),
+        );
+        let ui_set = UiConfig {
+            locale: Some("zh-CN".into()),
+            ..Default::default()
+        };
+        // Live snapshot still wins: CLI/env can disagree with the on-disk key.
+        assert_eq!(
+            current_value_for("locale", &ui_set, &pager),
+            Some(SettingValue::Enum("en-US")),
+        );
     }
 
     #[test]

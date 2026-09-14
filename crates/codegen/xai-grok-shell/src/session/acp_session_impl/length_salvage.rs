@@ -14,18 +14,23 @@ pub(super) const LENGTH_CONTINUE_REMINDER_BODY: &str = "Your previous response e
      message follows this note, answer that instead.";
 
 /// Pure form of [`SessionActor::length_salvage_budget`].
-/// Kill switches are absolute and outrank every tier, including the always-on cursor one: an explicit `GROK_LENGTH_SALVAGE=0` locally, and the remote `length_salvage_budget = 0` fleet-wide.
-/// Otherwise the precedence is cursor, then env opt-in, then remote budget, then off.
+/// Kill switches are absolute and outrank every tier, including the always-on cursor one:
+/// `GROK_LENGTH_SALVAGE=0`, `[session] length_salvage_budget = 0`, and remote `length_salvage_budget = 0`.
+/// Otherwise: cursor, then user config, then env opt-in, then remote budget, then off.
 pub(super) fn resolve_length_salvage_budget(
     is_cursor: bool,
     env: Option<bool>,
+    user: Option<u32>,
     remote: Option<u32>,
 ) -> Option<u32> {
-    if env == Some(false) || remote == Some(0) {
+    if env == Some(false) || user == Some(0) || remote == Some(0) {
         return None;
     }
     if is_cursor {
         return Some(CURSOR_LENGTH_CONTINUE_BUDGET);
+    }
+    if let Some(n) = user.filter(|n| *n > 0) {
+        return Some(n);
     }
     if env == Some(true) {
         return Some(DEFAULT_LENGTH_CONTINUE_BUDGET);
@@ -35,11 +40,13 @@ pub(super) fn resolve_length_salvage_budget(
 
 impl SessionActor {
     /// `Some(budget)` salvages Length truncations (partial commit and bounded continues); `None` hard-fails.
-    /// Always on when [`SessionActor::is_cursor_agent`]; otherwise the `GROK_LENGTH_SALVAGE` env var (debug override), then the `length_salvage_budget` remote setting.
+    /// Always on when [`SessionActor::is_cursor_agent`]; otherwise `[session].length_salvage_budget`,
+    /// then `GROK_LENGTH_SALVAGE`, then the remote `length_salvage_budget`.
     pub(super) fn length_salvage_budget(&self) -> Option<u32> {
         resolve_length_salvage_budget(
             self.is_cursor_agent(),
             xai_grok_config::env_bool("GROK_LENGTH_SALVAGE"),
+            self.length_salvage_user_budget,
             self.length_salvage_remote_budget,
         )
     }
@@ -158,83 +165,134 @@ mod tests {
     #[test]
     fn cursor_agent_always_gets_the_cursor_budget() {
         assert_eq!(
-            resolve_length_salvage_budget(true, None, None),
+            resolve_length_salvage_budget(true, None, None, None),
             Some(CURSOR_LENGTH_CONTINUE_BUDGET)
         );
         assert_eq!(
-            resolve_length_salvage_budget(true, Some(true), None),
+            resolve_length_salvage_budget(true, Some(true), None, None),
             Some(CURSOR_LENGTH_CONTINUE_BUDGET),
             "cursor budget wins over the env opt-in"
         );
         assert_eq!(
-            resolve_length_salvage_budget(true, None, Some(3)),
+            resolve_length_salvage_budget(true, None, None, Some(3)),
             Some(CURSOR_LENGTH_CONTINUE_BUDGET),
             "a nonzero remote budget does not shrink the cursor tier"
+        );
+        assert_eq!(
+            resolve_length_salvage_budget(true, None, Some(2), None),
+            Some(CURSOR_LENGTH_CONTINUE_BUDGET),
+            "cursor budget wins over user config"
         );
     }
 
     #[test]
     fn explicit_env_false_kills_every_tier() {
         assert_eq!(
-            resolve_length_salvage_budget(true, Some(false), None),
+            resolve_length_salvage_budget(true, Some(false), None, None),
             None,
             "the kill switch outranks the always-on cursor tier"
         );
         assert_eq!(
-            resolve_length_salvage_budget(false, Some(false), None),
+            resolve_length_salvage_budget(false, Some(false), None, None),
             None
         );
         assert_eq!(
-            resolve_length_salvage_budget(false, Some(false), Some(3)),
+            resolve_length_salvage_budget(false, Some(false), None, Some(3)),
             None,
             "the env kill outranks a remote budget"
+        );
+        assert_eq!(
+            resolve_length_salvage_budget(false, Some(false), Some(2), None),
+            None,
+            "the env kill outranks user config"
         );
     }
 
     #[test]
     fn remote_zero_kills_every_tier_including_cursor() {
         assert_eq!(
-            resolve_length_salvage_budget(true, None, Some(0)),
+            resolve_length_salvage_budget(true, None, None, Some(0)),
             None,
             "the remote kill is the server-side off switch for cursor"
         );
-        assert_eq!(resolve_length_salvage_budget(false, None, Some(0)), None);
         assert_eq!(
-            resolve_length_salvage_budget(true, Some(true), Some(0)),
+            resolve_length_salvage_budget(false, None, None, Some(0)),
+            None
+        );
+        assert_eq!(
+            resolve_length_salvage_budget(true, Some(true), None, Some(0)),
             None,
             "the remote kill outranks the env opt-in and the cursor tier"
         );
         assert_eq!(
-            resolve_length_salvage_budget(false, Some(true), Some(0)),
+            resolve_length_salvage_budget(false, Some(true), None, Some(0)),
             None,
             "the remote kill outranks the env opt-in"
+        );
+        assert_eq!(
+            resolve_length_salvage_budget(false, None, Some(2), Some(0)),
+            None,
+            "the remote kill outranks user config"
+        );
+    }
+
+    #[test]
+    fn user_zero_kills_every_tier() {
+        assert_eq!(
+            resolve_length_salvage_budget(true, None, Some(0), None),
+            None,
+            "user 0 kills the cursor tier"
+        );
+        assert_eq!(
+            resolve_length_salvage_budget(false, Some(true), Some(0), Some(9)),
+            None,
+            "user 0 kills env opt-in and remote"
         );
     }
 
     #[test]
     fn env_override_beats_a_nonzero_remote_budget() {
         assert_eq!(
-            resolve_length_salvage_budget(false, Some(true), Some(9)),
+            resolve_length_salvage_budget(false, Some(true), None, Some(9)),
             Some(DEFAULT_LENGTH_CONTINUE_BUDGET)
         );
     }
 
     #[test]
+    fn user_budget_beats_env_opt_in_and_remote() {
+        assert_eq!(
+            resolve_length_salvage_budget(false, Some(true), Some(5), Some(9)),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn user_budget_enables_default_agents() {
+        assert_eq!(
+            resolve_length_salvage_budget(false, None, Some(2), None),
+            Some(2)
+        );
+    }
+
+    #[test]
     fn remote_budget_enables_default_agents() {
-        assert_eq!(resolve_length_salvage_budget(false, None, Some(3)), Some(3));
+        assert_eq!(
+            resolve_length_salvage_budget(false, None, None, Some(3)),
+            Some(3)
+        );
     }
 
     #[test]
     fn env_gate_enables_the_default_budget() {
         assert_eq!(
-            resolve_length_salvage_budget(false, Some(true), None),
+            resolve_length_salvage_budget(false, Some(true), None, None),
             Some(2)
         );
     }
 
     #[test]
     fn disabled_without_cursor_or_env() {
-        assert_eq!(resolve_length_salvage_budget(false, None, None), None);
+        assert_eq!(resolve_length_salvage_budget(false, None, None, None), None);
     }
 
     #[test]

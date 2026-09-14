@@ -27,6 +27,7 @@ use xai_grok_shell::agent::config::UiConfig;
 const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "compact_mode",
     "screen_mode",
+    "locale",
     "show_timestamps",
     "show_timeline",
     "page_flip_on_send",
@@ -1898,6 +1899,7 @@ fn registry_kind_membership_through_pr_14() {
             "follow_up_behavior",
             "hunk_tracker_mode",
             "keep_text_selection",
+            "locale",
             "permission_mode",
             "plan_mode",
             "render_mermaid",
@@ -1968,6 +1970,7 @@ fn enum_settings_membership_through_pr_14() {
             "follow_up_behavior",
             "hunk_tracker_mode",
             "keep_text_selection",
+            "locale",
             "permission_mode",
             "plan_mode",
             "render_mermaid",
@@ -1996,6 +1999,7 @@ fn defaults_round_trip_through_registry() {
     xai_grok_pager::appearance::cache::set_show_thinking_blocks(true);
     xai_grok_pager::appearance::cache::set_prompt_suggestions(true);
     xai_grok_pager::appearance::cache::set_group_tool_verbs(true);
+    xai_grok_pager::appearance::cache::set_collapsed_edit_blocks(false);
     xai_grok_pager::appearance::cache::set_page_flip_on_send(true);
     xai_grok_pager::appearance::cache::set_combine_queued_prompts(false);
     xai_grok_pager::appearance::cache::set_follow_up_behavior(
@@ -2013,6 +2017,7 @@ fn defaults_round_trip_through_registry() {
         match key {
             "compact_mode" => SettingValue::Bool(false),
             "screen_mode" => SettingValue::Enum("fullscreen"),
+            "locale" => SettingValue::Enum("zh-CN"),
             "show_timestamps" => SettingValue::Bool(true),
             "show_timeline" => SettingValue::Bool(false),
             "page_flip_on_send" => SettingValue::Bool(true),
@@ -2045,7 +2050,7 @@ fn defaults_round_trip_through_registry() {
             "voice_stt_language" => SettingValue::Enum("en"),
             "plan_mode" => SettingValue::Enum("off"),
             "show_tips" => SettingValue::Bool(true),
-            "auto_update" => SettingValue::Bool(false),
+            "auto_update" => SettingValue::Bool(true),
             "fork_secondary_model" => SettingValue::String(String::new()),
             "show_thinking_blocks" => SettingValue::Bool(true),
             "prompt_suggestions" => SettingValue::Bool(true),
@@ -5871,6 +5876,139 @@ fn mouse_click_on_screen_mode_indicator_opens_picker_in_one_click() {
     match s.mode() {
         SettingsModalMode::PickingEnum { key, .. } => assert_eq!(key, "screen_mode"),
         _ => panic!("value click on screen_mode must enter PickingEnum"),
+    }
+}
+
+// locale (SHARED Enum, Appearance, live-applied, no preview).
+// Catalog [zh-CN, en-US]; product default is zh-CN.
+
+/// Enter on the `locale` row opens the picker seeded at the product default `zh-CN`.
+#[test]
+fn enter_on_locale_row_enters_picking_enum() {
+    let mut s = make_state();
+    navigate_to(&mut s, "locale");
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    assert!(
+        matches!(outcome, SettingsKeyOutcome::Changed),
+        "Enter on locale row must transition to PickingEnum, got {outcome:?}"
+    );
+    match s.mode() {
+        SettingsModalMode::PickingEnum {
+            key,
+            original_value,
+            ..
+        } => {
+            assert_eq!(key, "locale");
+            assert_eq!(
+                original_value,
+                SettingValue::Enum("zh-CN"),
+                "default snapshot ui_locale=zh-CN → original 'zh-CN'"
+            );
+        }
+        other => panic!("expected PickingEnum mode, got {other:?}"),
+    }
+}
+
+/// Up/Down/j/k nav in the `locale` picker MUST NOT dispatch a preview Action.
+#[test]
+fn locale_picker_nav_does_not_dispatch_preview() {
+    for nav_key in &[
+        KeyCode::Down,
+        KeyCode::Char('j'),
+        KeyCode::Up,
+        KeyCode::Char('k'),
+    ] {
+        let mut s = make_state();
+        navigate_to(&mut s, "locale");
+        let _ = handle_settings_key(&mut s, &press(KeyCode::Enter));
+        assert!(matches!(s.mode(), SettingsModalMode::PickingEnum { .. }));
+
+        if matches!(nav_key, KeyCode::Up | KeyCode::Char('k')) {
+            let _ = handle_settings_key(&mut s, &press(KeyCode::Down));
+        }
+
+        let outcome = handle_settings_key(&mut s, &press(*nav_key));
+        assert!(
+            matches!(outcome, SettingsKeyOutcome::Changed),
+            "Nav key {nav_key:?} in locale picker MUST NOT dispatch a preview Action. Got {outcome:?}",
+        );
+        assert!(matches!(s.mode(), SettingsModalMode::PickingEnum { .. }));
+    }
+}
+
+/// Enter on the focused picker choice commits via `Action::SetUiLocale`.
+/// Seed is `zh-CN` (index 0); one Down moves to `en-US` (index 1).
+#[test]
+fn locale_picker_enter_dispatches_set_commit() {
+    let mut s = make_state();
+    navigate_to(&mut s, "locale");
+    let _ = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    let _ = handle_settings_key(&mut s, &press(KeyCode::Down));
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    match outcome {
+        SettingsKeyOutcome::Action(Action::SetUiLocale(mode)) => {
+            assert_eq!(
+                mode, "en-US",
+                "Enter must commit `en-US` → SetUiLocale(\"en-US\")"
+            );
+        }
+        other => panic!("expected Action::SetUiLocale commit, got {other:?}"),
+    }
+    assert!(
+        matches!(s.mode(), SettingsModalMode::Browse),
+        "Enter commit must return to Browse"
+    );
+}
+
+#[test]
+fn locale_choices_use_canonical_strings() {
+    let reg = SettingsRegistry::defaults();
+    let meta = reg.find("locale").unwrap();
+    let canonicals: Vec<&str> = match &meta.kind {
+        SettingKind::Enum { choices, .. } => choices.iter().map(|c| c.canonical).collect(),
+        _ => panic!("locale must be Enum"),
+    };
+    assert_eq!(
+        canonicals,
+        vec!["zh-CN", "en-US"],
+        "locale catalog must be exactly [zh-CN, en-US] in order",
+    );
+    match &meta.kind {
+        SettingKind::Enum {
+            supports_preview, ..
+        } => {
+            assert!(
+                !*supports_preview,
+                "locale picker must not live-preview on nav"
+            );
+        }
+        _ => unreachable!(),
+    }
+    assert!(
+        !meta.restart_required,
+        "locale applies immediately without restart"
+    );
+}
+
+#[test]
+fn mouse_click_on_locale_indicator_opens_picker_in_one_click() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let row_y = row_idx_for(&s, "locale") as u16;
+
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        72,
+        row_y,
+    );
+    assert!(
+        matches!(outcome, SettingsKeyOutcome::Changed),
+        "value click must open picker in one click, got: {outcome:?}",
+    );
+    match s.mode() {
+        SettingsModalMode::PickingEnum { key, .. } => assert_eq!(key, "locale"),
+        _ => panic!("value click on locale must enter PickingEnum"),
     }
 }
 
