@@ -125,10 +125,6 @@ impl ShortcutsHelpEntry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Modal state construction
-// ---------------------------------------------------------------------------
-
 /// Category display order and labels for the cheatsheet.
 const CATEGORY_ORDER: &[(Category, &str)] = &[
     (Category::GettingStarted, "Essentials"),
@@ -307,7 +303,9 @@ pub fn build_entries(
                 std::collections::hash_map::Entry::Occupied(slot) => {
                     // Same key already rendered in this category
                     // Replace it only when the earlier row is dimmed and this one is lit (active context wins)
-                    let prior = &mut entries[*slot.get()];
+                    let Some(prior) = entries.get_mut(*slot.get()) else {
+                        continue;
+                    };
                     if !dimmed && matches!(prior, ShortcutsHelpEntry::Hint { dimmed: true, .. }) {
                         *prior = hint;
                     }
@@ -414,10 +412,6 @@ pub fn build_initial_picker_state(entries: &[ShortcutsHelpEntry]) -> PickerState
     state.selected = entries.iter().position(|e| e.is_hint()).unwrap_or(0);
     state
 }
-
-// ---------------------------------------------------------------------------
-// Search filtering
-// ---------------------------------------------------------------------------
 
 /// Filter ShortcutsHelp entries by search query. Returns the original-index list of entries that
 /// pass the filter. Section headers are kept only when at least one hint in their section matches;
@@ -577,10 +571,6 @@ fn hint_description(h: &HintItem) -> String {
         })
 }
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
 fn selected_original_entry<'a>(
     filtered: &[usize],
     entries: &'a [ShortcutsHelpEntry],
@@ -617,10 +607,6 @@ fn picker_config(non_sel: &[bool]) -> PickerConfig<'_> {
         vim_normal_first: crate::appearance::cache::load_vim_mode(),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Input dispatch
-// ---------------------------------------------------------------------------
 
 /// Outcome of an input event delivered to the cheatsheet modal.
 ///
@@ -1247,10 +1233,6 @@ pub fn handle_mouse_with_locale(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Modal rendering + chrome integration
-// ---------------------------------------------------------------------------
-
 /// Footer hints painted along the bottom border of the cheatsheet modal.
 /// The agent view and the dashboard show the same hints so muscle memory carries over.
 pub fn modal_footer(filter_active: bool) -> Vec<crate::views::modal_window::Shortcut<'static>> {
@@ -1463,9 +1445,14 @@ impl CheatsheetRows {
             .map(|(idx, kind)| {
                 let selected = state.hovered == Some(idx)
                     || (state.hovered.is_none() && idx == state.selected);
+                let (label, right_label) = self
+                    .row_strs
+                    .get(idx)
+                    .map(|(l, r)| (l.as_str(), r.as_str()))
+                    .unwrap_or(("", ""));
                 match kind {
                     CheatsheetRowKind::Header { is_collapsed } => PickerEntry::Row(PickerRow {
-                        label: self.row_strs[idx].0.as_str(),
+                        label,
                         right_label: "",
                         selected,
                         expanded: !is_collapsed,
@@ -1482,14 +1469,17 @@ impl CheatsheetRows {
                     CheatsheetRowKind::Hint { dimmed, expand } => {
                         let is_expanded =
                             expand.map(|id| expanded_ids.contains(&id)).unwrap_or(false);
-                        let description_lines: &[&str] = if is_expanded && !help[idx].is_empty() {
-                            std::slice::from_ref(&help[idx])
+                        let description_lines: &[&str] = if is_expanded {
+                            match help.get(idx) {
+                                Some(line) if !line.is_empty() => std::slice::from_ref(line),
+                                _ => &[],
+                            }
                         } else {
                             &[]
                         };
                         PickerEntry::Row(PickerRow {
-                            label: self.row_strs[idx].0.as_str(),
-                            right_label: self.row_strs[idx].1.as_str(),
+                            label,
+                            right_label,
                             selected,
                             expanded: is_expanded,
                             fields: &[],
@@ -1504,8 +1494,8 @@ impl CheatsheetRows {
                         })
                     }
                     CheatsheetRowKind::Other => PickerEntry::Row(PickerRow {
-                        label: self.row_strs[idx].0.as_str(),
-                        right_label: self.row_strs[idx].1.as_str(),
+                        label,
+                        right_label,
                         selected: false,
                         expanded: false,
                         fields: &[],

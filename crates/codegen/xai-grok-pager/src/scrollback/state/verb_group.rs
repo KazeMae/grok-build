@@ -172,6 +172,8 @@ struct Bucket<'e> {
     /// Holds WebSearch citation URLs (distinct result websites) and subagent child session ids.
     /// The started and terminal rows of one subagent count once; a burst of terminal rows counts each distinct subagent.
     sources: std::collections::HashSet<&'e str>,
+    /// Distinct child ids whose Subagent row is still `is_running`. Empty for other kinds.
+    running_sources: std::collections::HashSet<&'e str>,
 }
 
 /// The label counts members only: folded thoughts contribute nothing here and appear as their own member rows only
@@ -198,7 +200,10 @@ pub fn verb_group_header_label_with_locale(
     let mut acc = BucketAccumulator::default();
 
     let end = end.min(entries.len());
-    for &entry in &entries[header_idx.min(end)..end] {
+    let Some(run) = entries.get(header_idx.min(end)..end) else {
+        return acc.into_label(theme, locale);
+    };
+    for &entry in run {
         let kind = match run_step(entry, show_thinking) {
             RunStep::Member(kind) => kind,
             RunStep::Break => break,
@@ -235,7 +240,8 @@ pub fn truncation_header_label_with_locale(
     let end = range.end.min(entries.len());
     let mut participants = 0usize;
 
-    for &entry in &entries[range.start.min(end)..end] {
+    let run = entries.get(range.start.min(end)..end)?;
+    for &entry in run {
         if limit.is_some_and(|n| participants >= n) {
             break;
         }
@@ -284,11 +290,14 @@ impl<'e> BucketAccumulator<'e> {
                     kind,
                     calls: 0,
                     sources: std::collections::HashSet::new(),
+                    running_sources: std::collections::HashSet::new(),
                 });
                 self.buckets.len() - 1
             }
         };
-        let bucket = &mut self.buckets[pos];
+        let Some(bucket) = self.buckets.get_mut(pos) else {
+            return;
+        };
         bucket.calls += 1;
         // Both walks only bucket tool-call or subagent rows
         // The block feeds the distinct-count override and failure detection
@@ -307,6 +316,9 @@ impl<'e> BucketAccumulator<'e> {
             }
             RenderBlock::Subagent(sb) => {
                 bucket.sources.insert(sb.child_session_id.as_str());
+                if entry.is_running {
+                    bucket.running_sources.insert(sb.child_session_id.as_str());
+                }
                 // Cancelled is deliberate, not an error; only Failed feeds the red suffix
                 if matches!(sb.kind, SubagentBlockKind::Failed { .. }) {
                     self.failed_count += 1;
@@ -342,17 +354,51 @@ impl<'e> BucketAccumulator<'e> {
                     .map(|locale| locale.named_text("scrollback.verb_group.separator", ", "))
                     .unwrap_or_else(|| std::borrow::Cow::Borrowed(", "))
             };
-            let english_verb = bucket.kind.verb(self.running);
-            let verb = locale
-                .map(|locale| {
-                    locale.named_text(bucket.kind.verb_locale_key(self.running), english_verb)
-                })
-                .unwrap_or_else(|| std::borrow::Cow::Borrowed(english_verb));
-            let english_noun = bucket.kind.noun(count);
-            let noun = locale
-                .map(|locale| locale.named_text(bucket.kind.noun_locale_key(), english_noun))
-                .unwrap_or_else(|| std::borrow::Cow::Borrowed(english_noun));
-            let segment = format!("{separator}{verb} {count} {noun}");
+            let localize_verb = |running: bool| {
+                let english = bucket.kind.verb(running);
+                locale
+                    .map(|locale| locale.named_text(bucket.kind.verb_locale_key(running), english))
+                    .unwrap_or_else(|| std::borrow::Cow::Borrowed(english))
+            };
+            let localize_noun = |n: usize| {
+                let english = bucket.kind.noun(n);
+                locale
+                    .map(|locale| locale.named_text(bucket.kind.noun_locale_key(), english))
+                    .unwrap_or_else(|| std::borrow::Cow::Borrowed(english))
+            };
+            // Subagent tense is per-bucket: a finished-only set must not inherit group-wide Running.
+            let segment = match bucket.kind {
+                VerbGroupKind::Subagent => {
+                    let running_n = bucket.running_sources.len();
+                    let done_n = count.saturating_sub(running_n);
+                    if running_n > 0 && done_n > 0 {
+                        let verb = localize_verb(true);
+                        let noun = localize_noun(running_n);
+                        let inner_sep = locale
+                            .map(|locale| {
+                                locale.named_text("scrollback.verb_group.separator", ", ")
+                            })
+                            .unwrap_or_else(|| std::borrow::Cow::Borrowed(", "));
+                        let completed = locale
+                            .map(|locale| {
+                                locale.named_text("scrollback.verb_group.completed", "completed")
+                            })
+                            .unwrap_or_else(|| std::borrow::Cow::Borrowed("completed"));
+                        format!(
+                            "{separator}{verb} {running_n} {noun}{inner_sep}{done_n} {completed}"
+                        )
+                    } else {
+                        let verb = localize_verb(running_n > 0);
+                        let noun = localize_noun(count);
+                        format!("{separator}{verb} {count} {noun}")
+                    }
+                }
+                _ => {
+                    let verb = localize_verb(self.running);
+                    let noun = localize_noun(count);
+                    format!("{separator}{verb} {count} {noun}")
+                }
+            };
             text.push_str(&segment);
             spans.push(Span::styled(segment, text_style));
         }
@@ -422,6 +468,12 @@ mod tests {
         subagent(SubagentBlock::started(
             "task", child_sid, "explore", None, None, None, /*is_background=*/ true,
         ))
+    }
+
+    fn running_sub(child_sid: &str) -> ScrollbackEntry {
+        let mut entry = sub_started(child_sid);
+        entry.is_running = true;
+        entry
     }
 
     fn sub_completed(child_sid: &str) -> ScrollbackEntry {
@@ -515,12 +567,18 @@ mod tests {
             read("a.rs"),
             entry(ToolCallBlock::Search(SearchToolCallBlock::new("todo"))),
         ];
-        entries[1].is_running = true;
+        let Some(search) = entries.get_mut(1) else {
+            panic!("expected two entries: {entries:?}");
+        };
+        search.is_running = true;
         let l = label(&entries);
         assert_eq!(l.text, "Reading 1 file, Searching 1 pattern");
         assert!(l.running);
 
-        entries[1].is_running = false;
+        let Some(search) = entries.get_mut(1) else {
+            panic!("expected two entries: {entries:?}");
+        };
+        search.is_running = false;
         let l = label(&entries);
         assert_eq!(l.text, "Read 1 file, Searched 1 pattern");
         assert!(!l.running);
@@ -750,10 +808,38 @@ mod tests {
 
     #[test]
     fn running_subagent_flips_group_tense() {
-        let mut entries = vec![read("a.rs"), sub_started("child-A")];
-        entries[1].is_running = true;
+        let entries = vec![read("a.rs"), running_sub("child-A")];
         let l = label(&entries);
         assert_eq!(l.text, "Reading 1 file, Running 1 subagent");
+        assert!(l.running);
+    }
+
+    #[test]
+    fn mixed_subagents_show_running_and_completed_counts() {
+        let l = label(&[
+            running_sub("a"),
+            running_sub("b"),
+            sub_completed("c"),
+            sub_completed("d"),
+            sub_completed("e"),
+        ]);
+        assert_eq!(l.text, "Running 2 subagents, 3 completed");
+        assert!(l.running);
+
+        let l = label(&[running_sub("a"), sub_completed("b")]);
+        assert_eq!(l.text, "Running 1 subagent, 1 completed");
+        assert!(l.running);
+    }
+
+    #[test]
+    fn finished_subagents_do_not_claim_running_when_another_kind_is() {
+        let mut entries = vec![read("a.rs"), sub_completed("child-A")];
+        let Some(file) = entries.get_mut(0) else {
+            panic!("expected two entries: {entries:?}");
+        };
+        file.is_running = true;
+        let l = label(&entries);
+        assert_eq!(l.text, "Reading 1 file, Ran 1 subagent");
         assert!(l.running);
     }
 }

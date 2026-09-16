@@ -7,6 +7,8 @@
 //! never leave the host. The client API surface is kept so construction
 //! sites compile, but nothing is transmitted.
 
+#![deny(clippy::indexing_slicing)]
+
 use std::collections::HashMap;
 
 /// Mixpanel client for sending track events.
@@ -112,8 +114,14 @@ mod tests {
 
         let prepared = mp.prepare_properties(props);
 
-        assert_eq!(prepared["token"], project_token, "project token redacted");
-        let error = prepared["error"].as_str().unwrap();
+        assert_eq!(
+            prepared.get("token"),
+            Some(&serde_json::json!(project_token)),
+            "project token redacted"
+        );
+        let Some(error) = prepared.get("error").and_then(|v| v.as_str()) else {
+            panic!("missing json key error: {prepared:?}");
+        };
         assert!(
             !error.contains("abcdef0123456789abcdef"),
             "secret leaked: {error}"

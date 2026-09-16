@@ -168,6 +168,7 @@ fn render_url(
         }
         let x = area.x + col;
         if x < max_x && y < max_y {
+            // Wide glyphs need continuation cells; `set_char` would overlap the next glyph.
             buf.set_span(x, y, &Span::styled(ch.to_string(), style), char_width);
         }
         col = col.saturating_add(char_width);
@@ -511,7 +512,7 @@ mod tests {
             code: Some("ABCD-EFGH".into()),
         };
         render_auth(&mut buf, area, &theme, &hint, &TEST_LOCALE);
-        let text = buffer_text(&buf, area);
+        let text = crate::buffer_text(&buf);
         assert!(text.contains("Sign in to Grok"), "header: {text:?}");
         assert!(text.contains("accounts.x.ai/device"), "url: {text:?}");
         assert!(text.contains("ABCD-EFGH"), "device code: {text:?}");
@@ -530,7 +531,7 @@ mod tests {
             workspace: PathBuf::from("/home/agent/project"),
         };
         render_auth(&mut buf, area, &theme, &hint, &TEST_LOCALE);
-        let text = buffer_text(&buf, area);
+        let text = crate::buffer_text(&buf);
         assert!(
             text.contains("Do you trust the contents of this directory?"),
             "question: {text:?}"
@@ -561,18 +562,5 @@ mod tests {
         assert_eq!(wrapped_char_rows("a中a", 2), 3);
         assert_eq!(wrapped_char_rows("中文", 4), 1);
         assert_eq!(wrapped_char_rows("中文", 2), 2);
-    }
-
-    fn buffer_text(buf: &Buffer, area: Rect) -> String {
-        let mut text = String::new();
-        for y in 0..area.height {
-            for x in 0..area.width {
-                if let Some(c) = buf.cell((x, y)) {
-                    text.push_str(c.symbol());
-                }
-            }
-            text.push('\n');
-        }
-        text
     }
 }

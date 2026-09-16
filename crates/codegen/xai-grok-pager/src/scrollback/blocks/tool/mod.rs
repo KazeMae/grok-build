@@ -27,8 +27,10 @@ pub use search::{
 pub use search_tool::{
     DiscoveredTool, SearchToolCallBlock as IntegrationSearchToolCallBlock, discovered_tool_action,
 };
-pub(crate) use sent_message::UNAVAILABLE_DELIVERY_REASON;
-pub use sent_message::{SentMessageDetail, SentMessagePresentation, SentMessageToolCallBlock};
+pub use sent_message::{
+    SentMessageDelivery, SentMessageInput, SentMessagePresentation, SentMessageTarget,
+    SentMessageToolCallBlock, UNAVAILABLE_DELIVERY_REASON,
+};
 pub use use_tool::UseToolCallBlock;
 pub use web_fetch::WebFetchToolCallBlock;
 pub use web_search::WebSearchToolCallBlock;
@@ -777,8 +779,13 @@ mod tests {
             ToolCallBlock::MemorySearch(MemorySearchToolCallBlock::new("auth")),
             ToolCallBlock::SentMessage(SentMessageToolCallBlock::new(
                 SentMessagePresentation::Sent,
-                Some("sub-123".into()),
-                Some("hello".into()),
+                Some(SentMessageInput {
+                    target: SentMessageTarget::Unresolved {
+                        subagent_id: "sub-123".into(),
+                    },
+                    delivery: Some(SentMessageDelivery::Steer),
+                    text: "hello".into(),
+                }),
             )),
             ToolCallBlock::Skill(OtherToolCallBlock::new("Skill", "deploy")),
             ToolCallBlock::Other(OtherToolCallBlock::new("todo_write", "update")),
@@ -822,8 +829,7 @@ mod tests {
         assert_eq!(
             ToolCallBlock::SentMessage(SentMessageToolCallBlock::new(
                 SentMessagePresentation::Sent,
-                None,
-                None,
+                None
             ))
             .label_kind(),
             Some(VerbGroupKind::Message)

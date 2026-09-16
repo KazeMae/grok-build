@@ -1,0 +1,37 @@
+[
+  {
+    "category": "fixes",
+    "description": "**滚动区中折叠的子智能体组** 会正确标明仍在运行与已完成的数量。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Dashboard 搜索** 与恢复选择器现在会清楚标出活动文本框，并在搜索后恢复列表选中项。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Dock 分区** 点击折叠后不再保留选中高亮。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Worktree 路径** 在标题栏或 Dashboard 中不再多出一个后缀。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**带长服务器前缀的 MCP 工具** 会被保留，而不再被静默丢弃。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**回合取消横幅** 会正确标出原因，而不再总是写 “by user”。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**标题栏中的长路径** 始终缩短为最后两段。",
+    "breaking_change": false
+  }
+]

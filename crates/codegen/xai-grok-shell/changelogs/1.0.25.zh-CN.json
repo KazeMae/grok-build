@@ -1,0 +1,102 @@
+[
+  {
+    "category": "features",
+    "description": "**后台任务列表**会作为持久快照发送，客户端重连后可以恢复状态。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**成功的 Hook** 不再显示状态；只有阻塞或失败的 Hook 会显示状态或单行提示。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**Vim 模式 Shift+J/K** 会跳到视口顶部的上一/下一回合，与时间线箭头一致。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**双击** 现在可以选中设置选择器中的单选按钮。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**Dashboard 操作行**（+ New Agent、Open Previous、Worktree）可用方向键导航，Enter 激活。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**Workflow 工具** 支持 pause 和 stop 源，智能体可以控制自己启动的后台运行。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**/theme** 选择器现在匹配 transparent、dark、system 等别名，并仍插入规范名称。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Pager 中的 Bash 输出** 现在是完整结果，而不再是截断的尾部。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**语音听写** 会在光标处插入文本，而不再总是追加到末尾。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**无界面提示** 在智能体无响应时会干净超时，而不再永久挂起。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**定时任务** 会引导智能体检查结果，并清理或更新周期性调度。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**修复部分 ACP 客户端重复渲染用户提示**：实时回显改为 opt-in。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**修复 grok -c 在未使用 --continue 启动后恢复时挂到错误的空会话**。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Dock 与队列的悬停颜色** 与终端其余部分一致，不再使用更强的下拉高亮。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**修复读取带 PNG 缩略图前缀的 Adobe SVG 时图片上传失败**。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Dock 子智能体行** 现在显示与其他可终止行相同的 [stop] 标签。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**修复启动设置与模型目录** 在并发启动或多账号同机时被共享或覆盖。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Dock Tasks 面板** 的旋转指示与标题对齐，而不再嵌在分隔线下方。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**/feedback <text>** 再次立即发送，而不再开启模型回合；失败会保存到草稿并提示。",
+    "breaking_change": false
+  },
+  {
+    "category": "performance",
+    "description": "**内嵌启动** 在慢速文件系统扫描 skills 目录时不再超时。",
+    "breaking_change": false
+  }
+]

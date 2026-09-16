@@ -63,7 +63,10 @@ impl UsageInfoTab {
     }
 
     pub fn from_index(i: usize) -> Self {
-        *Self::ALL.get(i).unwrap_or(&Self::ALL[0])
+        match Self::ALL.get(i) {
+            Some(&tab) => tab,
+            None => UsageInfoTab::ContextUsage,
+        }
     }
 }
 
@@ -708,7 +711,7 @@ fn endpoint_at(state: &UsageInfoModalState, column: u16, row: u16) -> Option<Tex
     if line_idx >= state.plain_lines.len() {
         return None;
     }
-    let text = &state.plain_lines[line_idx];
+    let text = state.plain_lines.get(line_idx)?;
     let line_w = text.width().min(u16::MAX as usize) as u16;
     let col = column.saturating_sub(rect.x).min(line_w);
     Some(TextEndpoint { line_idx, col })
@@ -1353,8 +1356,15 @@ mod tests {
         let theme = Theme::current();
         let lines = usage_limit_lines(&state, Some(&bal), &theme, &LocaleContext::default());
         let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-        assert_eq!(text[0], "Weekly limit (SuperGrok)");
-        assert!(text[2].ends_with("50%"), "bar row: {:?}", text[2]);
+        assert_eq!(
+            text.first().map(String::as_str),
+            Some("Weekly limit (SuperGrok)")
+        );
+        assert!(
+            text.get(2).is_some_and(|l| l.ends_with("50%")),
+            "bar row: {:?}",
+            text.get(2)
+        );
         assert!(text.iter().any(|l| l.contains("Resets: May 29, 00:00")));
         assert!(text.iter().any(|l| l == "Pay as you go: Enabled"));
         assert!(
@@ -1373,20 +1383,36 @@ mod tests {
         let mut state = state_with_session();
         state.billing_loading = true;
         let lines = usage_limit_lines(&state, None, &theme, &LocaleContext::default());
-        assert!(lines[0].to_string().contains("Loading usage"));
+        assert!(
+            lines
+                .first()
+                .is_some_and(|l| l.to_string().contains("Loading usage"))
+        );
 
         state.ctx.billing_redirect_url = Some("https://x.example/usage".to_string());
         let lines = usage_limit_lines(&state, None, &theme, &LocaleContext::default());
-        assert!(lines[0].to_string().contains("https://x.example/usage"));
+        assert!(
+            lines
+                .first()
+                .is_some_and(|l| l.to_string().contains("https://x.example/usage"))
+        );
 
         state.ctx.usage_visible = false;
         let lines = usage_limit_lines(&state, None, &theme, &LocaleContext::default());
-        assert!(lines[0].to_string().contains("managed by your team"));
+        assert!(
+            lines
+                .first()
+                .is_some_and(|l| l.to_string().contains("managed by your team"))
+        );
 
         // Gateway chat sessions show no billing at all
         state.ctx.chat_kind = true;
         let lines = usage_limit_lines(&state, None, &theme, &LocaleContext::default());
-        assert!(lines[0].to_string().contains("Loading session usage"));
+        assert!(
+            lines
+                .first()
+                .is_some_and(|l| l.to_string().contains("Loading session usage"))
+        );
     }
 
     #[test]
@@ -1408,7 +1434,7 @@ mod tests {
         let text: String = (0..area.height)
             .map(|y| {
                 (0..area.width)
-                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
                     .collect::<String>()
                     + "\n"
             })
@@ -1456,7 +1482,7 @@ mod tests {
         let text: String = (0..area.height)
             .map(|y| {
                 (0..area.width)
-                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
                     .collect::<String>()
                     + "\n"
             })
@@ -1553,7 +1579,9 @@ mod tests {
             .iter()
             .position(|l| l.contains("fp-abc"))
             .expect("hash row");
-        let line = &state.plain_lines[line_idx];
+        let Some(line) = state.plain_lines.get(line_idx) else {
+            panic!("plain line {line_idx} missing");
+        };
         let hash_col = line.find("fp-abc").expect("hash") as u16;
         let rect = state.content_rect;
         let y = rect.y + (line_idx as u16).saturating_sub(state.scroll);
@@ -1583,7 +1611,9 @@ mod tests {
             &theme,
             &LocaleContext::default(),
         );
-        let cell = &buf[(x0, y)];
+        let Some(cell) = buf.cell((x0, y)) else {
+            panic!("cell ({x0},{y}) missing");
+        };
         if theme.text_primary != ratatui::style::Color::Reset
             && theme.bg_base != ratatui::style::Color::Reset
         {
@@ -1712,6 +1742,157 @@ mod tests {
     }
 
     #[test]
+    fn bare_moved_ends_stale_drag() {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        let mut state = state_with_session();
+        state.set_tab(UsageInfoTab::SessionInfo);
+        state.session_fields = Some(vec![field("Model Hash", "fp-abc", true)]);
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &Theme::current(),
+            &LocaleContext::default(),
+        );
+        let Some(hit) = state.copy_hits.first().cloned() else {
+            panic!("expected a copy hit: {:?}", state.copy_hits);
+        };
+        let line = state
+            .plain_lines
+            .iter()
+            .find(|l| l.contains("fp-abc"))
+            .expect("hash line")
+            .clone();
+        let x0 = hit.rect.x + line.find("fp-abc").expect("hash") as u16;
+        handle_usage_modal_mouse(
+            &mut state,
+            MouseEventKind::Drag(MouseButton::Left),
+            x0 + 3,
+            hit.rect.y,
+        );
+        assert!(state.text_drag.is_some());
+        // Bare Moved means the Up was lost off-terminal; finish like Up (copy and clear)
+        let out = handle_usage_modal_mouse(&mut state, MouseEventKind::Moved, x0 + 4, hit.rect.y);
+        assert!(
+            matches!(out, UsageModalOutcome::CopyText(ref s) if s.starts_with("fp")),
+            "expected partial copy of hash, got {out:?}"
+        );
+        assert!(state.text_drag.is_none());
+        assert!(state.pending_press.is_none());
+    }
+
+    #[test]
+    fn bare_moved_keeps_pending_press_for_click() {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        let mut state = state_with_session();
+        state.set_tab(UsageInfoTab::SessionInfo);
+        state.session_fields = Some(vec![field("Model Hash", "fp-abc", true)]);
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &Theme::current(),
+            &LocaleContext::default(),
+        );
+        let Some(hit) = state.copy_hits.first().cloned() else {
+            panic!("expected a copy hit: {:?}", state.copy_hits);
+        };
+        handle_usage_modal_mouse(
+            &mut state,
+            MouseEventKind::Down(MouseButton::Left),
+            hit.rect.x,
+            hit.rect.y,
+        );
+        assert!(state.pending_press.is_some());
+        // Moved must not clear pending; terminals that report held motion as Moved must still click
+        let _ = handle_usage_modal_mouse(&mut state, MouseEventKind::Moved, hit.rect.x, hit.rect.y);
+        assert!(state.pending_press.is_some());
+        assert!(state.text_drag.is_none());
+        assert_eq!(
+            handle_usage_modal_mouse(
+                &mut state,
+                MouseEventKind::Up(MouseButton::Left),
+                hit.rect.x,
+                hit.rect.y,
+            ),
+            UsageModalOutcome::CopyText("Model Hash: fp-abc".to_string())
+        );
+    }
+
+    #[test]
+    fn chrome_clicks_do_not_start_content_drag() {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        let mut state = state_with_session();
+        state.set_tab(UsageInfoTab::SessionInfo);
+        state.session_fields = Some(vec![field("Session ID", "sid-123", false)]);
+        render_usage_modal(
+            &mut buf,
+            area,
+            &mut state,
+            None,
+            false,
+            &Theme::current(),
+            &LocaleContext::default(),
+        );
+        let rect = state.content_rect;
+        assert!(rect.width > 0 && rect.height > 0);
+        assert_eq!(
+            handle_usage_modal_mouse(
+                &mut state,
+                MouseEventKind::Down(MouseButton::Left),
+                rect.x + rect.width / 2,
+                rect.y.saturating_sub(1),
+            ),
+            UsageModalOutcome::Unchanged,
+        );
+        assert!(state.pending_press.is_none());
+        assert!(state.text_drag.is_none());
+    }
+
+    #[test]
+    fn clear_text_drag_also_clears_hover() {
+        let mut state = state_with_session();
+        state.hovered_copy_line = Some(2);
+        state.pending_press = Some(PendingPress {
+            start_col: 1,
+            start_row: 1,
+            endpoint: TextEndpoint {
+                line_idx: 0,
+                col: 0,
+            },
+            click_value: None,
+        });
+        state.clear_text_drag();
+        assert!(state.hovered_copy_line.is_none());
+        assert!(state.pending_press.is_none());
+        assert!(state.text_drag.is_none());
+    }
+
+    #[test]
+    fn selection_cols_clamps_to_panel_width() {
+        let drag = TextDrag {
+            anchor: TextEndpoint {
+                line_idx: 0,
+                col: 0,
+            },
+            head: TextEndpoint {
+                line_idx: 1,
+                col: 3,
+            },
+        };
+        let long = "abcdefghijklmnopqrstuvwxyz";
+        assert_eq!(selection_cols(drag, 0, long, 10), Some((0, 10)));
+        assert_eq!(selection_cols(drag, 1, "abcde", 10), Some((0, 4)));
+    }
+
+    #[test]
     fn popup_height_is_capped_on_tall_terminals() {
         let area = Rect::new(0, 0, 100, 60);
         let mut buf = Buffer::empty(area);
@@ -1790,7 +1971,7 @@ mod tests {
         let text: String = (0..area.height)
             .map(|y| {
                 (0..area.width)
-                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string()))
                     .collect::<String>()
                     + "\n"
             })

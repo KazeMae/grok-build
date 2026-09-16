@@ -113,24 +113,19 @@ pub fn compose_builtin(
                 .map(|usd| StatusSegment::dim(format!("${usd:.2}"))),
             StatusLineItem::TurnTimer => {
                 let secs = turn_elapsed?.as_secs();
-                let seconds = locale
-                    .map(|locale| {
-                        locale
-                            .named_text("status_line.unit.seconds", "s")
-                            .into_owned()
-                    })
-                    .unwrap_or_else(|| "s".to_string());
-                let minutes = locale
-                    .map(|locale| {
-                        locale
-                            .named_text("status_line.unit.minutes", "m")
-                            .into_owned()
-                    })
-                    .unwrap_or_else(|| "m".to_string());
-                let text = match secs {
-                    0 => return None,
-                    s if s < 60 => format!("{s}{seconds}"),
-                    s => format!("{}{minutes}{:02}{seconds}", s / 60, s % 60),
+                if secs == 0 {
+                    return None;
+                }
+                let text = crate::views::dock::fmt_elapsed(secs);
+                let text = if let Some(locale) = locale {
+                    let hours = locale.named_text("status_line.unit.hours", "h");
+                    let minutes = locale.named_text("status_line.unit.minutes", "m");
+                    let seconds = locale.named_text("status_line.unit.seconds", "s");
+                    text.replace('h', hours.as_ref())
+                        .replace('m', minutes.as_ref())
+                        .replace('s', seconds.as_ref())
+                } else {
+                    text
                 };
                 Some(StatusSegment::dim(text))
             }
