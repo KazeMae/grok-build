@@ -287,7 +287,7 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
     focus_key: Option<&'static str>,
 ) -> Vec<Effect> {
     use crate::views::modal::ActiveModal;
-    use crate::views::settings_modal::SettingsModalState;
+    use crate::views::settings_modal::{RowVisibility, SettingsModalState};
 
     let mut effects = vec![];
     let id = match app.active_view {
@@ -323,6 +323,11 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
     let ask_user_question_timeout_enabled_from_app = app.ask_user_question_timeout_enabled;
     let voice_stt_language_from_app = app.voice_config.language.clone();
     let ui_locale_from_app = app.locale.locale().as_bcp47().to_string();
+    // Theme rows are `hidden_in_minimal`. Snapshot this AppView's mode, not `MINIMAL_MODE_ACTIVE`
+    // (other tests flip that process flag in parallel and would drop `theme` from the list).
+    let visibility = RowVisibility {
+        hide_appearance: app.screen_mode.is_minimal(),
+    };
 
     let Some(agent) = app.agents.get_mut(&id) else {
         return effects;
@@ -370,10 +375,11 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(
         voice_stt_language: voice_stt_language_from_app,
         ui_locale: ui_locale_from_app,
     };
-    let mut state = Box::new(SettingsModalState::new(
+    let mut state = Box::new(SettingsModalState::new_with_row_visibility(
         registry,
         ui_snapshot,
         pager_snapshot,
+        visibility,
     ));
     if let Some(key) = focus_key
         && state.focus_key(key)

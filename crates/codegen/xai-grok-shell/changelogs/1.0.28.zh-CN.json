@@ -1,0 +1,22 @@
+[
+  {
+    "category": "features",
+    "description": "**`/btw` 可插在半句中间**：行内剩余部分成为旁路提问，不会进入主对话记录。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**按模型的 `reasoning_summary`** 设置已可在 config.toml 中为 Responses API 端点配置。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**自动更新** 不再删除仍被其他进程使用的 grok 二进制。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**提示编辑器** 在软换行行间按 Up/Down 时不再卡光标或跳行。",
+    "breaking_change": false
+  }
+]

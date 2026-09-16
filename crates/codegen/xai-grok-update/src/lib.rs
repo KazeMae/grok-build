@@ -1,5 +1,8 @@
+#![deny(clippy::indexing_slicing)]
+
 pub mod announcement_translations;
 pub mod auto_update;
+mod cleanup_downloads;
 pub mod version;
 mod version_policy;
 

@@ -515,7 +515,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             session_id,
             models: new_models,
-        } => handle_session_created(app, agent_id, session_id, new_models),
+            modes,
+        } => handle_session_created(app, agent_id, session_id, new_models, modes),
         TaskResult::SessionFailed { agent_id, error } => {
             handle_session_failed(app, agent_id, error)
         }
@@ -525,6 +526,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             worktree_path,
             session_cwd,
             models: new_models,
+            modes,
             strategy_summary,
         } => handle_worktree_session_created(
             app,
@@ -533,6 +535,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             worktree_path,
             session_cwd,
             new_models,
+            modes,
             strategy_summary,
         ),
         TaskResult::WorktreeForked {
@@ -641,6 +644,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             session_id,
             models: new_models,
+            modes,
             code_restored,
             restore_summary,
             restore_degree,
@@ -650,6 +654,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             session_id,
             new_models,
+            modes,
             code_restored,
             restore_summary,
             restore_degree,
@@ -943,6 +948,14 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         }
         TaskResult::CancelComplete => {
             tracing::trace!("Cancel notification sent successfully");
+            vec![]
+        }
+        TaskResult::SetSessionModeFailed { session_id } => {
+            if let Some(agent) = find_agent_by_session_id(&mut app.agents, session_id.0.as_ref()) {
+                agent.plan_mode_pending = None;
+                agent.session_mode_pending = None;
+                agent.pending_post_turn_commit = None;
+            }
             vec![]
         }
         TaskResult::ConsentPersistFailed { error } => {
@@ -1244,6 +1257,19 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         }
         TaskResult::PluginsListLoaded { agent_id, result } => {
             handle_plugins_list_loaded(app, agent_id, result)
+        }
+        TaskResult::MemoryForgetResult {
+            agent_id,
+            path,
+            result,
+        } => {
+            if let Some(agent) = app.agents.get_mut(&agent_id)
+                && let Some(crate::views::modal::ActiveModal::MemoryBrowser { state }) =
+                    agent.active_modal.as_mut()
+            {
+                state.apply_forget_result(&path, result);
+            }
+            vec![]
         }
         TaskResult::HooksActionResult { agent_id, result } => dispatch_action_result(
             app,
@@ -1867,11 +1893,19 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::FeedbackFailed {
             agent_id,
             origin,
+            feedback_text,
+            image_count,
             error,
         } => {
             let Some(agent) = app.agents.get_mut(&agent_id) else {
                 return vec![];
             };
+            let failure = localized_template(
+                locale.as_ref(),
+                "feedback.send_failed",
+                "Couldn't send feedback: {error}",
+                &[("{error}", &error)],
+            );
             if let crate::app::actions::FeedbackSendOrigin::Modal {
                 submission_id,
                 modal_id,
@@ -1879,31 +1913,36 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             } = origin
             {
                 let _ = agent.take_parked_feedback_trace_consent(submission_id);
-                if is_draft
-                    && let Some(modal) = agent
+                if is_draft {
+                    if let Some(modal) = agent
                         .feedback_modal
                         .as_mut()
                         .filter(|modal| modal.matches_id(modal_id))
-                {
-                    modal.mark_draft_send_error(localized_template(
-                        locale.as_ref(),
-                        "feedback.send_failed_draft_kept",
-                        "Couldn't send feedback: {error}. The draft was kept.",
-                        &[("{error}", &error)],
-                    ));
+                    {
+                        modal.mark_draft_send_error(localized_template(
+                            locale.as_ref(),
+                            "feedback.send_failed_draft_kept",
+                            "Couldn't send feedback: {error}. The draft was kept.",
+                            &[("{error}", &error)],
+                        ));
+                    } else {
+                        agent
+                            .scrollback
+                            .push_block(crate::scrollback::block::RenderBlock::system(
+                                failure.clone(),
+                            ));
+                    }
                     return vec![];
                 }
             }
-            agent
-                .scrollback
-                .push_block(crate::scrollback::block::RenderBlock::system(
-                    localized_template(
-                        locale.as_ref(),
-                        "feedback.send_failed",
-                        "Couldn't send feedback: {error}",
-                        &[("{error}", &error)],
-                    ),
-                ));
+            super::notes::keep_unsent_feedback_report(
+                agent,
+                super::notes::UnsentFeedbackReport {
+                    text: &feedback_text,
+                    image_count,
+                    failure: &failure,
+                },
+            );
             vec![]
         }
         TaskResult::FeedbackDraftListComplete {
@@ -2101,7 +2140,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             agent_id,
             result,
             minimal_request_id,
-        } => handle_btw_response(app, agent_id, result, minimal_request_id),
+            image_notice,
+        } => handle_btw_response(app, agent_id, result, minimal_request_id, image_notice),
         TaskResult::InterjectQueued { .. } => vec![],
         TaskResult::RecapRequested {
             session_id,

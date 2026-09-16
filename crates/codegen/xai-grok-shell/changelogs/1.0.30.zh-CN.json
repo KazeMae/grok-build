@@ -1,0 +1,27 @@
+[
+  {
+    "category": "features",
+    "description": "**会话标题栏** 改成单行，带 overlay 上下文和 Dashboard 按钮。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**耗时显示** 会滚入小时（例如 `3h14m`），而不再停在 60 分钟。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Dock 的 Watchers 与 Loops 行** 会显示下次运行时间。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Workflow 状态** 在 dock 中显示为可点击行。",
+    "breaking_change": false
+  },
+  {
+    "category": "performance",
+    "description": "**修复 tmux 窗格卡顿**：去掉每帧的 synchronized-update 包装。",
+    "breaking_change": false
+  }
+]

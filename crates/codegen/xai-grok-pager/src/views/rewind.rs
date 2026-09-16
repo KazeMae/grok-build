@@ -515,22 +515,15 @@ pub fn render_rewind_overlay(
                 rewind_static(locale, "rewind.picker.title", "Rewind to which turn?"),
                 focused,
                 |i, ctx| {
-                    let point = &points[i];
-                    let dot_style = Style::default().fg(theme.gray).bg(ctx.row_bg);
-                    let file_info = if point.has_file_changes {
-                        rewind_text(locale, "rewind.files_count", " · {count} files")
-                            .replace("{count}", &point.num_file_snapshots.to_string())
-                    } else {
-                        String::new()
+                    let Some(point) = points.get(i) else {
+                        return Line::from("");
                     };
-                    let preview_width = ctx.content_width.saturating_sub(2).saturating_sub(
-                        unicode_width::UnicodeWidthStr::width(file_info.as_str()) as u16,
-                    );
+                    let dot_style = Style::default().fg(theme.gray).bg(ctx.row_bg);
                     let preview: String = crate::render::line_utils::truncate_str(
                         point.prompt_preview.as_deref().unwrap_or_else(|| {
                             rewind_static(locale, "rewind.no_preview", "(no preview)")
                         }),
-                        preview_width as usize,
+                        ctx.content_width.saturating_sub(8) as usize,
                     );
                     let text_style = Style::default()
                         .fg(theme.text_primary)
@@ -540,12 +533,10 @@ pub fn render_rewind_overlay(
                         } else {
                             Modifier::empty()
                         });
-                    let meta_style = Style::default().fg(theme.gray).bg(ctx.row_bg);
 
                     Line::from(vec![
                         Span::styled("\u{00B7} ", dot_style),
                         Span::styled(preview, text_style),
-                        Span::styled(file_info, meta_style),
                     ])
                 },
             );

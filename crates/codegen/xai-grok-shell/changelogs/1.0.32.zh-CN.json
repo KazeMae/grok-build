@@ -1,0 +1,17 @@
+[
+  {
+    "category": "fixes",
+    "description": "**插件与技能列表**（x.ai/plugins/list 与 x.ai/skills/*）会在首次会话之前就反映最新的 config.toml。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**修复** Windows ARM64 构建在第一次 TLS 握手时崩溃。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**斜杠命令**（如 `/feedback`）在计划审批期间输入时现在会正确执行。",
+    "breaking_change": false
+  }
+]

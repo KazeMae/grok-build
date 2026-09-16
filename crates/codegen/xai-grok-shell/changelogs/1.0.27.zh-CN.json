@@ -1,0 +1,12 @@
+[
+  {
+    "category": "fixes",
+    "description": "**排队消息** 立即发送时不再出现两次。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Dashboard 旋转指示** 在后台任务运行时不再冻结。",
+    "breaking_change": false
+  }
+]
