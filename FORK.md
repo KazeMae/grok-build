@@ -34,14 +34,15 @@ commits. Stage named files instead of the whole worktree.
 
 ## Current Version
 
-Version: `1.0.32+kazemae.6` (not tagged yet).
+Version: `1.0.35+kazemae.7` (not tagged yet).
 
-Upstream base is `48271133` (upstream package version `1.0.32`,
-`SOURCE_REV` `be7ce6e8cffe`), merged in `57e01196`. That snapshot jumps
-1.0.25–1.0.32 in one monorepo sync (1650 files). Git reported 78 content
-conflicts, mostly the GrokZen pager overlay against the 1.0.30 session-header
-and dashboard rewrite. Overlay resolution keeps upstream structure and
-re-threads locale / CJK / privacy on top.
+Upstream base is `a28ee2b2` (upstream package version `1.0.35`,
+`SOURCE_REV` `e8563f8f1822`), merged in `ff877f4e`. That snapshot jumps
+1.0.33–1.0.35 in one monorepo sync (356 files). Git reported 21 content
+conflicts, again the GrokZen pager overlay against new strings, `/memory`
+rewrite, session-create timeout naming, and prompt `tool_calling` removal.
+Overlay resolution keeps upstream structure and re-threads locale / CJK /
+privacy on top.
 
 The executable name stays `grok` / `xai-grok-pager`. Official auto-update is
 unchanged; GrokZen installers are not included.
@@ -62,12 +63,32 @@ Personal patches on top of that base:
   `privacy` feature (Mixpanel / product events / OTLP export hard-off).
 - `c07120c2` adds the settings Appearance locale switch, `[session] length_salvage_budget`,
   and `/model` lossy compact when the target catalog id / slug / display name contains
-  `"claude"`. Upstream 1.0.32 still keys compact on `model_family`, which custom uniapi
+  `"claude"`. Upstream still keys compact on `model_family`, which custom uniapi
   entries omit, so the Claude-name trigger remains required. It is stored on
   `SessionModelSwitch.is_family_switch`.
 
 Upstream still implements neither heartbeat ignore nor reasoning omission, so those
 two patches remain required. Telemetry stays compile-time locked.
+
+Validation of `1.0.35+kazemae.7` on macOS Apple Silicon (Rust 1.94.0):
+
+- Local `cargo check --locked -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel`
+  and `cargo clippy --locked -p xai-grok-pager -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel -- -D warnings`
+  passed after overlay fixups.
+- GitHub Actions `fmt / clippy / build` on the merge PR is the remaining gate.
+- `cargo clippy --workspace --all-targets -- -D warnings` still fails on
+  upstream test and bench targets; treat only findings inside overlay files as
+  personal regressions.
+
+## Previous Versions
+
+### 1.0.32+kazemae.6
+
+Not tagged. Upstream base was `48271133` (package version `1.0.32`,
+`SOURCE_REV` `be7ce6e8cffe`), merged in `57e01196`. That snapshot jumped
+1.0.25–1.0.32 in one monorepo sync (1650 files). Git reported 78 content
+conflicts, mostly the GrokZen pager overlay against the 1.0.30 session-header
+and dashboard rewrite.
 
 Validation of `1.0.32+kazemae.6` on macOS Apple Silicon (Rust 1.94.0):
 
@@ -79,7 +100,6 @@ Validation of `1.0.32+kazemae.6` on macOS Apple Silicon (Rust 1.94.0):
   upstream test and bench targets; treat only findings inside overlay files as
   personal regressions.
 
-## Previous Versions
 
 ### 1.0.24+kazemae.5
 
@@ -153,7 +173,7 @@ command below for this baseline; the tracing test itself is unchanged.
 ## Verify and Build
 
 Install the toolchain in `rust-toolchain.toml` and DotSlash as described in
-[README.md](README.md#building-from-source). Version `1.0.24+kazemae.5` uses
+[README.md](README.md#building-from-source). Version `1.0.35+kazemae.7` uses
 Rust 1.94.0.
 
 ```sh
@@ -167,7 +187,7 @@ rustfmt --edition 2024 --check \
 
 cargo clippy --locked --workspace --no-deps --keep-going -- -D warnings
 
-GROK_VERSION=1.0.24+kazemae.5 cargo build --locked -p xai-grok-pager-bin --release
+GROK_VERSION=1.0.35+kazemae.7 cargo build --locked -p xai-grok-pager-bin --release
 ./target/release/xai-grok-pager --version
 ```
 
@@ -232,6 +252,6 @@ git push origin main
 
 Use a new `GROK_VERSION` value and annotated tag for each published personal
 version, preserving the upstream numeric version (for example,
-`1.0.24+kazemae.4`). Update this document's patch and validation records for the
+`1.0.35+kazemae.7`). Update this document's patch and validation records for the
 new version. Do not change the generated root `Cargo.toml` just to stamp a local
 binary version.

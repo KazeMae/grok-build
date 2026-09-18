@@ -1,0 +1,77 @@
+[
+  {
+    "category": "fixes",
+    "description": "**修复** macOS 粘贴图片时可能附上错误图片的问题。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**MCP 工具结果** 在服务器提供时会包含结构化 JSON 数据。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**直接列出的 MCP 工具调用** 现在会显示名称、参数和错误信息。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**后台子智能体任务** 在父会话关闭时会正确显示已取消状态。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "所有子智能体结束后，Subagents dock 不再显示无法点击的 “Done N completed” 行。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "已取消或超时的 MCP 工具调用现在会通知服务器停止工作，而不再在后台继续。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**/rewind** 在会话清理后缺少更早的压缩检查点时不再失败；只需要目标对应的基础检查点。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "大型 skill 文件现在与其他读取一样限制在 25k token；过长的 skill 正文会显示截断说明，而不是灌满上下文。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "长会话在 30 天清理扫描中不再丢失旧的压缩检查点或 prompt offload。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "定时任务、monitor 或 workflow 仍在运行时，不再自动出现 “where was I” 回顾。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "在 minimal 模式下，确认 /delete 或 /exit 会立即打开新的空会话，而不再像卡住一样。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "在 minimal 模式下，/new 之后恢复会话会正确加载历史，而不再显示错误的会话。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "无参数的 MCP 工具在权限面板中不再多出一行 \"{}\"。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**输入框页脚** 在 SSH 下无法使用 Cmd+Enter 时，会显示 Alt+Enter 用于插入换行。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Windows 上的 `grok clone`** 在仓库 git 配置含反斜杠或引号时不再失败。",
+    "breaking_change": false
+  }
+]

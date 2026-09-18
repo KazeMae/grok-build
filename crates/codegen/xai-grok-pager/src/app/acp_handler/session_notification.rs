@@ -299,15 +299,7 @@ pub(super) fn handle_session_notification_with_origin(
         | XaiSessionUpdate::MemoryCaptureActivity { .. }
         | XaiSessionUpdate::MemoryDreamCompleted { .. }
         | XaiSessionUpdate::MemorySessionSaved { .. }) => {
-            let changed = apply_session_event(
-                update,
-                &mut agent.session,
-                &mut agent.scrollback,
-                is_api_key_auth,
-            );
-            if let Some(used) = compaction_context_refresh(update) {
-                refresh_context_used(agent, used);
-            }
+            let changed = apply_compaction_or_retry_update(agent, update, is_api_key_auth);
             if let XaiSessionUpdate::AutoCompactCompleted { .. } = update {
                 agent.todo.update_todos(Vec::new());
             }
@@ -1198,15 +1190,17 @@ pub(super) fn handle_session_notification_with_origin(
             capture_enabled,
             dream_enabled,
         } => {
-            let entries = crate::views::memory_modal::build_entries_with_locale(
+            let listing = xai_grok_shell::extensions::memory::MemoryListing {
                 files,
-                Some(agent.scrollback.locale()),
-            );
-            let modal_state = crate::views::memory_modal::MemoryModalState::new(entries)
-                .with_enabled(enabled, disabled_reason)
-                .with_capabilities(capture_enabled, dream_enabled);
+                enabled,
+                disabled_reason,
+                capture_enabled,
+                dream_enabled,
+            };
             agent.active_modal = Some(crate::views::modal::ActiveModal::MemoryBrowser {
-                state: Box::new(modal_state),
+                state: Box::new(crate::views::memory_modal::MemoryModalState::from_listing(
+                    listing,
+                )),
             });
             true
         }
@@ -1509,14 +1503,50 @@ pub(crate) fn apply_child_view_session_event(
     {
         return false;
     }
+    apply_compaction_or_retry_update(child_view, update, is_api_key_auth)
+}
+fn apply_compaction_or_retry_update(
+    agent: &mut AgentView,
+    update: &XaiSessionUpdate,
+    is_api_key_auth: bool,
+) -> bool {
+    use crate::app::agent::AgentCommand;
+    use crate::app::cancel_latency::TurnEnd;
+    use std::time::Instant;
+    use xai_grok_shell::extensions::notification::MODEL_FAMILY_SWITCH_COMPACT_BANNER;
     let changed = apply_session_event(
         update,
-        &mut child_view.session,
-        &mut child_view.scrollback,
+        &mut agent.session,
+        &mut agent.scrollback,
         is_api_key_auth,
     );
     if let Some(used) = compaction_context_refresh(update) {
-        refresh_context_used(child_view, used);
+        refresh_context_used(agent, used);
+    }
+    match update {
+        XaiSessionUpdate::AutoCompactStarted { reason, .. } => {
+            if agent.session.state.is_idle()
+                && !agent.session.loading_replay
+                && reason == MODEL_FAMILY_SWITCH_COMPACT_BANNER
+            {
+                agent
+                    .session
+                    .start_command(AgentCommand::SwitchModelCompact);
+                agent.running_wake_turn = None;
+                agent.turn_started_at = Some(Instant::now());
+            }
+        }
+        XaiSessionUpdate::AutoCompactCompleted { .. }
+        | XaiSessionUpdate::AutoCompactFailed { .. }
+        | XaiSessionUpdate::AutoCompactCancelled { .. } => {
+            if agent.session.state.is_switch_model_compact() {
+                agent.session.finish_command();
+                agent.mark_turn_finished(TurnEnd::Completed);
+                agent.activity_started_at = None;
+                agent.last_activity = None;
+            }
+        }
+        _ => {}
     }
     changed
 }
@@ -1586,7 +1616,7 @@ pub(super) fn apply_session_event(
             tracing::info!("Auto-compact completed: {tokens_after} tokens after");
             session.set_compaction_activity(None);
             session.compact_held_prompt = None;
-            if session.loading_replay {
+            if session.loading_replay || session.state.is_switch_model_compact() {
                 scrollback.push_block(RenderBlock::session_event(
                     SessionEvent::CompactionCompleted {
                         tokens_before: *tokens_before,

@@ -99,8 +99,7 @@ fn send_while_idle_with_nonempty_shared_queue_routes_to_server() {
 // The dispatcher mutates optimistically and rolls back on failure, matching the `set_yolo_mode` pattern minus its toasts
 // Guards (ZDR, non-admin team) toast and short-circuit; they are the only paths that still speak up, because nothing else on screen would
 
-/// Idle unchanged opt-in skips ACP and still acks.
-/// Already-out is covered by `settings_opt_out_while_already_out_acks_without_write`.
+/// Idle unchanged opt-in skips ACP and still acks: the only direction allowed to skip the write.
 #[test]
 fn set_coding_data_sharing_unchanged_opt_in_skips_acp_and_acks() {
     let mut app = test_app_with_agent();
@@ -136,7 +135,7 @@ fn set_coding_data_sharing_unchanged_opt_in_skips_acp_and_acks() {
     );
     assert!(!app.coding_data_retention_opt_out);
     assert!(app.privacy_banner_acked.is_some());
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert!(app.coding_data_pending_write.is_none());
     assert_eq!(app.coding_data_write_seq, 0);
 }
 
@@ -164,7 +163,7 @@ fn set_coding_data_sharing_blocked_by_zdr() {
         app.privacy_banner_acked.is_none(),
         "ZDR block must not ack the banner"
     );
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert!(app.coding_data_pending_write.is_none());
     let toast = read_toast(&app);
     assert!(
         toast.contains("Zero Data Retention"),
@@ -199,7 +198,7 @@ fn set_coding_data_sharing_blocked_by_zdr_even_if_idempotent() {
     let effects = dispatch(Action::SetCodingDataSharing { opted_in: true }, &mut app);
     assert!(effects.is_empty());
     assert!(app.privacy_banner_acked.is_none());
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert!(app.coding_data_pending_write.is_none());
     assert!(read_toast(&app).contains("Zero Data Retention"));
 }
 
@@ -214,7 +213,7 @@ fn set_coding_data_sharing_blocked_non_admin() {
     let effects = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
     assert!(effects.is_empty());
     assert!(app.privacy_banner_acked.is_none());
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert!(app.coding_data_pending_write.is_none());
     let toast = read_toast(&app);
     assert!(
         toast.contains("team admin"),
@@ -223,7 +222,6 @@ fn set_coding_data_sharing_blocked_non_admin() {
 }
 
 /// Admin team members can toggle.
-/// The admin-allowed path produces an Effect carrying the rollback value.
 #[test]
 fn set_coding_data_sharing_allowed_for_admin() {
     let mut app = test_app_with_agent();
@@ -241,16 +239,8 @@ fn set_coding_data_sharing_allowed_for_admin() {
         .iter()
         .find(|e| matches!(e, Effect::SetCodingDataSharing { .. }))
     {
-        Some(Effect::SetCodingDataSharing {
-            opted_in,
-            rollback_to_opted_in,
-            ..
-        }) => {
+        Some(Effect::SetCodingDataSharing { opted_in, .. }) => {
             assert!(!*opted_in, "Effect must carry opted_in=false");
-            assert!(
-                *rollback_to_opted_in,
-                "rollback_to_opted_in must capture pre-toggle opt-in=true",
-            );
         }
         other => panic!("expected SetCodingDataSharing Effect, got {effects:?} ({other:?})"),
     }
@@ -260,7 +250,6 @@ fn set_coding_data_sharing_allowed_for_admin() {
         "admin-allowed dispatch must optimistically flip state",
     );
     assert!(app.privacy_banner_acked.is_none());
-    assert!(!app.privacy_banner_opt_in_inflight);
 }
 
 /// Non-idempotent dispatch emits one Effect and mutates state optimistically.
@@ -282,15 +271,10 @@ fn set_coding_data_sharing_produces_effect_and_optimistic_mutation() {
         Some(Effect::SetCodingDataSharing {
             agent_id,
             opted_in,
-            rollback_to_opted_in,
             seq,
         }) => {
             assert_eq!(*agent_id, AgentId(0));
             assert!(!*opted_in);
-            assert!(
-                *rollback_to_opted_in,
-                "rollback_to_opted_in must be pre-toggle value (true == opted-in)",
-            );
             assert_eq!(
                 *seq, app.coding_data_write_seq,
                 "the effect must carry the generation it was dispatched under",
@@ -304,7 +288,13 @@ fn set_coding_data_sharing_produces_effect_and_optimistic_mutation() {
         "dispatch must optimistically mutate state",
     );
     assert!(app.privacy_banner_acked.is_none());
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert_eq!(
+        app.coding_data_pending_write,
+        Some(PendingCodingDataWrite {
+            opted_in: false,
+            rollback_to_opted_in: true,
+        })
+    );
     assert!(
         app.agents
             .get(&AgentId(0))
@@ -406,16 +396,18 @@ fn coding_data_sharing_failed_rolls_back_and_toasts_error() {
         );
         return;
     }
-    // Simulate post-optimistic state: the user picked opt-out, state was flipped, then the ACP call failed
-    // The pre-toggle value was opt-in (true), so `rollback_to_opted_in = true`
+    // Post-optimistic state: the user picked opt-out from opt-in, then the ACP call failed
     app.coding_data_retention_opt_out = true;
+    app.coding_data_pending_write = Some(PendingCodingDataWrite {
+        opted_in: false,
+        rollback_to_opted_in: true,
+    });
     let id = AgentId(0);
     let seq = app.coding_data_write_seq;
     let effects = dispatch(
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: id,
             error: "server error".into(),
-            rollback_to_opted_in: true,
             seq,
         }),
         &mut app,
@@ -441,15 +433,18 @@ fn coding_data_sharing_failed_rolls_back_and_toasts_error() {
 #[test]
 fn coding_data_sharing_failed_rolls_back_to_opt_out() {
     let mut app = test_app_with_agent();
-    // Post-optimistic: opted-in (the user picked opt-in, the server failed, pre-toggle was opt-out)
+    // Post-optimistic: opted-in (the user picked opt-in from opt-out, the server failed)
     app.coding_data_retention_opt_out = false;
+    app.coding_data_pending_write = Some(PendingCodingDataWrite {
+        opted_in: true,
+        rollback_to_opted_in: false,
+    });
     let id = AgentId(0);
     let seq = app.coding_data_write_seq;
     let effects = dispatch(
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: id,
             error: "network timeout".into(),
-            rollback_to_opted_in: false,
             seq,
         }),
         &mut app,
@@ -517,7 +512,6 @@ fn coding_data_sharing_failed_refreshes_open_modal_snapshot() {
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: AgentId(0),
             error: "x".into(),
-            rollback_to_opted_in: true,
             seq,
         }),
         &mut app,
@@ -583,7 +577,6 @@ fn coding_data_sharing_failed_scrubs_long_error_messages() {
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: id,
             error: huge_error.clone(),
-            rollback_to_opted_in: false,
             seq,
         }),
         &mut app,
@@ -614,7 +607,6 @@ fn coding_data_sharing_failed_scrubs_control_chars_in_error() {
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: id,
             error: multiline.clone(),
-            rollback_to_opted_in: false,
             seq,
         }),
         &mut app,
@@ -644,7 +636,6 @@ fn coding_data_sharing_failed_preserves_short_clean_error_message() {
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: id,
             error: short_clean.clone(),
-            rollback_to_opted_in: false,
             seq,
         }),
         &mut app,
@@ -724,7 +715,6 @@ fn set_coding_data_sharing_no_agents_still_emits_effect() {
             !app.coding_data_retention_opt_out,
             "opt-in must not apply under privacy lock (state unchanged)"
         );
-        assert!(!app.privacy_banner_opt_in_inflight);
         assert!(app.privacy_banner_acked.is_none());
         return;
     }
@@ -744,7 +734,7 @@ fn set_coding_data_sharing_no_agents_still_emits_effect() {
         !app.coding_data_retention_opt_out,
         "optimistic opt-in must apply without agents",
     );
-    assert!(app.privacy_banner_opt_in_inflight);
+    assert_eq!(app.coding_data_pending_opted_in(), Some(true));
     assert!(app.privacy_banner_acked.is_none());
 }
 
@@ -756,7 +746,7 @@ fn privacy_banner_ready_app() -> AppView {
     app.privacy_notice_rollout = true;
     app.privacy_banner_acked = None;
     app.privacy_banner_reshow_days = None;
-    app.privacy_banner_opt_in_inflight = false;
+    app.coding_data_pending_write = None;
     app.is_zdr = false;
     app.team_name = None;
     app.coding_data_retention_opt_out = true;
@@ -806,7 +796,7 @@ fn privacy_banner_opt_in_success_acks() {
     if xai_grok_version::coding_data_retention_locked_opt_out() {
         let effects = dispatch(Action::PrivacyBannerOptIn, &mut app);
         assert!(effects.is_empty(), "OptIn must emit nothing: {effects:?}");
-        assert!(!app.privacy_banner_opt_in_inflight);
+
         assert!(app.coding_data_retention_opt_out);
         assert!(app.privacy_banner_acked.is_none());
         return;
@@ -817,7 +807,7 @@ fn privacy_banner_opt_in_success_acks() {
         effects.first(),
         Some(Effect::SetCodingDataSharing { opted_in: true, .. })
     ));
-    assert!(app.privacy_banner_opt_in_inflight);
+    assert_eq!(app.coding_data_pending_opted_in(), Some(true));
     assert!(!app.coding_data_retention_opt_out);
     assert!(app.privacy_banner_acked.is_none());
 
@@ -830,7 +820,7 @@ fn privacy_banner_opt_in_success_acks() {
         }),
         &mut app,
     );
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert!(app.coding_data_pending_write.is_none());
     assert!(app.privacy_banner_acked.is_some());
     assert!(!app.privacy_banner_should_show());
     assert!(
@@ -849,27 +839,26 @@ fn privacy_banner_opt_in_failure_no_ack_sets_welcome_toast() {
     if xai_grok_version::coding_data_retention_locked_opt_out() {
         let effects = dispatch(Action::PrivacyBannerOptIn, &mut app);
         assert!(effects.is_empty(), "OptIn must emit nothing: {effects:?}");
-        assert!(!app.privacy_banner_opt_in_inflight);
+
         assert!(app.coding_data_retention_opt_out);
         assert!(app.privacy_banner_acked.is_none());
         return;
     }
     let effects = dispatch(Action::PrivacyBannerOptIn, &mut app);
     assert_eq!(effects.len(), 1);
-    assert!(app.privacy_banner_opt_in_inflight);
+    assert_eq!(app.coding_data_pending_opted_in(), Some(true));
 
     let seq = app.coding_data_write_seq;
     let fail_effects = dispatch(
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: AgentId(0),
             error: "server error".into(),
-            rollback_to_opted_in: false,
             seq,
         }),
         &mut app,
     );
     assert!(fail_effects.is_empty());
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert!(app.coding_data_pending_write.is_none());
     assert!(app.privacy_banner_acked.is_none());
     assert!(
         app.coding_data_retention_opt_out,
@@ -904,7 +893,7 @@ fn privacy_banner_opt_out_noop_while_opt_in_inflight() {
         return;
     }
     let _ = dispatch(Action::PrivacyBannerOptIn, &mut app);
-    assert!(app.privacy_banner_opt_in_inflight);
+    assert_eq!(app.coding_data_pending_opted_in(), Some(true));
 
     let effects = dispatch(Action::PrivacyBannerOptOut, &mut app);
     assert!(
@@ -918,7 +907,6 @@ fn privacy_banner_opt_out_noop_while_opt_in_inflight() {
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: AgentId(0),
             error: "server error".into(),
-            rollback_to_opted_in: false,
             seq,
         }),
         &mut app,
@@ -929,10 +917,108 @@ fn privacy_banner_opt_out_noop_while_opt_in_inflight() {
     );
 }
 
-/// Already-out `[Opt out]` acks now and must not force an ACP write.
+/// Coalescing and the idle opt-in shortcut key on the pending write's choice, not the mirror a subscription check can
+/// rewrite mid-flight. Otherwise a pending opt-in lands as the answer to Opt out, or Opt in acks with nothing sent.
 #[test]
-fn privacy_banner_opt_out_acks_now_without_write() {
-    use crate::views::modal::ActiveModal;
+fn stale_mirror_does_not_coalesce_an_opposite_choice() {
+    for pending in [true, false] {
+        let mut app = privacy_banner_ready_app();
+        app.coding_data_retention_opt_out = pending;
+        let _ = dispatch(Action::SetCodingDataSharing { opted_in: pending }, &mut app);
+
+        // Background refresh still carries the pre-write value
+        let meta = serde_json::to_value(xai_grok_login::AuthMeta {
+            coding_data_retention_opt_out: pending,
+            ..Default::default()
+        })
+        .unwrap();
+        let _ = dispatch(
+            Action::TaskComplete(TaskResult::CheckSubscriptionComplete {
+                verify: None,
+                meta: Some(meta),
+            }),
+            &mut app,
+        );
+        assert_eq!(
+            app.coding_data_retention_opt_out, pending,
+            "mirror rewritten"
+        );
+        assert_eq!(
+            app.coding_data_pending_opted_in(),
+            Some(pending),
+            "pending untouched"
+        );
+
+        let effects = dispatch(
+            Action::SetCodingDataSharing { opted_in: !pending },
+            &mut app,
+        );
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::SetCodingDataSharing { opted_in, seq: 2, .. }] if *opted_in != pending
+            ),
+            "pending={pending}: the opposite choice must write: {effects:?}"
+        );
+        assert!(
+            app.privacy_banner_acked.is_none(),
+            "pending={pending}: no local ack"
+        );
+    }
+}
+
+/// Already-out opt-out, from the banner or Settings, still writes: the local "out" may be the unconfirmed fail-safe default.
+#[test]
+fn already_out_opt_out_writes_and_acks_on_success() {
+    for from_banner in [true, false] {
+        let action = if from_banner {
+            Action::PrivacyBannerOptOut
+        } else {
+            Action::SetCodingDataSharing { opted_in: false }
+        };
+        let mut app = privacy_banner_ready_app();
+
+        let effects = dispatch(action, &mut app);
+        let action = if from_banner { "[Opt out]" } else { "Settings" };
+
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::SetCodingDataSharing {
+                    opted_in: false,
+                    seq: 1,
+                    ..
+                }]
+            ),
+            "{action}: already-out must still write, and only write: {effects:?}"
+        );
+        assert!(
+            app.privacy_banner_acked.is_none(),
+            "{action}: no ack before the reply"
+        );
+
+        let ack_effects = dispatch(
+            Action::TaskComplete(TaskResult::CodingDataSharingUpdated {
+                agent_id: AgentId(0),
+                opted_in: false,
+                seq: 1,
+            }),
+            &mut app,
+        );
+        assert!(
+            ack_effects
+                .iter()
+                .any(|e| matches!(e, Effect::PersistPrivacyBannerAcked { .. })),
+            "{action}: success must persist the ack: {ack_effects:?}"
+        );
+        assert!(!app.privacy_banner_should_show());
+    }
+}
+
+/// A Settings opt-out must not raise the banner mid-write: the optimistic "out" is unconfirmed, and a banner
+/// there would re-ask the choice the user just made, with buttons that no-op until the reply lands.
+#[test]
+fn settings_opt_out_does_not_reveal_banner_while_inflight() {
     let mut app = privacy_banner_ready_app();
     // Privacy build: no retention opt-in banner; opt-out is already the locked state.
     if xai_grok_version::coding_data_retention_locked_opt_out() {
@@ -940,52 +1026,133 @@ fn privacy_banner_opt_out_acks_now_without_write() {
         assert!(effects.is_empty(), "{effects:?}");
         return;
     }
+    app.coding_data_retention_opt_out = false;
 
-    let effects = dispatch(Action::PrivacyBannerOptOut, &mut app);
-
-    assert!(
-        app.privacy_banner_acked.is_some(),
-        "the ack lands on click, not on an ACP reply"
-    );
+    let _ = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
     assert!(
         !app.privacy_banner_should_show(),
-        "the banner is gone the moment it is dismissed"
+        "the pending write already carries the user's answer"
     );
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::PersistPrivacyBannerAcked { .. })),
-        "ack must persist: {effects:?}"
+
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::CodingDataSharingUpdated {
+            agent_id: AgentId(0),
+            opted_in: false,
+            seq: app.coding_data_write_seq,
+        }),
+        &mut app,
     );
-    assert!(
-        !effects
-            .iter()
-            .any(|e| matches!(e, Effect::SetCodingDataSharing { .. })),
-        "already-out must not force an ACP write: {effects:?}"
+    assert!(app.privacy_banner_acked.is_some(), "the reply acks");
+    assert!(!app.privacy_banner_should_show());
+}
+
+/// The always-write opt-out starts with the unconfirmed fail-safe value as its rollback.
+/// An auth-meta refresh mid-flight replaces it: reverting to the snapshot on failure would show an opt-out the server never made.
+#[test]
+fn opt_out_failure_keeps_a_mid_flight_auth_meta_value() {
+    let mut app = privacy_banner_ready_app();
+    let _ = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
+    let seq = app.coding_data_write_seq;
+
+    app.apply_auth_meta(&xai_grok_login::AuthMeta {
+        coding_data_retention_opt_out: false,
+        ..Default::default()
+    });
+
+    let fail = dispatch(
+        Action::TaskComplete(TaskResult::CodingDataSharingFailed {
+            agent_id: AgentId(0),
+            error: "server error".into(),
+            seq,
+        }),
+        &mut app,
     );
-    assert_eq!(app.coding_data_write_seq, 0, "already-out is not a write");
+
+    assert!(fail.is_empty());
     assert!(
-        !app.privacy_banner_opt_in_inflight,
-        "opt-out must not arm the opt-in inflight guard"
-    );
-    assert!(
-        app.coding_data_retention_opt_out,
-        "declining leaves the user opted out"
-    );
-    assert!(
-        app.agents
-            .values()
-            .all(|a| !matches!(a.active_modal, Some(ActiveModal::Settings { .. }))),
-        "[Opt out] answers the question; it must not detour into settings"
+        !app.coding_data_retention_opt_out,
+        "the refresh is newer than the click-time snapshot"
     );
 }
 
-/// A superseded reply must not touch state.
-/// Settings opt-out is write 1, the user opts in before it lands, and only then does the stale decline answer.
-/// That claims data isn't retained when it is. Its failure must not toast either.
+/// A superseded write's success becomes the rollback of the write that replaced it.
+/// Otherwise: pending opt-in, refresh restores the old "out", user opts out, opt-in succeeds (dropped as stale), opt-out
+/// fails and reverts to "out" while the server retains.
 #[test]
-fn superseded_coding_data_reply_cannot_clobber_a_newer_write() {
-    for stale_failed in [true, false] {
+fn superseded_opt_in_success_is_kept_when_later_opt_out_fails() {
+    let mut app = privacy_banner_ready_app();
+    let _ = dispatch(Action::SetCodingDataSharing { opted_in: true }, &mut app);
+    app.apply_auth_meta(&xai_grok_login::AuthMeta {
+        coding_data_retention_opt_out: true,
+        ..Default::default()
+    });
+    let _ = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
+    assert_eq!(app.coding_data_write_seq, 2);
+
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::CodingDataSharingUpdated {
+            agent_id: AgentId(0),
+            opted_in: true,
+            seq: 1,
+        }),
+        &mut app,
+    );
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::CodingDataSharingFailed {
+            agent_id: AgentId(0),
+            error: "server error".into(),
+            seq: 2,
+        }),
+        &mut app,
+    );
+
+    assert!(
+        !app.coding_data_retention_opt_out,
+        "the failed opt-out must fall back to the opt-in the server confirmed"
+    );
+    assert!(app.coding_data_pending_write.is_none());
+}
+
+/// A refused opt-out must not dismiss the banner: the server is still retaining, and the user has to see that.
+#[test]
+fn privacy_banner_opt_out_failure_keeps_banner_and_toasts() {
+    let mut app = privacy_banner_ready_app();
+    let effects = dispatch(Action::PrivacyBannerOptOut, &mut app);
+    assert_eq!(effects.len(), 1, "opt-out must write: {effects:?}");
+
+    let fail_effects = dispatch(
+        Action::TaskComplete(TaskResult::CodingDataSharingFailed {
+            agent_id: AgentId(0),
+            error: "team policy forbids opt-out".into(),
+            seq: app.coding_data_write_seq,
+        }),
+        &mut app,
+    );
+    assert!(fail_effects.is_empty());
+    assert!(app.privacy_banner_acked.is_none());
+    assert!(
+        app.privacy_banner_should_show(),
+        "a refused [Opt out] must leave the banner up"
+    );
+    let toast = app
+        .welcome_toast
+        .as_ref()
+        .map(|(m, _)| m.as_str())
+        .unwrap_or("");
+    assert!(
+        toast.contains("team policy forbids opt-out"),
+        "the refusal must reach the user: {toast}"
+    );
+}
+
+/// Settings opt-out is write 1, the user opts in before it lands, and write 2 answers first.
+/// Covered: write 2 succeeds and the stale write 1 reply (either kind) must not set the mirror or toast; both writes fail and
+/// write 2 must fall back to the opt-in it inherited from write 1, not to write 1's optimistic out.
+/// Not covered: write 2 fails, then write 1 succeeds — the pending write is already gone, so that success is dropped (deferred).
+#[test]
+fn stale_reply_after_newer_success_or_double_failure_keeps_opt_in() {
+    let welcome_toast = |app: &AppView| app.welcome_toast.as_ref().map(|(m, _)| m.clone());
+    for (newer_ok, stale_failed) in [(true, true), (true, false), (false, true)] {
         let mut app = privacy_banner_ready_app();
         // Privacy build: opt-in writes are refused, so no seq generation.
         if xai_grok_version::coding_data_retention_locked_opt_out() {
@@ -1010,25 +1177,35 @@ fn superseded_coding_data_reply_cannot_clobber_a_newer_write() {
         );
         assert_eq!(app.coding_data_write_seq, 1);
 
-        // Write 2: the user opts in from settings, and it confirms.
+        // Write 2: the user opts in from settings, and it answers first.
         let _ = dispatch(Action::SetCodingDataSharing { opted_in: true }, &mut app);
         assert_eq!(app.coding_data_write_seq, 2);
-        let _ = dispatch(
-            Action::TaskComplete(TaskResult::CodingDataSharingUpdated {
+        let newer_reply = if newer_ok {
+            TaskResult::CodingDataSharingUpdated {
                 agent_id: AgentId(0),
                 opted_in: true,
                 seq: 2,
-            }),
-            &mut app,
+            }
+        } else {
+            TaskResult::CodingDataSharingFailed {
+                agent_id: AgentId(0),
+                error: "server error".into(),
+                seq: 2,
+            }
+        };
+        let _ = dispatch(Action::TaskComplete(newer_reply), &mut app);
+        assert!(
+            !app.coding_data_retention_opt_out,
+            "opted in either way (newer_ok={newer_ok})"
         );
-        assert!(!app.coding_data_retention_opt_out, "opted in");
+        assert_eq!(app.privacy_banner_acked.is_some(), newer_ok);
+        let toast_before = welcome_toast(&app);
 
         // Write 1 finally answers, either way it can.
         let stale_reply = if stale_failed {
             TaskResult::CodingDataSharingFailed {
                 agent_id: AgentId(0),
                 error: "network timeout".into(),
-                rollback_to_opted_in: true,
                 seq: 1,
             }
         } else {
@@ -1043,14 +1220,14 @@ fn superseded_coding_data_reply_cannot_clobber_a_newer_write() {
         assert!(effects.is_empty(), "stale reply must emit nothing");
         assert!(
             !app.coding_data_retention_opt_out,
-            "stale reply must not undo the newer opt-in (failed={stale_failed})"
+            "stale reply must not undo the opt-in (newer_ok={newer_ok}, failed={stale_failed})"
         );
-        assert!(
-            app.agents
-                .get(&AgentId(0))
-                .is_some_and(|a| a.toast.is_none()),
-            "stale reply must not toast — nothing the user is looking at failed"
+        assert_eq!(
+            welcome_toast(&app),
+            toast_before,
+            "stale reply must not toast"
         );
+        assert!(app.coding_data_pending_write.is_none());
     }
 }
 
@@ -1066,75 +1243,27 @@ fn privacy_banner_opt_out_is_idempotent() {
     );
 }
 
-/// Settings Opt out while already out (banner eligible): acks, no ACP write.
+/// A duplicate Settings opt-out rides the pending write: a second write would supersede the first and drop its reply for nothing new.
 #[test]
-fn settings_opt_out_while_already_out_acks_without_write() {
-    let mut app = privacy_banner_ready_app();
-    // Privacy build: no retention opt-in banner; opt-out is already the locked state.
+fn duplicate_settings_opt_out_rides_the_pending_write() {
     if xai_grok_version::coding_data_retention_locked_opt_out() {
+        let mut app = privacy_banner_ready_app();
         let effects = dispatch(Action::PrivacyBannerOptOut, &mut app);
         assert!(effects.is_empty(), "{effects:?}");
         return;
     }
-    assert!(app.privacy_banner_should_show());
-    assert!(app.coding_data_retention_opt_out);
-
-    let effects = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
-
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::PersistPrivacyBannerAcked { .. })),
-        "already-out Settings Opt out must ack: {effects:?}"
-    );
-    assert!(
-        !effects
-            .iter()
-            .any(|e| matches!(e, Effect::SetCodingDataSharing { .. })),
-        "already-out must not write ACP: {effects:?}"
-    );
-    assert!(app.privacy_banner_acked.is_some());
-    assert!(!app.privacy_banner_should_show());
-    assert!(app.coding_data_retention_opt_out);
-    assert!(!app.privacy_banner_opt_in_inflight);
-    assert_eq!(app.coding_data_write_seq, 0);
-}
-
-/// Settings Opt out while currently in: acks now and writes ACP.
-#[test]
-fn settings_opt_out_from_in_acks_now_and_writes() {
     let mut app = privacy_banner_ready_app();
     app.coding_data_retention_opt_out = false;
-    assert!(!app.privacy_banner_should_show());
+    let first = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
+    assert_eq!(first.len(), 1, "changed opt-out must write: {first:?}");
 
-    let effects = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
-
+    let again = dispatch(Action::SetCodingDataSharing { opted_in: false }, &mut app);
     assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::PersistPrivacyBannerAcked { .. })),
-        "changed opt-out must ack now: {effects:?}"
+        again.is_empty(),
+        "duplicate must not write or ack: {again:?}"
     );
-    match effects
-        .iter()
-        .find(|e| matches!(e, Effect::SetCodingDataSharing { .. }))
-    {
-        Some(Effect::SetCodingDataSharing {
-            opted_in,
-            rollback_to_opted_in,
-            seq,
-            ..
-        }) => {
-            assert!(!*opted_in);
-            assert!(*rollback_to_opted_in);
-            assert_eq!(*seq, app.coding_data_write_seq);
-        }
-        other => panic!("expected SetCodingDataSharing, got {effects:?} ({other:?})"),
-    }
-    assert!(app.privacy_banner_acked.is_some());
-    assert!(app.coding_data_retention_opt_out);
-    assert!(!app.privacy_banner_should_show());
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert_eq!(app.coding_data_write_seq, 1);
+    assert!(app.privacy_banner_acked.is_none());
 }
 
 /// Re-committing Opt in while the first write is inflight must not ack.
@@ -1165,7 +1294,7 @@ fn settings_opt_in_recommitted_while_inflight_does_not_ack() {
             .any(|e| matches!(e, Effect::PersistPrivacyBannerAcked { .. })),
         "first commit must not ack: {first:?}"
     );
-    assert!(app.privacy_banner_opt_in_inflight);
+    assert_eq!(app.coding_data_pending_opted_in(), Some(true));
     assert!(app.privacy_banner_acked.is_none());
     let seq = app.coding_data_write_seq;
     assert_eq!(seq, 1);
@@ -1183,7 +1312,7 @@ fn settings_opt_in_recommitted_while_inflight_does_not_ack() {
             .any(|e| matches!(e, Effect::SetCodingDataSharing { .. })),
         "re-commit while inflight must not write again: {again:?}"
     );
-    assert!(app.privacy_banner_opt_in_inflight);
+    assert_eq!(app.coding_data_pending_opted_in(), Some(true));
     assert_eq!(app.coding_data_write_seq, seq);
     assert!(app.privacy_banner_acked.is_none());
 
@@ -1191,13 +1320,12 @@ fn settings_opt_in_recommitted_while_inflight_does_not_ack() {
         Action::TaskComplete(TaskResult::CodingDataSharingFailed {
             agent_id: AgentId(0),
             error: "server error".into(),
-            rollback_to_opted_in: false,
             seq,
         }),
         &mut app,
     );
     assert!(fail_effects.is_empty());
-    assert!(!app.privacy_banner_opt_in_inflight);
+    assert!(app.coding_data_pending_write.is_none());
     assert!(app.privacy_banner_acked.is_none());
     assert!(app.coding_data_retention_opt_out);
     assert!(app.privacy_banner_should_show());
@@ -1790,8 +1918,6 @@ fn show_usage_with_redirect_url_fetches_session_only() {
     assert_eq!(agent_scrollback_len(&app), before);
 }
 
-// ── Minimal update-notice tests ──────────────────────────────────────
-
 #[test]
 fn minimal_update_notice_commits_a_system_block() {
     let mut app = test_app_with_agent();
@@ -1810,8 +1936,6 @@ fn minimal_update_notice_no_active_agent_is_noop() {
     commit_minimal_update_notice(&mut app, "9.9.9");
 }
 
-// ── Tutorial dispatch tests ──────────────────────────────────────────
-
 /// `/tutorial` (and the palette entry) open the overlay; dispatching again while open toggles it closed.
 /// No side effects either way.
 #[test]
@@ -1825,8 +1949,6 @@ fn open_tutorial_toggles_overlay_without_effects() {
     assert!(app.tutorial.is_none(), "toggle closes");
     assert!(effects.is_empty(), "close emits nothing, got: {effects:?}");
 }
-
-// ── Usage modal (full TUI) dispatch tests ────────────────────────────
 
 fn usage_modal_state(app: &AppView) -> &crate::views::usage_modal::UsageInfoModalState {
     match app
