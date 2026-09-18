@@ -718,6 +718,21 @@ fn localized_command_display_name(
             "turn.command.forking_session",
             command.display_name(),
         ),
+        AgentCommand::SwitchModelCompact => turn_static_text(
+            locale,
+            "turn.command.switching_model",
+            command.display_name(),
+        ),
+        AgentCommand::MemoryFlush => turn_static_text(
+            locale,
+            "turn.command.flushing_memory",
+            command.display_name(),
+        ),
+        AgentCommand::MemoryDream => turn_static_text(
+            locale,
+            "turn.command.consolidating_memory",
+            command.display_name(),
+        ),
     }
 }
 
@@ -1073,6 +1088,38 @@ mod tests {
         let (_, label, _) =
             compute_activity(&theme, &AgentState::TurnRunning, &None, true, false, None);
         assert_eq!(label, "Running…");
+    }
+
+    #[test]
+    fn family_switch_compact_label_matches_loader() {
+        let theme = Theme::current();
+        let state = AgentState::CommandRunning {
+            command: AgentCommand::SwitchModelCompact,
+            started_at: Instant::now(),
+        };
+        let (_, label, _) = compute_activity(&theme, &state, &None, false, false);
+        assert_eq!(label, "Switching model…");
+        assert!(should_show(&state, false, None, Watchers::default(), false));
+    }
+
+    #[test]
+    fn family_switch_compact_renders_elapsed_timer() {
+        let state = AgentState::CommandRunning {
+            command: AgentCommand::SwitchModelCompact,
+            started_at: Instant::now(),
+        };
+        let mut args = idle_args(Watchers::default());
+        args.state = &state;
+        args.turn_elapsed = Some(Duration::from_secs(12));
+        let text = render_row_text(args, 80);
+        assert!(
+            text.contains("Switching model…"),
+            "status line must keep the family-switch copy, got: {text:?}"
+        );
+        assert!(
+            text.contains("12s"),
+            "family-switch compact must show the elapsed timer like /compact, got: {text:?}"
+        );
     }
 
     #[test]
