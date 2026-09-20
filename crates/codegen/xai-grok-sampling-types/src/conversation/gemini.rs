@@ -3,7 +3,7 @@ use super::*;
 use crate::gemini::{
     GeminiContent, GeminiFunctionCall, GeminiFunctionDeclaration, GeminiFunctionResponse,
     GeminiInlineData, GeminiPart, GeminiTool, GenerateContentRequest, GenerationConfig,
-    ThinkingConfig, wire_thought_signature,
+    ThinkingConfig, json_schema_to_gemini_schema, wire_thought_signature,
 };
 
 /// Map a conversation onto Gemini `generateContent` JSON (python-genai REST).
@@ -158,7 +158,7 @@ pub fn build_gemini_request(req: &ConversationRequest) -> GenerateContentRequest
                         parameters: if t.parameters.is_null() {
                             None
                         } else {
-                            Some(t.parameters.clone())
+                            Some(json_schema_to_gemini_schema(&t.parameters))
                         },
                     })
                     .collect(),
@@ -186,7 +186,7 @@ pub fn build_gemini_request(req: &ConversationRequest) -> GenerateContentRequest
             .json_schema
             .as_ref()
             .map(|_| "application/json".to_string()),
-        response_schema: req.json_schema.clone(),
+        response_schema: req.json_schema.as_ref().map(json_schema_to_gemini_schema),
     });
 
     GenerateContentRequest {
@@ -328,7 +328,76 @@ mod tests {
                 .map(|r| r.name.as_str()),
             Some("read_file")
         );
+        let params = g
+            .tools
+            .as_ref()
+            .and_then(|tools| tools.first())
+            .and_then(|tool| tool.function_declarations.as_ref())
+            .and_then(|decls| decls.first())
+            .and_then(|decl| decl.parameters.as_ref());
+        assert_eq!(
+            params.and_then(|p| p.get("type")).and_then(|t| t.as_str()),
+            Some("OBJECT")
+        );
         assert!(g.tools.is_some());
+    }
+
+    #[test]
+    fn function_parameters_are_gemini_schema_not_json_schema() {
+        let req = ConversationRequest {
+            items: vec![user("hi")],
+            tools: vec![ToolSpec {
+                name: "todo_write".into(),
+                description: Some("todos".into()),
+                parameters: serde_json::json!({
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["todos"],
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "content": { "type": ["string", "null"] },
+                                    "status": {
+                                        "type": ["string", "null"],
+                                        "enum": ["pending", null]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }),
+            }],
+            ..Default::default()
+        };
+        let g = build_gemini_request(&req);
+        let wire = serde_json::to_value(&g).expect("serialize");
+        let wire_text = wire.to_string();
+        assert!(
+            !wire_text.contains("$schema"),
+            "Gemini proto Schema rejects $schema: {wire_text}"
+        );
+        assert!(
+            !wire_text.contains("additionalProperties"),
+            "Gemini proto Schema rejects additionalProperties: {wire_text}"
+        );
+        assert!(
+            !wire_text.contains(r#""type":["string""#),
+            "Gemini proto Schema type must be an uppercase enum, not a JSON Schema union: {wire_text}"
+        );
+        let params = wire
+            .pointer("/tools/0/functionDeclarations/0/parameters")
+            .expect("parameters");
+        assert_eq!(params.get("type").and_then(|t| t.as_str()), Some("OBJECT"));
+        let content_type = params.pointer("/properties/todos/items/properties/content/type");
+        assert_eq!(content_type.and_then(|t| t.as_str()), Some("STRING"));
+        assert_eq!(
+            params.pointer("/properties/todos/items/properties/content/nullable"),
+            Some(&serde_json::json!(true))
+        );
     }
 
     #[test]
