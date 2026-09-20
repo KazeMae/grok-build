@@ -5,6 +5,7 @@
 //! `POST {root}/v1beta/models/{model}:streamGenerateContent?alt=sse`.
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 
 /// Stored on [`crate::rs::ReasoningItem::encrypted_content`] so other backends
 /// can drop Gemini thought signatures without guessing at opaque blobs.
@@ -223,5 +224,449 @@ impl GenerateContentResponse {
                     })
                 })
         })
+    }
+}
+
+/// Convert JSON Schema into Gemini `Schema` proto JSON.
+///
+/// `FunctionDeclaration.parameters` is an OpenAPI Schema proto, not JSON Schema.
+/// Keywords such as `$schema`, `$ref`, and `additionalProperties`, plus `type`
+/// as a lowercase string or union array, are rejected with HTTP 400.
+pub fn json_schema_to_gemini_schema(schema: &Value) -> Value {
+    if schema.is_null() {
+        return json!({"type": "OBJECT"});
+    }
+    let defs = schema
+        .as_object()
+        .and_then(|o| o.get("$defs").or_else(|| o.get("definitions")))
+        .and_then(Value::as_object);
+    let converted = convert_schema(schema, defs, &mut Vec::new());
+    match converted {
+        Value::Object(mut obj)
+            if obj.contains_key("properties")
+                && !obj.contains_key("type")
+                && !obj.contains_key("anyOf") =>
+        {
+            obj.insert("type".into(), json!("OBJECT"));
+            Value::Object(obj)
+        }
+        Value::Object(obj) if obj.is_empty() => json!({"type": "OBJECT"}),
+        other => other,
+    }
+}
+
+fn convert_schema(
+    schema: &Value,
+    defs: Option<&Map<String, Value>>,
+    ref_stack: &mut Vec<String>,
+) -> Value {
+    let Value::Object(map) = schema else {
+        return schema.clone();
+    };
+
+    if let Some(all_of) = map.get("allOf").and_then(Value::as_array) {
+        return merge_all_of(all_of, map, defs, ref_stack);
+    }
+
+    if let Some(r) = map.get("$ref").and_then(Value::as_str) {
+        return overlay_resolved_ref(r, map, defs, ref_stack);
+    }
+
+    let mut out = Map::new();
+    apply_type_field(map, &mut out);
+    apply_enum_field(map, &mut out);
+    apply_const_field(map, &mut out);
+
+    if let Some(props) = map.get("properties").and_then(Value::as_object) {
+        let mut converted = Map::new();
+        for (k, v) in props {
+            converted.insert(k.clone(), convert_schema(v, defs, ref_stack));
+        }
+        out.insert("properties".into(), Value::Object(converted));
+    }
+
+    if let Some(items) = map.get("items") {
+        let converted = if let Some(arr) = items.as_array() {
+            arr.first()
+                .map(|first| convert_schema(first, defs, ref_stack))
+                .unwrap_or_else(|| json!({"type": "STRING"}))
+        } else {
+            convert_schema(items, defs, ref_stack)
+        };
+        out.insert("items".into(), converted);
+    }
+
+    if let Some(any_of) = map.get("anyOf").and_then(Value::as_array) {
+        flatten_any_of(
+            any_of
+                .iter()
+                .map(|v| convert_schema(v, defs, ref_stack))
+                .collect(),
+            &mut out,
+        );
+    } else if let Some(one_of) = map.get("oneOf").and_then(Value::as_array) {
+        flatten_any_of(
+            one_of
+                .iter()
+                .map(|v| convert_schema(v, defs, ref_stack))
+                .collect(),
+            &mut out,
+        );
+    }
+
+    copy_passthrough_fields(map, &mut out);
+    Value::Object(out)
+}
+
+fn merge_all_of(
+    all_of: &[Value],
+    map: &Map<String, Value>,
+    defs: Option<&Map<String, Value>>,
+    ref_stack: &mut Vec<String>,
+) -> Value {
+    let mut merged = Map::new();
+    for part in all_of {
+        merge_schema_objects(&mut merged, convert_schema(part, defs, ref_stack));
+    }
+    let mut siblings = map.clone();
+    siblings.remove("allOf");
+    if !siblings.is_empty() {
+        merge_schema_objects(
+            &mut merged,
+            convert_schema(&Value::Object(siblings), defs, ref_stack),
+        );
+    }
+    Value::Object(merged)
+}
+
+fn overlay_resolved_ref(
+    r: &str,
+    map: &Map<String, Value>,
+    defs: Option<&Map<String, Value>>,
+    ref_stack: &mut Vec<String>,
+) -> Value {
+    let resolved = resolve_ref(r, defs, ref_stack).unwrap_or_else(|| json!({}));
+    let mut overlay = map.clone();
+    overlay.remove("$ref");
+    if overlay.is_empty() {
+        return resolved;
+    }
+    let mut merged = match resolved {
+        Value::Object(obj) => obj,
+        other => {
+            let mut obj = Map::new();
+            obj.insert("const".into(), other);
+            obj
+        }
+    };
+    merge_schema_objects(
+        &mut merged,
+        convert_schema(&Value::Object(overlay), defs, ref_stack),
+    );
+    Value::Object(merged)
+}
+
+fn resolve_ref(
+    r: &str,
+    defs: Option<&Map<String, Value>>,
+    ref_stack: &mut Vec<String>,
+) -> Option<Value> {
+    let name = r
+        .strip_prefix("#/$defs/")
+        .or_else(|| r.strip_prefix("#/definitions/"))?;
+    if ref_stack.iter().any(|s| s == name) {
+        return None;
+    }
+    let def = defs?.get(name)?;
+    ref_stack.push(name.to_string());
+    let converted = convert_schema(def, defs, ref_stack);
+    ref_stack.pop();
+    Some(converted)
+}
+
+fn apply_type_field(map: &Map<String, Value>, out: &mut Map<String, Value>) {
+    let Some(t) = map.get("type") else {
+        return;
+    };
+    match t {
+        Value::String(s) => apply_one_type(s, out),
+        Value::Array(arr) => {
+            let mut names = Vec::new();
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    if s.eq_ignore_ascii_case("null") {
+                        out.insert("nullable".into(), Value::Bool(true));
+                    } else {
+                        names.push(s);
+                    }
+                }
+            }
+            match names.as_slice() {
+                [] => {}
+                [one] => apply_one_type(one, out),
+                _ => {
+                    let schemas: Vec<Value> = names
+                        .iter()
+                        .filter_map(|n| gemini_type_name(n).map(|ty| json!({"type": ty})))
+                        .collect();
+                    flatten_any_of(schemas, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_one_type(raw: &str, out: &mut Map<String, Value>) {
+    if raw.eq_ignore_ascii_case("null") {
+        out.insert("nullable".into(), Value::Bool(true));
+        return;
+    }
+    if let Some(ty) = gemini_type_name(raw) {
+        out.insert("type".into(), Value::String(ty.to_string()));
+    }
+}
+
+fn gemini_type_name(raw: &str) -> Option<&'static str> {
+    Some(match raw.to_ascii_uppercase().as_str() {
+        "STRING" => "STRING",
+        "NUMBER" => "NUMBER",
+        "INTEGER" => "INTEGER",
+        "BOOLEAN" => "BOOLEAN",
+        "ARRAY" => "ARRAY",
+        "OBJECT" => "OBJECT",
+        _ => return None,
+    })
+}
+
+fn apply_enum_field(map: &Map<String, Value>, out: &mut Map<String, Value>) {
+    let Some(arr) = map.get("enum").and_then(Value::as_array) else {
+        return;
+    };
+    let mut vals = Vec::new();
+    for item in arr {
+        if item.is_null() {
+            out.insert("nullable".into(), Value::Bool(true));
+            continue;
+        }
+        if let Some(s) = item.as_str() {
+            vals.push(Value::String(s.to_string()));
+        } else {
+            vals.push(Value::String(item.to_string()));
+        }
+    }
+    if !vals.is_empty() {
+        out.insert("enum".into(), Value::Array(vals));
+    }
+}
+
+fn apply_const_field(map: &Map<String, Value>, out: &mut Map<String, Value>) {
+    let Some(c) = map.get("const") else {
+        return;
+    };
+    if out.contains_key("enum") {
+        return;
+    }
+    if c.is_null() {
+        out.insert("nullable".into(), Value::Bool(true));
+        return;
+    }
+    let s = c
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| c.to_string());
+    out.insert("enum".into(), json!([s]));
+}
+
+fn flatten_any_of(items: Vec<Value>, out: &mut Map<String, Value>) {
+    let mut nullable = out
+        .get("nullable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mut rest = Vec::new();
+    for item in items {
+        if is_null_schema(&item) {
+            nullable = true;
+        } else {
+            rest.push(item);
+        }
+    }
+    if nullable {
+        out.insert("nullable".into(), Value::Bool(true));
+    }
+    match rest.len() {
+        0 => {}
+        1 => {
+            if let Some(Value::Object(single)) = rest.pop() {
+                for (k, v) in single {
+                    out.entry(k).or_insert(v);
+                }
+            }
+        }
+        _ => {
+            out.insert("anyOf".into(), Value::Array(rest));
+        }
+    }
+}
+
+fn is_null_schema(item: &Value) -> bool {
+    let Some(obj) = item.as_object() else {
+        return false;
+    };
+    if obj.get("type").and_then(Value::as_str) == Some("NULL") {
+        return obj
+            .keys()
+            .all(|k| k == "type" || k == "nullable" || k == "description" || k == "title");
+    }
+    obj.get("nullable").and_then(Value::as_bool) == Some(true)
+        && obj.get("type").is_none()
+        && obj
+            .keys()
+            .all(|k| k == "nullable" || k == "description" || k == "title")
+}
+
+fn copy_passthrough_fields(map: &Map<String, Value>, out: &mut Map<String, Value>) {
+    for key in [
+        "description",
+        "title",
+        "format",
+        "pattern",
+        "default",
+        "example",
+        "nullable",
+        "propertyOrdering",
+        "required",
+        "minItems",
+        "maxItems",
+        "minLength",
+        "maxLength",
+        "minProperties",
+        "maxProperties",
+        "minimum",
+        "maximum",
+    ] {
+        if let Some(v) = map.get(key)
+            && !out.contains_key(key)
+        {
+            out.insert(key.to_string(), v.clone());
+        }
+    }
+}
+
+fn merge_schema_objects(into: &mut Map<String, Value>, from: Value) {
+    let Value::Object(from) = from else {
+        return;
+    };
+    for (k, v) in from {
+        match k.as_str() {
+            "properties" => {
+                let dest = into.entry("properties").or_insert_with(|| json!({}));
+                if let (Some(d), Some(s)) = (dest.as_object_mut(), v.as_object()) {
+                    for (pk, pv) in s {
+                        d.insert(pk.clone(), pv.clone());
+                    }
+                }
+            }
+            "required" => {
+                let dest = into.entry("required").or_insert_with(|| json!([]));
+                if let (Some(d), Some(s)) = (dest.as_array_mut(), v.as_array()) {
+                    for item in s {
+                        if !d.contains(item) {
+                            d.push(item.clone());
+                        }
+                    }
+                }
+            }
+            "anyOf" => {
+                let dest = into.entry("anyOf").or_insert_with(|| json!([]));
+                if let (Some(d), Some(s)) = (dest.as_array_mut(), v.as_array()) {
+                    d.extend(s.iter().cloned());
+                }
+            }
+            _ => {
+                into.insert(k, v);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::json_schema_to_gemini_schema;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn strips_json_schema_keywords_and_uppercases_types() {
+        let converted = json_schema_to_gemini_schema(&json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {
+                "path": { "type": "string", "description": "file" },
+                "timeout": { "type": ["integer", "null"], "default": 120000 },
+                "status": {
+                    "type": ["string", "null"],
+                    "enum": ["pending", "done", null]
+                }
+            }
+        }));
+        assert!(converted.get("$schema").is_none());
+        assert!(converted.get("additionalProperties").is_none());
+        assert_eq!(converted.get("type"), Some(&json!("OBJECT")));
+        let props = converted.get("properties").and_then(Value::as_object);
+        let path = props.and_then(|p| p.get("path"));
+        let timeout = props.and_then(|p| p.get("timeout"));
+        let status = props.and_then(|p| p.get("status"));
+        assert_eq!(path.and_then(|p| p.get("type")), Some(&json!("STRING")));
+        assert_eq!(timeout.and_then(|p| p.get("type")), Some(&json!("INTEGER")));
+        assert_eq!(timeout.and_then(|p| p.get("nullable")), Some(&json!(true)));
+        assert_eq!(status.and_then(|p| p.get("type")), Some(&json!("STRING")));
+        assert_eq!(status.and_then(|p| p.get("nullable")), Some(&json!(true)));
+        assert_eq!(
+            status.and_then(|p| p.get("enum")),
+            Some(&json!(["pending", "done"]))
+        );
+        assert!(
+            status
+                .and_then(|p| p.get("enum"))
+                .and_then(Value::as_array)
+                .is_some_and(|a| a.iter().all(|v| !v.is_null()))
+        );
+    }
+
+    #[test]
+    fn resolves_defs_refs_and_merges_all_of() {
+        let converted = json_schema_to_gemini_schema(&json!({
+            "type": "object",
+            "properties": {
+                "item": { "$ref": "#/$defs/Item" }
+            },
+            "$defs": {
+                "Item": {
+                    "allOf": [
+                        { "type": "object", "properties": { "id": { "type": "string" } } }
+                    ],
+                    "description": "an item"
+                }
+            }
+        }));
+        assert!(converted.get("$defs").is_none());
+        let item = converted
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|p| p.get("item"));
+        assert_eq!(item.and_then(|i| i.get("type")), Some(&json!("OBJECT")));
+        assert_eq!(
+            item.and_then(|i| i.get("properties"))
+                .and_then(Value::as_object)
+                .and_then(|p| p.get("id"))
+                .and_then(|id| id.get("type")),
+            Some(&json!("STRING"))
+        );
+        assert_eq!(
+            item.and_then(|i| i.get("description")),
+            Some(&json!("an item"))
+        );
     }
 }
