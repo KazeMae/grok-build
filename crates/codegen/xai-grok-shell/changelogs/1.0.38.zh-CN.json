@@ -1,0 +1,32 @@
+[
+  {
+    "category": "fixes",
+    "description": "**子智能体 overlay** 在子回合结束后不再卡在 “Cancelling”。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**提示建议里的长智能体回复** 不再在半句处被截断。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**对 skill 与 instruction 文件的 read_file** 现在可以按部署配置。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**粘贴的图片** 能在 yank/undo/历史召回后保留，无法发送时会通知用户。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**权限提示中过长的带引号参数** 现在会换行，而不再被裁切。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**修复 tool-calling 错误**：Messages 后端只发送 inline 的 use_tool schema。",
+    "breaking_change": false
+  }
+]

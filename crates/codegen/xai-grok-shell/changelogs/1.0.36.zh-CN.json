@@ -1,0 +1,57 @@
+[
+  {
+    "category": "fixes",
+    "description": "**`grok --sandbox`** 在接受 folder trust 时不再退出。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**仪表盘中钉住的智能体** 在活动变化时不再跳动。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**带三引号字符串的 Swift 代码** 现在能在 pager 中正确高亮。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**config.toml 中大小写混用的 reasoning_effort**（例如 `xHigh`）现在会被接受。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**修复** 从仪表盘发送后立刻按 Enter 会意外打开空智能体会话。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**修复** 默认 TUI 会话会尊重 config.toml 中的 `[agent]`，而不再总是使用内置 plan。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**新的 Dashboard 预览设置** 可以隐藏仪表盘上选中会话的预览面板。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**新的策略设置** 允许组织禁用非托管策略中的 hook。",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**后台 shell 命令** 现在会以实时任务行显示流式输出。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**MCP 插件认证** 对在清单中声明 client ID 的服务器现在会成功。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**来自后台子智能体的 shell 命令审批** 现在会显示，而不再被静默拒绝。",
+    "breaking_change": false
+  }
+]

@@ -123,6 +123,7 @@ fn command_needs_pre_sandbox_policy_heal(command: Option<&Command>) -> bool {
 }
 use std::env;
 use xai_grok_update::{UpdateConfig, auto_update, enforce_version_policy_or_exit};
+
 fn localized_cli_template(
     locale: &LocaleContext,
     id: &str,
@@ -154,9 +155,47 @@ fn load_disk_agent_config(locale: &LocaleContext) -> Result<AgentConfig> {
         ))
     })
 }
-/// Apply headless args to an existing config, only overriding values that are
-/// explicitly set. This allows environment defaults to be preserved when
-/// specific args are not provided.
+
+#[cfg(all(feature = "test-seams", debug_assertions))]
+mod test_seam {
+    const TEST_TRUSTED_PUBKEY_FILE_ENV: &str = "GROK_TEST_TRUSTED_PUBKEY_FILE";
+    pub(super) fn install() {
+        let Ok(path) = std::env::var(TEST_TRUSTED_PUBKEY_FILE_ENV) else {
+            return;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("grok test-seams: cannot read {path}: {e}");
+                return;
+            }
+        };
+        let Some(separator) = bytes.iter().position(|byte| *byte == b'\n') else {
+            eprintln!("grok test-seams: pubkey file lacks a key_id separator");
+            return;
+        };
+        let (key_id, rest) = bytes.split_at(separator);
+        let Some(public_key) = rest.get(1..) else {
+            return;
+        };
+        let Ok(key_id) = std::str::from_utf8(key_id) else {
+            eprintln!("grok test-seams: key_id is not utf8");
+            return;
+        };
+        let key_id = key_id.trim();
+        if public_key.len() != 32 {
+            eprintln!(
+                "grok test-seams: pubkey must be 32 bytes, found {}",
+                public_key.len()
+            );
+            return;
+        }
+        xai_grok_config::signed_policy::test_seam::set_embedded_keys(Some(&[(key_id, public_key)]));
+    }
+}
+
+/// Apply headless args to an existing config, only overriding values that are explicitly set.
+/// Unset args leave the environment defaults in place.
 fn apply_headless_args_to_config(args: &HeadlessArgs, config: &mut AgentConfig) {
     if let Some(v) = &args.grok_ws_origin {
         config.grok_com_config.grok_ws_origin = v.clone();
@@ -2377,6 +2416,8 @@ fn main() {
         return;
     }
     xai_grok_pager_minimal::install();
+    #[cfg(all(feature = "test-seams", debug_assertions))]
+    test_seam::install();
     #[cfg(all(feature = "jemalloc", unix))]
     xai_grok_pager::memory_release::install_release_hook(purge_jemalloc_retained_pages);
     #[cfg(all(feature = "jemalloc", unix))]
@@ -2698,7 +2739,11 @@ async fn async_main(
             Command::Trace(trace_args) => {
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
-                let agent_config = load_disk_agent_config(startup_locale.as_ref())?;
+                let mut agent_config = load_disk_agent_config(startup_locale.as_ref())?;
+                if !trace_args.local {
+                    agent_config.remote_settings =
+                        fetch_remote_settings(&agent_config.grok_com_config).await;
+                }
                 return xai_grok_pager::trace_cmd::run(trace_args, &agent_config).await;
             }
             Command::Memory(memory_args) => {
