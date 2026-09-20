@@ -4,11 +4,13 @@
 //! Each backend owns its own wire conversion in a sibling module.
 
 mod chat_completions;
+mod gemini;
 mod messages;
 mod reasoning_portability;
 mod responses;
 
 pub use chat_completions::{conversation_item_to_chat_message, conversation_to_chat_messages};
+pub use gemini::{build_gemini_request, gemini_api_root, gemini_generate_path};
 pub use messages::build_messages_request;
 pub use responses::{
     extra_tool_entries, patch_reasoning_text_types, response_to_conversation_items,
@@ -2269,6 +2271,7 @@ mod tests {
             crate::ApiBackend::ChatCompletions,
             crate::ApiBackend::Responses,
             crate::ApiBackend::Messages,
+            crate::ApiBackend::Gemini,
         ] {
             let on_wire = match backend {
                 crate::ApiBackend::Responses => {
@@ -2288,6 +2291,13 @@ mod tests {
                     let mapped = super::messages::build_messages_request(&request());
                     serde_json::to_value(&mapped)
                         .expect("messages request serializes")
+                        .get("prompt_cache_key")
+                        .is_some()
+                }
+                crate::ApiBackend::Gemini => {
+                    let mapped = super::gemini::build_gemini_request(&request());
+                    serde_json::to_value(&mapped)
+                        .expect("gemini request serializes")
                         .get("prompt_cache_key")
                         .is_some()
                 }

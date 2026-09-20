@@ -1033,13 +1033,18 @@ pub enum ApiBackend {
     Responses,
     /// Use the Anthropic Messages API (/v1/messages)
     Messages,
+    /// Use the Google Gemini generateContent API (`/v1beta/models/{model}:streamGenerateContent`)
+    Gemini,
 }
 
 impl ApiBackend {
     /// Whether the backend enforces a response JSON schema natively alongside tool calls.
     /// The Messages API does not (a schema there blocks tool use), so structured output there goes through the StructuredOutput tool.
     pub fn supports_native_schema(&self) -> bool {
-        matches!(self, Self::ChatCompletions | Self::Responses)
+        matches!(
+            self,
+            Self::ChatCompletions | Self::Responses | Self::Gemini
+        )
     }
 
     /// Whether [`ConversationRequest::prompt_cache_key`] reaches the wire. Only the Responses mapping sends it, so a key set elsewhere is inert.

@@ -25,6 +25,10 @@ pub enum SamplingConsumer {
     MessagesStream,
     /// `messages`: Anthropic Messages API non-streaming.
     Messages,
+    /// `gemini_stream`: Gemini streamGenerateContent SSE.
+    GeminiStream,
+    /// `gemini`: Gemini generateContent unary.
+    Gemini,
 }
 
 impl SamplingConsumer {
@@ -38,6 +42,8 @@ impl SamplingConsumer {
             Self::Responses => "responses",
             Self::MessagesStream => "messages_stream",
             Self::Messages => "messages",
+            Self::GeminiStream => "gemini_stream",
+            Self::Gemini => "gemini",
         }
     }
 }

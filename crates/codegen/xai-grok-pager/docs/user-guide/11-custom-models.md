@@ -67,17 +67,30 @@ default = "grok-4.5"
 
 ## Supported API Backends
 
-Grok supports three API backends. Set `api_backend` in your `[model.*]` config to choose which protocol the model uses:
+Grok supports four API backends. Set `api_backend` in your `[model.*]` config to choose which protocol the model uses:
 
 | Value | API | Default |
 |-------|-----|---------|
 | `"chat_completions"` | OpenAI Chat Completions (`/v1/chat/completions`) | Yes |
 | `"responses"` | OpenAI Responses (`/v1/responses`) | |
 | `"messages"` | Anthropic Messages (`/v1/messages`) | |
+| `"gemini"` | Google Gemini (`/v1beta/models/{model}:streamGenerateContent?alt=sse`) | |
 
 When you omit `api_backend`, Grok uses `chat_completions`.
 
-Switching mid-session across backends (for example Responses `gpt-6-astra` to Messages Claude) keeps the full transcript. On the next request Grok omits thinking/reasoning blobs the destination protocol cannot verify — OpenAI `gAAAAA…` / xAI `tco_…` signatures on Messages, and Anthropic `CA…` / empty-id items on Responses. That avoids `Invalid signature in thinking block` and `Invalid 'input[N].id': ''` without a lossy compact. Distinct `model_family` values still trigger a separate compact.
+`base_url` for `"gemini"` is the API root. A trailing `/v1` or `/v1beta` is stripped so an OpenAI-style URL still hits Gemini native:
+
+```toml
+[model.gemini-3.8-flash]
+model = "gemini-3.8-flash"
+base_url = "https://generativelanguage.googleapis.com"
+api_backend = "gemini"
+env_key = "GEMINI_API_KEY"
+```
+
+Auth is the existing Bearer (or `x-api-key`) credential, also sent as `x-goog-api-key` to match [python-genai](https://github.com/googleapis/python-genai). Thinking parts and `thoughtSignature` round-trip on Gemini and are omitted on other backends.
+
+Switching mid-session across backends (for example Responses `gpt-6-astra` to Messages Claude) keeps the full transcript. On the next request Grok omits thinking/reasoning blobs the destination protocol cannot verify — OpenAI `gAAAAA…` / xAI `tco_…` signatures on Messages, Anthropic `CA…` / empty-id items on Responses, and Gemini `gsig:…` thought signatures on anything but Gemini. That avoids `Invalid signature in thinking block` and `Invalid 'input[N].id': ''` without a lossy compact. Distinct `model_family` values still trigger a separate compact.
 
 To send provider-specific authentication or version headers -- for example, Anthropic's `x-api-key` -- use the `extra_headers` field described below. Grok sends those headers verbatim with every request to the endpoint.
 
@@ -95,7 +108,7 @@ name = "Display Name"                     # Shown in the model picker
 description = "Model description"          # Optional description
 api_key = "sk-..."                        # API key for this provider (optional)
 env_key = "XAI_API_KEY"                   # Env var holding the API key (optional; string or array)
-api_backend = "chat_completions"          # "chat_completions", "responses", or "messages"
+api_backend = "chat_completions"          # "chat_completions", "responses", "messages", or "gemini"
 reasoning_summary = "concise"             # Responses API only: "none", "auto", "concise", or "detailed"
 temperature = 0.7                         # Sampling temperature
 top_p = 0.95                              # Nucleus sampling parameter

@@ -1,6 +1,6 @@
 //! Classify one stream item for `StreamSpanTiming::hold_until_first_content`.
 
-use xai_grok_sampling_types::{ChatCompletionChunk, messages, rs};
+use xai_grok_sampling_types::{ChatCompletionChunk, gemini::GenerateContentResponse, messages, rs};
 
 use crate::span_timing::ItemClass;
 
@@ -174,6 +174,21 @@ pub(crate) fn responses_event_class(event: &rs::ResponseStreamEvent) -> ItemClas
         ItemClass::Content
     } else if responses_event_is_end(event) {
         ItemClass::End
+    } else {
+        ItemClass::Other
+    }
+}
+
+pub(crate) fn gemini_event_class(event: &GenerateContentResponse) -> ItemClass {
+    if event
+        .prompt_feedback
+        .as_ref()
+        .and_then(|f| f.block_reason.as_deref())
+        .is_some_and(|r| !r.is_empty())
+    {
+        ItemClass::Error
+    } else if event.has_meaningful_content() {
+        ItemClass::Content
     } else {
         ItemClass::Other
     }
