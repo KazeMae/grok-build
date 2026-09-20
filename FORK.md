@@ -34,15 +34,17 @@ commits. Stage named files instead of the whole worktree.
 
 ## Current Version
 
-Version: `1.0.35+kazemae.7` (not tagged yet).
+Version: `1.0.38+kazemae.8` (not tagged yet). Review branch
+`merge/upstream-1.0.38`; not on `main` until CI.
 
-Upstream base is `a28ee2b2` (upstream package version `1.0.35`,
-`SOURCE_REV` `e8563f8f1822`), merged in `ff877f4e`. That snapshot jumps
-1.0.33–1.0.35 in one monorepo sync (356 files). Git reported 21 content
-conflicts, again the GrokZen pager overlay against new strings, `/memory`
-rewrite, session-create timeout naming, and prompt `tool_calling` removal.
+Upstream base is `4247f661` (upstream package version `1.0.38`,
+`SOURCE_REV` `9bb727ccdff0`), merged in `288d6842`. That snapshot jumps
+1.0.36–1.0.38 in one monorepo sync (403 files). Git reported 11 content
+conflicts, again the GrokZen pager overlay against dashboard preview, prompt
+wrap, headless locale, background-task verbs, and related structure changes.
 Overlay resolution keeps upstream structure and re-threads locale / CJK /
-privacy on top.
+privacy on top, including `TitleState.locale`, `Option<Duration>` session-event
+copy, and dashboard peek locale.
 
 The executable name stays `grok` / `xai-grok-pager`. Official auto-update is
 unchanged; GrokZen installers are not included.
@@ -66,11 +68,14 @@ Personal patches on top of that base:
   `"claude"`. Upstream still keys compact on `model_family`, which custom uniapi
   entries omit, so the Claude-name trigger remains required. It is stored on
   `SessionModelSwitch.is_family_switch`.
+- `81904d59` adds a native Gemini `generateContent` REST/SSE backend
+  (`api_backend = "gemini"`), distinct from OpenAI-compatible Chat Completions.
 
 Upstream still implements neither heartbeat ignore nor reasoning omission, so those
-two patches remain required. Telemetry stays compile-time locked.
+two patches remain required. Telemetry stays compile-time locked. The Gemini backend
+is also personal; upstream still has Chat Completions, Responses, and Messages only.
 
-Validation of `1.0.35+kazemae.7` on macOS Apple Silicon (Rust 1.94.0):
+Validation of `1.0.38+kazemae.8` on macOS Apple Silicon (Rust 1.94.0):
 
 - Local `cargo check --locked -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel`
   and `cargo clippy --locked -p xai-grok-pager -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel -- -D warnings`
@@ -81,6 +86,24 @@ Validation of `1.0.35+kazemae.7` on macOS Apple Silicon (Rust 1.94.0):
   personal regressions.
 
 ## Previous Versions
+
+### 1.0.35+kazemae.7
+
+Not tagged. Upstream base was `a28ee2b2` (package version `1.0.35`,
+`SOURCE_REV` `e8563f8f1822`), merged in `ff877f4e`. That snapshot jumped
+1.0.33–1.0.35 in one monorepo sync (356 files). Git reported 21 content
+conflicts, again the GrokZen pager overlay against new strings, `/memory`
+rewrite, session-create timeout naming, and prompt `tool_calling` removal.
+
+Validation of `1.0.35+kazemae.7` on macOS Apple Silicon (Rust 1.94.0):
+
+- Local `cargo check --locked -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel`
+  and `cargo clippy --locked -p xai-grok-pager -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel -- -D warnings`
+  passed after overlay fixups.
+- GitHub Actions `fmt / clippy / build` on the merge PR is the remaining gate.
+- `cargo clippy --workspace --all-targets -- -D warnings` still fails on
+  upstream test and bench targets; treat only findings inside overlay files as
+  personal regressions.
 
 ### 1.0.32+kazemae.6
 
@@ -173,7 +196,7 @@ command below for this baseline; the tracing test itself is unchanged.
 ## Verify and Build
 
 Install the toolchain in `rust-toolchain.toml` and DotSlash as described in
-[README.md](README.md#building-from-source). Version `1.0.35+kazemae.7` uses
+[README.md](README.md#building-from-source). Version `1.0.38+kazemae.8` uses
 Rust 1.94.0.
 
 ```sh
@@ -187,7 +210,7 @@ rustfmt --edition 2024 --check \
 
 cargo clippy --locked --workspace --no-deps --keep-going -- -D warnings
 
-GROK_VERSION=1.0.35+kazemae.7 cargo build --locked -p xai-grok-pager-bin --release
+GROK_VERSION=1.0.38+kazemae.8 cargo build --locked -p xai-grok-pager-bin --release
 ./target/release/xai-grok-pager --version
 ```
 
@@ -252,6 +275,6 @@ git push origin main
 
 Use a new `GROK_VERSION` value and annotated tag for each published personal
 version, preserving the upstream numeric version (for example,
-`1.0.35+kazemae.7`). Update this document's patch and validation records for the
+`1.0.38+kazemae.8`). Update this document's patch and validation records for the
 new version. Do not change the generated root `Cargo.toml` just to stamp a local
 binary version.
