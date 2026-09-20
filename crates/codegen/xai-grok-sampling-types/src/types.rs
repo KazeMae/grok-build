@@ -1041,10 +1041,7 @@ impl ApiBackend {
     /// Whether the backend enforces a response JSON schema natively alongside tool calls.
     /// The Messages API does not (a schema there blocks tool use), so structured output there goes through the StructuredOutput tool.
     pub fn supports_native_schema(&self) -> bool {
-        matches!(
-            self,
-            Self::ChatCompletions | Self::Responses | Self::Gemini
-        )
+        matches!(self, Self::ChatCompletions | Self::Responses | Self::Gemini)
     }
 
     /// Whether [`ConversationRequest::prompt_cache_key`] reaches the wire. Only the Responses mapping sends it, so a key set elsewhere is inert.
