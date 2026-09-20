@@ -438,16 +438,15 @@ impl SessionActor {
         filter_cursor_tools_by_plan_mode(defs, plan_active)
     }
 
-    /// Messages-backed models never see `use_tool`'s file forms: the Anthropic Messages API rejects the schema's
-    /// root-level union (`oneOf`) with HTTP 400, which fails every turn. Checked per request because a model switch
-    /// mid-session keeps the finalized toolset.
+    /// Messages and Gemini never see `use_tool`'s file forms: Anthropic rejects the schema's
+    /// root-level `oneOf`, and Gemini Schema forbids sibling fields next to `anyOf`. Either
+    /// 400s every turn. Checked per request because a model switch mid-session keeps the
+    /// finalized toolset.
     pub(crate) async fn mcp_file_forms_hidden(&self) -> bool {
         self.chat_state_handle
             .get_sampling_config()
             .await
-            .is_some_and(|config| {
-                config.api_backend == xai_grok_sampling_types::ApiBackend::Messages
-            })
+            .is_some_and(|config| config.api_backend.hides_mcp_file_forms())
     }
 
     pub(super) fn model_auth_facts(&self, model_id: &str) -> crate::agent::config::ModelAuthFacts {

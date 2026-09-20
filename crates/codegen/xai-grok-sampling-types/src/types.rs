@@ -1050,6 +1050,12 @@ impl ApiBackend {
     pub fn forwards_prompt_cache_key(&self) -> bool {
         matches!(self, Self::Responses)
     }
+
+    /// Whether `use_tool` must be advertised without MCP file forms.
+    /// Anthropic Messages rejects the root `oneOf`; Gemini Schema forbids sibling fields next to `anyOf`.
+    pub fn hides_mcp_file_forms(&self) -> bool {
+        matches!(self, Self::Messages | Self::Gemini)
+    }
 }
 
 /// Stable identifier shared by every model request in one root conversation tree.
