@@ -450,11 +450,12 @@ async fn messages_backend_advertises_inline_only_use_tool() {
                 ApiBackend::Responses,
                 ApiBackend::Messages,
                 ApiBackend::ChatCompletions,
+                ApiBackend::Gemini,
             ] {
                 let mut config = actor.chat_state_handle.get_sampling_config().await.unwrap();
                 config.api_backend = backend.clone();
                 actor.chat_state_handle.update_sampling_config(config);
-                let hidden = backend == ApiBackend::Messages;
+                let hidden = backend.hides_mcp_file_forms();
 
                 let definitions = actor.prepare_tool_definitions_inner().await;
                 let tool = &definitions

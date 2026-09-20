@@ -315,7 +315,7 @@ fn convert_schema(
     }
 
     copy_passthrough_fields(map, &mut out);
-    Value::Object(out)
+    finish_object(out)
 }
 
 fn merge_all_of(
@@ -336,7 +336,7 @@ fn merge_all_of(
             convert_schema(&Value::Object(siblings), defs, ref_stack),
         );
     }
-    Value::Object(merged)
+    finish_object(merged)
 }
 
 fn overlay_resolved_ref(
@@ -363,7 +363,7 @@ fn overlay_resolved_ref(
         &mut merged,
         convert_schema(&Value::Object(overlay), defs, ref_stack),
     );
-    Value::Object(merged)
+    finish_object(merged)
 }
 
 fn resolve_ref(
@@ -476,6 +476,41 @@ fn apply_const_field(map: &Map<String, Value>, out: &mut Map<String, Value>) {
         .map(str::to_string)
         .unwrap_or_else(|| c.to_string());
     out.insert("enum".into(), json!([s]));
+}
+
+fn finish_object(mut obj: Map<String, Value>) -> Value {
+    isolate_any_of(&mut obj);
+    Value::Object(obj)
+}
+
+/// Gemini Schema proto: when `anyOf` is set it must be the only field.
+fn isolate_any_of(obj: &mut Map<String, Value>) {
+    let Some(Value::Array(branches)) = obj.remove("anyOf") else {
+        return;
+    };
+    if obj.is_empty() {
+        obj.insert("anyOf".into(), Value::Array(branches));
+        return;
+    }
+    let siblings = std::mem::take(obj);
+    let merged = branches
+        .into_iter()
+        .map(|branch| {
+            let mut branch_obj = match branch {
+                Value::Object(m) => m,
+                other => {
+                    let mut wrap = Map::new();
+                    wrap.insert("enum".into(), json!([other]));
+                    wrap
+                }
+            };
+            for (k, v) in &siblings {
+                branch_obj.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+            Value::Object(branch_obj)
+        })
+        .collect();
+    obj.insert("anyOf".into(), Value::Array(merged));
 }
 
 fn flatten_any_of(items: Vec<Value>, out: &mut Map<String, Value>) {
@@ -667,6 +702,95 @@ mod schema_tests {
         assert_eq!(
             item.and_then(|i| i.get("description")),
             Some(&json!("an item"))
+        );
+    }
+
+    fn assert_any_of_is_sole_field(schema: &Value) {
+        if let Some(obj) = schema.as_object() {
+            if obj.contains_key("anyOf") {
+                assert_eq!(
+                    obj.len(),
+                    1,
+                    "Gemini rejects sibling fields next to anyOf: {schema}"
+                );
+            }
+            for value in obj.values() {
+                assert_any_of_is_sole_field(value);
+            }
+        } else if let Some(arr) = schema.as_array() {
+            for value in arr {
+                assert_any_of_is_sole_field(value);
+            }
+        }
+    }
+
+    #[test]
+    fn any_of_cannot_sit_beside_other_schema_fields() {
+        let converted = json_schema_to_gemini_schema(&json!({
+            "description": "number or string",
+            "anyOf": [
+                { "type": "string" },
+                { "type": "integer" }
+            ]
+        }));
+        assert_any_of_is_sole_field(&converted);
+        let branches = converted
+            .get("anyOf")
+            .and_then(Value::as_array)
+            .expect("anyOf");
+        assert_eq!(branches.len(), 2);
+        assert_eq!(
+            branches.first().and_then(|b| b.get("type")),
+            Some(&json!("STRING"))
+        );
+        assert_eq!(
+            branches.first().and_then(|b| b.get("description")),
+            Some(&json!("number or string"))
+        );
+    }
+
+    #[test]
+    fn use_tool_oneof_becomes_any_of_only_object() {
+        let converted = json_schema_to_gemini_schema(&json!({
+            "type": "object",
+            "properties": {
+                "tool_name": { "type": "string" },
+                "tool_input": { "type": "object" },
+                "tool_input_file": { "type": "string" },
+                "file": { "type": "string" }
+            },
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "tool_name": { "type": "string" },
+                        "tool_input": { "type": "object" }
+                    },
+                    "required": ["tool_name", "tool_input"]
+                },
+                {
+                    "type": "object",
+                    "properties": { "file": { "type": "string" } },
+                    "required": ["file"]
+                }
+            ]
+        }));
+        assert_any_of_is_sole_field(&converted);
+        let branches = converted
+            .get("anyOf")
+            .and_then(Value::as_array)
+            .expect("anyOf");
+        assert_eq!(branches.len(), 2);
+        assert_eq!(
+            branches.first().and_then(|b| b.get("type")),
+            Some(&json!("OBJECT"))
+        );
+        assert!(
+            branches
+                .first()
+                .and_then(|b| b.get("required"))
+                .and_then(Value::as_array)
+                .is_some_and(|r| r.iter().any(|v| v.as_str() == Some("tool_name")))
         );
     }
 }
