@@ -2148,6 +2148,27 @@ fn parses_model_api_backend_chat_completions() {
     let model = resolved.get("my-chat-model").expect("model should exist");
     assert_eq!(model.info.api_backend, ApiBackend::ChatCompletions);
 }
+#[test]
+fn parses_model_api_backend_gemini() {
+    let raw_config: toml::Value = toml::from_str(
+        r#"
+            [model.my-gemini]
+            model = "gemini-3.8-flash"
+            base_url = "https://generativelanguage.googleapis.com"
+            context_window = 1000000
+            api_backend = "gemini"
+            "#,
+    )
+    .unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
+    let resolved = resolve_model_list(&cfg, None);
+    let model = resolved.get("my-gemini").expect("model should exist");
+    assert_eq!(model.info.api_backend, ApiBackend::Gemini);
+    assert!(
+        model.info.supports_reasoning_effort,
+        "Gemini backend should auto-default supports_reasoning_effort=true",
+    );
+}
 /// Messages backend auto-defaults supports_reasoning_effort=true.
 /// Without this, `--reasoning-effort` is silently dropped by
 /// `model_offers_reasoning_effort` in agent/remote_config/resolution.rs for any
@@ -4055,6 +4076,8 @@ enable_all_project_mcp_servers = false
 enableAllProjectMcpServers = false
 plugin_auto_update = false
 pluginAutoUpdate = false
+allow_managed_hooks_only = true
+allowManagedHooksOnly = true
 
 [[allowed_mcp_servers]]
 server_url = "https://mcp.example.com/*"

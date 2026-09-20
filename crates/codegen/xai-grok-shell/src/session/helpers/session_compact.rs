@@ -745,6 +745,47 @@ pub(crate) async fn generate_session_compact(
                 itl_max_ms: timing.itl_max_ms(),
             }
         }
+        ApiBackend::Gemini => {
+            let request = ConversationRequest {
+                items: chat_history,
+                tools,
+                hosted_tools,
+                tool_choice: Some(conversation_tool_choice),
+                model: Some(sampling_config.model.to_owned()),
+                temperature: Some(1.0),
+                x_grok_conv_id: Some(session_id.to_string()),
+                x_grok_req_id: Some(format!("xai-compact-{}", uuid::Uuid::new_v4())),
+                x_grok_session_id: Some(session_id.to_string()),
+                x_grok_agent_id: Some(xai_grok_telemetry::id::agent_id()),
+                ..Default::default()
+            };
+            tracing::info!(
+                compact_model = %sampling_config.model,
+                num_messages = num_messages,
+                "Sending compact request (gemini)"
+            );
+            let result = await_unless_cancelled(
+                cancel,
+                client.conversation_collect_with_idle_timeout(request, idle_timeout),
+            )
+            .await?;
+            let response = result.map_err(classify_sampling_error)?;
+            let truncated = matches!(
+                response.stop_reason,
+                Some(xai_grok_sampling_types::StopReason::Length)
+            );
+            CompactOutput {
+                content: response.assistant_text(),
+                stop_reason: response
+                    .raw_stop_reason
+                    .or_else(|| Some("stop".to_string())),
+                truncated,
+                ttft_ms: None,
+                stream_ms: None,
+                delta_count: response.message_chunks_emitted,
+                itl_max_ms: None,
+            }
+        }
     };
 
     if output.content.is_empty() {

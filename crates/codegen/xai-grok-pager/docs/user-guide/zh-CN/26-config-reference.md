@@ -351,7 +351,7 @@ Grok Build 还会按以下层级读取配置；后列层级优先，但 requirem
 | --- | --- | --- | --- | --- |
 | `model.<id>` | `table` | `yes` | `user` | 单模型覆盖或 BYOK 定义；内联 `api_key` 不如 `env_key` 安全。 |
 | `model.<id>.agent_type` | `string` | `yes` | `user` | 与该模型关联的智能体定义类型。 |
-| `model.<id>.api_backend` | `chat_completions / responses / messages` | `yes` | `user` | 该模型使用的线协议。 |
+| `model.<id>.api_backend` | `chat_completions / responses / messages / gemini` | `yes` | `user` | 该模型使用的线协议。 |
 | `model.<id>.api_base_url` | `string` | `yes` | `user` | 配合 XAI_API_KEY 解析使用的替代 API 基础 URL。 |
 | `model.<id>.api_key` | `string` | `yes` | `user` | 内联 API Key；优先使用 `env_key`，不要把密钥放入共享仓库。 |
 | `model.<id>.auth_provider` | `string` | `yes` | `user` | 为模型签发 bearer token 的 `[auth_provider.<name>]` 助手名称。 |

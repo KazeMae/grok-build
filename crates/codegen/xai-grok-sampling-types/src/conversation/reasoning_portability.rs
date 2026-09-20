@@ -2,6 +2,7 @@
 //! onto another (`Invalid signature in thinking block`, `Invalid 'input[N].id': ''`).
 //! Conversation history is left intact; converters omit foreign payloads at request build.
 
+use crate::gemini::GEMINI_THOUGHT_SIG_PREFIX;
 use crate::rs::ReasoningItem;
 
 /// OpenAI Responses encrypted reasoning (`gpt-6-astra` and similar).
@@ -28,7 +29,7 @@ pub(crate) fn reasoning_is_portable_to_responses(r: &ReasoningItem) -> bool {
     {
         return true;
     }
-    if enc.starts_with(ANTHROPIC_SIG_PREFIX) {
+    if enc.starts_with(ANTHROPIC_SIG_PREFIX) || enc.starts_with(GEMINI_THOUGHT_SIG_PREFIX) {
         return false;
     }
     // Synthesized plaintext thinking (empty id, no blob) is not a Responses item.
@@ -44,7 +45,21 @@ pub(crate) fn reasoning_is_portable_to_responses(r: &ReasoningItem) -> bool {
 /// plaintext thinking and is left for the existing Messages path.
 pub(crate) fn reasoning_is_portable_to_messages(r: &ReasoningItem) -> bool {
     let sig = blob(r);
-    !sig.starts_with(OPENAI_ENC_PREFIX) && !sig.starts_with(XAI_ENC_PREFIX)
+    !sig.starts_with(OPENAI_ENC_PREFIX)
+        && !sig.starts_with(XAI_ENC_PREFIX)
+        && !sig.starts_with(GEMINI_THOUGHT_SIG_PREFIX)
+}
+
+/// Whether this item can be sent on Gemini `generateContent` as a thought / thoughtSignature.
+pub(crate) fn reasoning_is_portable_to_gemini(r: &ReasoningItem) -> bool {
+    let sig = blob(r);
+    if sig.starts_with(OPENAI_ENC_PREFIX)
+        || sig.starts_with(XAI_ENC_PREFIX)
+        || sig.starts_with(ANTHROPIC_SIG_PREFIX)
+    {
+        return false;
+    }
+    sig.starts_with(GEMINI_THOUGHT_SIG_PREFIX) || (sig.is_empty() && !r.summary.is_empty())
 }
 
 #[cfg(test)]
@@ -84,6 +99,10 @@ mod tests {
             "",
             Some("enc_hidden_thoughts")
         )));
+        assert!(!reasoning_is_portable_to_responses(&item(
+            "",
+            Some("gsig:GEMINI_SIG")
+        )));
     }
 
     #[test]
@@ -101,5 +120,26 @@ mod tests {
             Some("CAsignature")
         )));
         assert!(reasoning_is_portable_to_messages(&item("", None)));
+        assert!(!reasoning_is_portable_to_messages(&item(
+            "",
+            Some("gsig:GEMINI_SIG")
+        )));
+    }
+
+    #[test]
+    fn gemini_keeps_gsig_and_plain_summary_drops_foreign() {
+        assert!(reasoning_is_portable_to_gemini(&item(
+            "",
+            Some("gsig:GEMINI_SIG")
+        )));
+        assert!(!reasoning_is_portable_to_gemini(&item(
+            "rs_abc",
+            Some("gAAAAAencrypted")
+        )));
+        assert!(!reasoning_is_portable_to_gemini(&item(
+            "",
+            Some("CAsignature")
+        )));
+        assert!(!reasoning_is_portable_to_gemini(&item("", None)));
     }
 }

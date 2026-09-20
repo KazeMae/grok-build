@@ -1,11 +1,12 @@
 //! HTTP client for the xAI sampling APIs.
 //!
 //! Owns the `reqwest::Client`, default request headers, and per-method defaults.
-//! Talks to three backend shapes:
+//! Talks to four backend shapes:
 //!
 //! * Chat Completions (`/chat/completions`)
 //! * Responses API (`/responses`)
 //! * Anthropic Messages API (`/messages`)
+//! * Google Gemini (`/v1beta/models/{model}:streamGenerateContent`)
 //!
 //! All trace-upload and URL-based header injection is intentionally *not* here.
 //! The session puts per-request headers (proxy auth, OTel context, etc.) into [`SamplerConfig::extra_headers`] before constructing the client.
@@ -31,15 +32,18 @@ use xai_grok_sampling_types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ConversationRequest,
     ConversationResponse, CreateResponseWrapper, DEFAULT_EXACT_REPETITION_MIN_TOKENS,
     DOOM_LOOP_CHECK_HEADER, EXACT_REPETITION_CHECK_HEADER, MessagesRequestWrapper,
-    ResponseModelMetadata, Result, SamplingError, SentCredential, build_messages_request,
-    is_check_event, messages, rs,
+    ResponseModelMetadata, Result, SamplingError, SentCredential, build_gemini_request,
+    build_messages_request, gemini, gemini_api_root, gemini_generate_path, is_check_event,
+    messages, rs,
 };
 
 use crate::config::{AuthScheme, OriginClientInfo, RequestCompression, SamplerConfig};
 use crate::events::SamplingErrorInfo;
 use crate::request_compression::{compress_body, should_compress};
 use crate::span_timing::{ERROR, STATUS_CODE, SUCCESS, StreamSpanTiming};
-use crate::stream_classify::{chat_chunk_class, message_event_class, responses_event_class};
+use crate::stream_classify::{
+    chat_chunk_class, gemini_event_class, message_event_class, responses_event_class,
+};
 use xai_grok_auth::bearer_suffix;
 
 pub use xai_grok_sampling_types::ApiBackend;
@@ -420,6 +424,28 @@ impl EndpointTemplate {
         match self {
             Self::Plain(base) => format!("{base}/{path}"),
             Self::WithQuery { prefix, suffix } => format!("{prefix}/{path}{suffix}"),
+        }
+    }
+
+    fn gemini_url(&self, model: &str, stream: bool) -> String {
+        let path = gemini_generate_path(model, stream);
+        let (root, suffix) = match self {
+            Self::Plain(base) => (gemini_api_root(base), String::new()),
+            Self::WithQuery { prefix, suffix } => (gemini_api_root(prefix), suffix.clone()),
+        };
+        let url = format!("{root}/{path}");
+        if stream {
+            if suffix.is_empty() {
+                format!("{url}?alt=sse")
+            } else if suffix.contains("alt=") {
+                format!("{url}{suffix}")
+            } else {
+                format!("{url}{suffix}&alt=sse")
+            }
+        } else if suffix.is_empty() {
+            url
+        } else {
+            format!("{url}{suffix}")
         }
     }
 }
@@ -1948,6 +1974,242 @@ impl SamplingClient {
         ))
     }
 
+    fn gemini_url(&self, model: &str, stream: bool) -> String {
+        self.endpoint.gemini_url(model, stream)
+    }
+
+    fn goog_api_key_header(&self) -> Option<HeaderValue> {
+        if self
+            .default_headers
+            .get(HeaderName::from_static("x-goog-api-key"))
+            .is_some()
+        {
+            return None;
+        }
+        if let Some(v) = self
+            .default_headers
+            .get(HeaderName::from_static("x-api-key"))
+        {
+            return Some(v.clone());
+        }
+        self.default_headers
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .and_then(|key| HeaderValue::from_str(key).ok())
+    }
+
+    /// Gemini `streamGenerateContent?alt=sse` (python-genai REST).
+    async fn create_gemini_stream(
+        &self,
+        request: gemini::GenerateContentRequest,
+        grok_headers: GrokRequestHeaders<'_>,
+        traceparent: Option<String>,
+    ) -> Result<(
+        BoxStream<'static, Result<gemini::GenerateContentResponse>>,
+        Option<ResponseModelMetadata>,
+    )> {
+        let model = request.model.clone().unwrap_or_default();
+        let url = self.gemini_url(&model, true);
+        let region = crate::span_timing::stream_span!(
+            "http.create_gemini_stream",
+            endpoint = %url,
+            model_id = model.as_str(),
+        );
+        self.adopt_traceparent(region.span(), traceparent.as_deref());
+        if region.span().is_disabled() {
+            self.create_gemini_stream_inner(request, grok_headers, region)
+                .await
+        } else {
+            let span = region.span().clone();
+            self.create_gemini_stream_inner(request, grok_headers, region)
+                .instrument(span)
+                .await
+        }
+    }
+
+    async fn create_gemini_stream_inner(
+        &self,
+        request: gemini::GenerateContentRequest,
+        grok_headers: GrokRequestHeaders<'_>,
+        region: crate::span_timing::Region,
+    ) -> Result<(
+        BoxStream<'static, Result<gemini::GenerateContentResponse>>,
+        Option<ResponseModelMetadata>,
+    )> {
+        let mut span_timing = StreamSpanTiming::start(region);
+        let model_id = request.model.clone().unwrap_or_default();
+        let url = self.gemini_url(&model_id, true);
+        tracing::debug!(
+            base_url = %self.base_url,
+            url = %url,
+            model_id = model_id.as_str(),
+            "Sending Gemini streamGenerateContent request"
+        );
+        self.prepare_bearer().await;
+        let SentRequest {
+            builder,
+            sent_bearer,
+        } = self.post(&url);
+        let mut http_request = grok_headers
+            .apply(builder)
+            .header(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        if let Some(key) = self.goog_api_key_header() {
+            http_request = http_request.header(HeaderName::from_static("x-goog-api-key"), key);
+        }
+        let built_request = self.build_json_request(http_request, &request).await?;
+        Self::log_request_headers(&built_request, "gemini");
+        let response = self
+            .execute_stream_request(built_request, &mut span_timing)
+            .await?;
+
+        let status = response.status();
+        span_timing
+            .span()
+            .record(STATUS_CODE, status.as_u16() as i64);
+        span_timing.span().record(SUCCESS, status.is_success());
+        if !status.is_success() {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                span_timing.span().record(ERROR, "unauthorized (401)");
+                self.record_401_attribution(
+                    crate::attribution::SamplingConsumer::GeminiStream,
+                    sent_bearer.as_deref(),
+                );
+                let body = response.bytes().await.unwrap_or_default();
+                let server_message = user_facing_api_error_message(status, body.as_ref());
+                return Err(auth_rejected(
+                    format!("Unauthorized (401) from {url}: {server_message}"),
+                    sent_bearer.as_deref(),
+                ));
+            }
+            let model_metadata = extract_model_metadata(response.headers());
+            let retry_after_secs = extract_retry_after(response.headers());
+            let should_retry = extract_should_retry(response.headers());
+            let bytes = response.bytes().await?;
+            let message = user_facing_api_error_message(status, bytes.as_ref());
+            span_timing.span().record(ERROR, message.as_str());
+            return Err(SamplingError::Api {
+                status,
+                message,
+                model_metadata,
+                retry_after_secs,
+                should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
+            });
+        }
+
+        let model_metadata = extract_model_metadata(response.headers());
+        const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+        let mut is_first = true;
+        let byte_stream = response.bytes_stream().map(move |result| {
+            result.map(|bytes| {
+                if is_first {
+                    is_first = false;
+                    if bytes.starts_with(UTF8_BOM) {
+                        return bytes.slice(UTF8_BOM.len()..);
+                    }
+                }
+                bytes
+            })
+        });
+        let event_stream = byte_stream.eventsource();
+        let events = event_stream
+            .scan(false, |had_transport_error, event_res| {
+                if *had_transport_error {
+                    return std::future::ready(None);
+                }
+                let item = match event_res {
+                    Ok(event) => {
+                        let data = event.data.trim();
+                        if data.is_empty() || data == "[DONE]" {
+                            return std::future::ready(None);
+                        }
+                        tracing::info!(
+                            target: crate::sampling_log::TARGET,
+                            event = "sse_chunk",
+                            backend = "gemini",
+                            data = %data,
+                        );
+                        if let Some(stream_error) = try_parse_stream_error(data) {
+                            Some(Err(stream_error))
+                        } else {
+                            Some(
+                                serde_json::from_str::<gemini::GenerateContentResponse>(data)
+                                    .map_err(|e| {
+                                        tracing::error!(
+                                            error = %e,
+                                            raw_data = %data,
+                                            "Failed to deserialize Gemini GenerateContentResponse"
+                                        );
+                                        SamplingError::Serialization(e)
+                                    }),
+                            )
+                        }
+                    }
+                    Err(e) => {
+                        *had_transport_error = true;
+                        Some(Err(SamplingError::EventStreamError(e.to_string())))
+                    }
+                };
+                std::future::ready(item)
+            })
+            .boxed();
+        Ok((
+            span_timing.hold_until_first_content(events, gemini_event_class),
+            model_metadata,
+        ))
+    }
+
+    async fn create_gemini(
+        &self,
+        request: gemini::GenerateContentRequest,
+        grok_headers: GrokRequestHeaders<'_>,
+    ) -> Result<gemini::GenerateContentResponse> {
+        let model_id = request.model.clone().unwrap_or_default();
+        let url = self.gemini_url(&model_id, false);
+        self.prepare_bearer().await;
+        let SentRequest {
+            builder,
+            sent_bearer,
+        } = self.post(&url);
+        let mut http_request = grok_headers.apply(builder);
+        if let Some(key) = self.goog_api_key_header() {
+            http_request = http_request.header(HeaderName::from_static("x-goog-api-key"), key);
+        }
+        let built_request = self.build_json_request(http_request, &request).await?;
+        let response = self.send(built_request).await?;
+        let status = response.status();
+        if !status.is_success() {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                self.record_401_attribution(
+                    crate::attribution::SamplingConsumer::Gemini,
+                    sent_bearer.as_deref(),
+                );
+                let body = response.bytes().await.unwrap_or_default();
+                let server_message = user_facing_api_error_message(status, body.as_ref());
+                return Err(auth_rejected(
+                    format!("Unauthorized (401) from {url}: {server_message}"),
+                    sent_bearer.as_deref(),
+                ));
+            }
+            let model_metadata = extract_model_metadata(response.headers());
+            let retry_after_secs = extract_retry_after(response.headers());
+            let should_retry = extract_should_retry(response.headers());
+            let bytes = response.bytes().await?;
+            let message = user_facing_api_error_message(status, bytes.as_ref());
+            return Err(SamplingError::Api {
+                status,
+                message,
+                model_metadata,
+                retry_after_secs,
+                should_retry,
+                error_code: parse_error_code(bytes.as_ref()),
+            });
+        }
+        let bytes = response.bytes().await?;
+        serde_json::from_slice(&bytes).map_err(SamplingError::Serialization)
+    }
+
     // =========================================================================
     // Unified Conversation API
     // =========================================================================
@@ -2155,6 +2417,67 @@ impl SamplingClient {
         self.create_message(wrapper).await
     }
 
+    /// Gemini `streamGenerateContent` (python-genai REST).
+    pub async fn conversation_stream_gemini(
+        &self,
+        mut request: ConversationRequest,
+    ) -> Result<(
+        BoxStream<'static, Result<gemini::GenerateContentResponse>>,
+        Option<ResponseModelMetadata>,
+    )> {
+        self.apply_conversation_defaults(&mut request)?;
+        let traceparent = request.traceparent.take();
+        let x_grok_conv_id = request.x_grok_conv_id.clone();
+        let x_grok_req_id = request.x_grok_req_id.clone();
+        let x_grok_session_id = request.x_grok_session_id.clone();
+        let x_grok_turn_idx = request.x_grok_turn_idx.clone();
+        let x_grok_transient_retry = request.x_grok_transient_retry.clone();
+        let x_grok_agent_id = request.x_grok_agent_id.clone();
+        let gemini_request = build_gemini_request(&request);
+        let model_id = gemini_request.model.clone().unwrap_or_default();
+        let grok_headers = GrokRequestHeaders {
+            conv_id: x_grok_conv_id.as_deref().unwrap_or_default(),
+            req_id: x_grok_req_id.as_deref().unwrap_or_default(),
+            model_id: &model_id,
+            session_id: x_grok_session_id.as_deref().unwrap_or_default(),
+            turn_idx: x_grok_turn_idx.as_deref(),
+            transient_retry: x_grok_transient_retry.as_deref(),
+            agent_id: x_grok_agent_id.as_deref().unwrap_or_default(),
+            deployment_id: request.x_grok_deployment_id.as_deref(),
+            user_id: request.x_grok_user_id.as_deref(),
+        };
+        self.create_gemini_stream(gemini_request, grok_headers, traceparent)
+            .await
+    }
+
+    /// Gemini unary `generateContent`.
+    pub async fn conversation_gemini(
+        &self,
+        mut request: ConversationRequest,
+    ) -> Result<gemini::GenerateContentResponse> {
+        self.apply_conversation_defaults(&mut request)?;
+        let x_grok_conv_id = request.x_grok_conv_id.clone();
+        let x_grok_req_id = request.x_grok_req_id.clone();
+        let x_grok_session_id = request.x_grok_session_id.clone();
+        let x_grok_turn_idx = request.x_grok_turn_idx.clone();
+        let x_grok_transient_retry = request.x_grok_transient_retry.clone();
+        let x_grok_agent_id = request.x_grok_agent_id.clone();
+        let gemini_request = build_gemini_request(&request);
+        let model_id = gemini_request.model.clone().unwrap_or_default();
+        let grok_headers = GrokRequestHeaders {
+            conv_id: x_grok_conv_id.as_deref().unwrap_or_default(),
+            req_id: x_grok_req_id.as_deref().unwrap_or_default(),
+            model_id: &model_id,
+            session_id: x_grok_session_id.as_deref().unwrap_or_default(),
+            turn_idx: x_grok_turn_idx.as_deref(),
+            transient_retry: x_grok_transient_retry.as_deref(),
+            agent_id: x_grok_agent_id.as_deref().unwrap_or_default(),
+            deployment_id: request.x_grok_deployment_id.as_deref(),
+            user_id: request.x_grok_user_id.as_deref(),
+        };
+        self.create_gemini(gemini_request, grok_headers).await
+    }
+
     /// Backend-aware streaming call that collects the full response.
     /// Honors the request's [`LengthPolicy`](xai_grok_sampling_types::LengthPolicy) like the actor path.
     /// The default still fails a text-only or empty `Length` stop, so side callers never persist a silently truncated result.
@@ -2190,6 +2513,11 @@ impl SamplingClient {
             ApiBackend::Messages => {
                 let (raw, meta) = self.conversation_stream_messages(request).await?;
                 let events = crate::stream::stream_messages(raw, meta, request_id, idle_timeout);
+                crate::stream::collect_response(events).await
+            }
+            ApiBackend::Gemini => {
+                let (raw, meta) = self.conversation_stream_gemini(request).await?;
+                let events = crate::stream::stream_gemini(raw, meta, request_id, idle_timeout);
                 crate::stream::collect_response(events).await
             }
         };
@@ -2526,6 +2854,7 @@ mod tests {
     const EMPTY_CHAT_COMPLETION_JSON: &str =
         r#"{"id":"chat","object":"chat.completion","created":0,"model":"test-model","choices":[]}"#;
     const EMPTY_MESSAGE_JSON: &str = r#"{"id":"msg","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":"end_turn","usage":{"input_tokens":0,"output_tokens":0}}"#;
+    const EMPTY_GEMINI_JSON: &str = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":""}]},"finishReason":"STOP"}]}"#;
 
     /// One conversation request through `backend` (unary or SSE) against a mock
     /// that hands back the request's headers and raw body.
@@ -2544,6 +2873,7 @@ mod tests {
                 ("application/json", EMPTY_CHAT_COMPLETION_JSON)
             }
             (false, ApiBackend::Messages) => ("application/json", EMPTY_MESSAGE_JSON),
+            (false, ApiBackend::Gemini) => ("application/json", EMPTY_GEMINI_JSON),
         };
         let (tx, rx) = oneshot::channel();
         let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
@@ -2560,7 +2890,8 @@ mod tests {
         let app = Router::new()
             .route("/v1/chat/completions", handler.clone())
             .route("/v1/responses", handler.clone())
-            .route("/v1/messages", handler);
+            .route("/v1/messages", handler.clone())
+            .route("/v1beta/models/{tail}", handler);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -2598,6 +2929,10 @@ mod tests {
             (true, ApiBackend::Messages) => {
                 client.conversation_stream_messages(request).await.map(drop)
             }
+            (false, ApiBackend::Gemini) => client.conversation_gemini(request).await.map(drop),
+            (true, ApiBackend::Gemini) => {
+                client.conversation_stream_gemini(request).await.map(drop)
+            }
         };
         sent.unwrap_or_else(|e| panic!("{backend:?} streaming={streaming}: {e}"));
         let captured = rx.await.unwrap();
@@ -2613,6 +2948,27 @@ mod tests {
         headers.get(name).and_then(|v| v.to_str().ok())
     }
 
+    #[test]
+    fn gemini_url_rewrites_openai_v1_base() {
+        let ep = EndpointTemplate::new("http://alb.example/v1", &IndexMap::new());
+        assert_eq!(
+            ep.gemini_url("gemini-3.8-flash", true),
+            "http://alb.example/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"
+        );
+        assert_eq!(
+            ep.gemini_url("gemini-3.8-flash", false),
+            "http://alb.example/v1beta/models/gemini-3.8-flash:generateContent"
+        );
+        let official = EndpointTemplate::new(
+            "https://generativelanguage.googleapis.com",
+            &IndexMap::new(),
+        );
+        assert_eq!(
+            official.gemini_url("gemini-3.8-flash", true),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
     #[tokio::test]
     async fn every_chat_route_compresses_large_bodies_when_configured() {
         let input = large_input();
@@ -2620,6 +2976,7 @@ mod tests {
             ApiBackend::ChatCompletions,
             ApiBackend::Responses,
             ApiBackend::Messages,
+            ApiBackend::Gemini,
         ] {
             for streaming in [false, true] {
                 let route = format!("{backend:?} streaming={streaming}");

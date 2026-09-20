@@ -1,0 +1,27 @@
+[
+  {
+    "category": "fixes",
+    "description": "**Mermaid 流程图** 在标签复杂或尺寸较大时现在能正确渲染并打开。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**`/context`** 图例百分比现在始终加总为 100%。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**在队列行上按 `y`** 现在会把提示文本复制到剪贴板。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**`/model`** 的 effort 选择器现在默认选中模型推荐的 effort。",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**使用带引号文件名变量的 Bash 命令** 现在会遵守配置的权限规则，而不再总是弹出询问。",
+    "breaking_change": false
+  }
+]

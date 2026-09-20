@@ -867,6 +867,8 @@ mod tests {
             SamplingConsumer::Responses,
             SamplingConsumer::MessagesStream,
             SamplingConsumer::Messages,
+            SamplingConsumer::GeminiStream,
+            SamplingConsumer::Gemini,
         ];
         for consumer in variants {
             cb.record_401(consumer, Some("test-bearer"));

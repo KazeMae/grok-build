@@ -74,15 +74,18 @@ default = "grok-4.5"
 <a id="supported-api-backends"></a>
 ## 支持的 API 后端
 
-Grok 支持三种 API 后端。在 `[model.*]` 配置中设置 `api_backend`，选择模型使用的协议：
+Grok 支持四种 API 后端。在 `[model.*]` 配置中设置 `api_backend`，选择模型使用的协议：
 
 | 值 | API | 默认 |
 |-------|-----|---------|
 | `"chat_completions"` | OpenAI Chat Completions（`/v1/chat/completions`） | 是 |
 | `"responses"` | OpenAI Responses（`/v1/responses`） | |
 | `"messages"` | Anthropic Messages（`/v1/messages`） | |
+| `"gemini"` | Google Gemini（`/v1beta/models/{model}:streamGenerateContent?alt=sse`） | |
 
 省略 `api_backend` 时，Grok 使用 `chat_completions`。
+
+`"gemini"` 的 `base_url` 是 API 根地址。末尾的 `/v1` 或 `/v1beta` 会被去掉，因此 OpenAI 风格的 URL 仍会打到 Gemini 原生路径。认证沿用现有 Bearer / `x-api-key`，并额外带上 python-genai 使用的 `x-goog-api-key`。思考内容和 `thoughtSignature` 只在 Gemini 上原样回传。
 
 若要发送提供商专用的身份验证或版本标头——例如 Anthropic 的 `x-api-key`——请使用下面介绍的 `extra_headers` 字段。Grok 会将这些标头原样随每个请求发送到端点。
 
@@ -101,7 +104,7 @@ name = "显示名称"                          # 显示在模型选择器中
 description = "模型描述"                   # 可选描述
 api_key = "sk-..."                        # 此提供商的 API 密钥（可选）
 env_key = "XAI_API_KEY"                   # 保存 API 密钥的环境变量（可选；字符串或数组）
-api_backend = "chat_completions"          # "chat_completions"、"responses" 或 "messages"
+api_backend = "chat_completions"          # "chat_completions"、"responses"、"messages" 或 "gemini"
 temperature = 0.7                          # 采样温度
 top_p = 0.95                               # 核采样参数
 max_completion_tokens = 8192               # 每次响应的最大 token 数
