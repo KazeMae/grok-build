@@ -100,6 +100,18 @@ pub struct GeminiFunctionResponse {
     pub id: Option<String>,
     pub name: String,
     pub response: serde_json::Value,
+    /// Media from the tool (screenshots, `read_file` images). Must live here, not as
+    /// sibling `inlineData` parts: Gemini 3 treats extra user parts next to a
+    /// `functionResponse` as a new turn and 400s with "ending with a model turn".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<GeminiFunctionResponsePart>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiFunctionResponsePart {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inline_data: Option<GeminiInlineData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
