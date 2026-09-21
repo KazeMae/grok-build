@@ -2,8 +2,8 @@ use super::reasoning_portability::reasoning_is_portable_to_gemini;
 use super::*;
 use crate::gemini::{
     GeminiContent, GeminiFunctionCall, GeminiFunctionDeclaration, GeminiFunctionResponse,
-    GeminiInlineData, GeminiPart, GeminiTool, GenerateContentRequest, GenerationConfig,
-    ThinkingConfig, json_schema_to_gemini_schema, wire_thought_signature,
+    GeminiFunctionResponsePart, GeminiInlineData, GeminiPart, GeminiTool, GenerateContentRequest,
+    GenerationConfig, ThinkingConfig, json_schema_to_gemini_schema, wire_thought_signature,
 };
 
 /// Map a conversation onto Gemini `generateContent` JSON (python-genai REST).
@@ -36,23 +36,10 @@ pub fn build_gemini_request(req: &ConversationRequest) -> GenerateContentRequest
     let content_parts_to_gemini = |parts: &[ContentPart]| -> Vec<GeminiPart> {
         parts
             .iter()
-            .map(|part| match part {
-                ContentPart::Text { text } => GeminiPart::text(text.as_ref()),
-                ContentPart::Image { url } => {
-                    if let Some((header, data)) = url.strip_prefix("data:").and_then(|rest| {
-                        rest.split_once(";base64,").or_else(|| rest.split_once(','))
-                    }) {
-                        GeminiPart {
-                            inline_data: Some(GeminiInlineData {
-                                mime_type: header.to_string(),
-                                data: data.to_string(),
-                            }),
-                            ..GeminiPart::default()
-                        }
-                    } else {
-                        GeminiPart::text(format!("[image: {url}]"))
-                    }
-                }
+            .filter_map(|part| match part {
+                ContentPart::Text { text } if text.is_empty() => None,
+                ContentPart::Text { text } => Some(GeminiPart::text(text.as_ref())),
+                ContentPart::Image { url } => Some(image_url_to_gemini_part(url)),
             })
             .collect()
     };
@@ -104,18 +91,20 @@ pub fn build_gemini_request(req: &ConversationRequest) -> GenerateContentRequest
                     .unwrap_or_else(|| tr.tool_call_id.clone());
                 let response = serde_json::from_str::<serde_json::Value>(&tr.content)
                     .unwrap_or_else(|_| serde_json::json!({ "output": tr.content.as_ref() }));
+                let image_parts: Vec<GeminiFunctionResponsePart> = tr
+                    .images
+                    .iter()
+                    .filter_map(image_content_to_function_response_part)
+                    .collect();
                 pending_fn_responses.push(GeminiPart {
                     function_response: Some(GeminiFunctionResponse {
                         id: Some(tr.tool_call_id.clone()),
                         name,
                         response,
+                        parts: (!image_parts.is_empty()).then_some(image_parts),
                     }),
                     ..GeminiPart::default()
                 });
-                for image in &tr.images {
-                    pending_fn_responses
-                        .extend(content_parts_to_gemini(std::slice::from_ref(image)));
-                }
             }
             ConversationItem::BackendToolCall(b) => {
                 flush_fn_responses(&mut pending_fn_responses, &mut contents);
@@ -144,6 +133,7 @@ pub fn build_gemini_request(req: &ConversationRequest) -> GenerateContentRequest
 
     flush_model(&mut pending_model, &mut contents);
     flush_fn_responses(&mut pending_fn_responses, &mut contents);
+    sanitize_gemini_contents(&mut contents);
 
     let tools = if req.tools.is_empty() {
         None
@@ -228,6 +218,68 @@ pub fn gemini_generate_path(model: &str, stream: bool) -> String {
         "generateContent"
     };
     format!("v1beta/models/{model}:{method}")
+}
+
+fn parse_data_url(url: &str) -> Option<(String, String)> {
+    let rest = url.strip_prefix("data:")?;
+    let (header, data) = rest
+        .split_once(";base64,")
+        .or_else(|| rest.split_once(','))?;
+    Some((header.to_string(), data.to_string()))
+}
+
+fn image_url_to_gemini_part(url: &str) -> GeminiPart {
+    if let Some((mime_type, data)) = parse_data_url(url) {
+        GeminiPart {
+            inline_data: Some(GeminiInlineData { mime_type, data }),
+            ..GeminiPart::default()
+        }
+    } else {
+        GeminiPart::text(format!("[image: {url}]"))
+    }
+}
+
+fn image_content_to_function_response_part(
+    part: &ContentPart,
+) -> Option<GeminiFunctionResponsePart> {
+    let ContentPart::Image { url } = part else {
+        return None;
+    };
+    let (mime_type, data) = parse_data_url(url)?;
+    Some(GeminiFunctionResponsePart {
+        inline_data: Some(GeminiInlineData { mime_type, data }),
+    })
+}
+
+fn part_is_empty(part: &GeminiPart) -> bool {
+    part.text.as_ref().is_none_or(|t| t.is_empty())
+        && part.function_call.is_none()
+        && part.function_response.is_none()
+        && part.inline_data.is_none()
+        && !part.thought
+        && part.thought_signature.as_ref().is_none_or(|s| s.is_empty())
+}
+
+/// Gemini generateContent requires alternating user/model turns and a user tip.
+fn sanitize_gemini_contents(contents: &mut Vec<GeminiContent>) {
+    for content in contents.iter_mut() {
+        content.parts.retain(|p| !part_is_empty(p));
+    }
+    contents.retain(|c| !c.parts.is_empty());
+    let mut merged: Vec<GeminiContent> = Vec::new();
+    for content in contents.drain(..) {
+        if let Some(last) = merged.last_mut()
+            && last.role == content.role
+        {
+            last.parts.extend(content.parts);
+        } else {
+            merged.push(content);
+        }
+    }
+    *contents = merged;
+    while contents.last().and_then(|c| c.role.as_deref()) == Some("model") {
+        contents.pop();
+    }
 }
 
 #[cfg(test)]
@@ -397,6 +449,92 @@ mod tests {
         assert_eq!(
             params.pointer("/properties/todos/items/properties/content/nullable"),
             Some(&serde_json::json!(true))
+        );
+    }
+
+    #[test]
+    fn tool_result_images_live_inside_function_response_parts() {
+        let req = ConversationRequest {
+            items: vec![
+                user("look"),
+                ConversationItem::Reasoning(rs::ReasoningItem {
+                    id: String::new(),
+                    summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
+                        text: "reading screenshot".into(),
+                    })],
+                    content: None,
+                    encrypted_content: Some(store_thought_signature("SIG")),
+                    status: None,
+                }),
+                ConversationItem::assistant_tool_calls(vec![ToolCall {
+                    id: Arc::from("call_img"),
+                    name: "read_file".into(),
+                    arguments: Arc::from(r#"{"path":"shot.jpg"}"#),
+                }]),
+                ConversationItem::tool_result_with_images(
+                    "call_img",
+                    "Read image file: shot.jpg",
+                    vec![ContentPart::Image {
+                        url: Arc::from("data:image/jpeg;base64,/9j/4AAQ"),
+                    }],
+                ),
+            ],
+            ..Default::default()
+        };
+        let g = build_gemini_request(&req);
+        let last = g.contents.last().expect("contents");
+        assert_eq!(last.role.as_deref(), Some("user"));
+        assert!(
+            last.parts.iter().all(|p| p.inline_data.is_none()),
+            "sibling inlineData next to functionResponse 400s Gemini 3: {last:?}"
+        );
+        let fr = last
+            .parts
+            .iter()
+            .find_map(|p| p.function_response.as_ref())
+            .expect("functionResponse");
+        let media = fr.parts.as_ref().expect("functionResponse.parts");
+        assert_eq!(media.len(), 1);
+        assert_eq!(
+            media
+                .first()
+                .and_then(|p| p.inline_data.as_ref())
+                .map(|d| d.mime_type.as_str()),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            g.contents.last().and_then(|c| c.role.as_deref()),
+            Some("user"),
+            "generateContent cannot end on a model turn"
+        );
+    }
+
+    #[test]
+    fn user_prompt_images_stay_content_parts_and_end_on_user() {
+        let mut u = ConversationItem::user("see this");
+        u.add_image("data:image/png;base64,iVBORw0K");
+        let req = ConversationRequest {
+            items: vec![
+                u,
+                ConversationItem::assistant("ok"),
+                ConversationItem::user("again"),
+            ],
+            ..Default::default()
+        };
+        let g = build_gemini_request(&req);
+        assert_eq!(
+            g.contents.first().and_then(|c| c.role.as_deref()),
+            Some("user")
+        );
+        assert!(
+            g.contents
+                .first()
+                .map(|c| c.parts.iter().any(|p| p.inline_data.is_some()))
+                .unwrap_or(false)
+        );
+        assert_eq!(
+            g.contents.last().and_then(|c| c.role.as_deref()),
+            Some("user")
         );
     }
 
