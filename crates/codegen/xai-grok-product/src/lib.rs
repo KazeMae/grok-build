@@ -21,8 +21,11 @@ pub const DISPLAY_NAME: &str = if PRIVACY_BUILD {
 } else {
     "Grok Build 中文社区版"
 };
-/// Command and executable stem. Same as official grok-build.
-pub const CLI_NAME: &str = "grok";
+/// Command the user types for this overlay. Official grok-build keeps `grok`.
+pub const CLI_NAME: &str = "grokx";
+/// Filename of the official managed install under `$GROK_HOME/bin`.
+/// This overlay does not occupy that name.
+pub const OFFICIAL_CLI_NAME: &str = "grok";
 /// Shared per-user data directory, relative to the user's home directory.
 ///
 /// The official and Simplified Chinese executables intentionally use the same
@@ -39,9 +42,19 @@ pub const COMMUNITY_ANNOUNCEMENTS_BASE_URL: &str = "https://raw.githubuserconten
 /// Official changelog CDN remains allowed; this overlay does not redirect updates.
 pub const OFFICIAL_CHANGELOG_SOURCE_ALLOWED: bool = true;
 
-/// Executable filename for the current platform.
+/// Executable filename for this overlay.
 pub const fn executable_name() -> &'static str {
-    if cfg!(windows) { "grok.exe" } else { CLI_NAME }
+    if cfg!(windows) { "grokx.exe" } else { CLI_NAME }
+}
+
+/// Official managed-install filename (`$GROK_HOME/bin/grok`). Auto-update still
+/// targets this path; this overlay's `grokx` binary is not that install.
+pub const fn official_executable_name() -> &'static str {
+    if cfg!(windows) {
+        "grok.exe"
+    } else {
+        OFFICIAL_CLI_NAME
+    }
 }
 
 #[cfg(test)]
@@ -78,7 +91,12 @@ mod tests {
         assert_eq!(DEFAULT_UI_LOCALE, "zh-CN");
         assert_eq!(
             executable_name(),
+            if cfg!(windows) { "grokx.exe" } else { "grokx" }
+        );
+        assert_eq!(
+            official_executable_name(),
             if cfg!(windows) { "grok.exe" } else { "grok" }
         );
+        assert_ne!(CLI_NAME, OFFICIAL_CLI_NAME);
     }
 }

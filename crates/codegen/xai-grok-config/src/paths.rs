@@ -11,15 +11,16 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-/// Canonical application path: `<grok-home>/bin/grok` (Unix) or
-/// `grok.exe` (Windows).
+/// Canonical official application path: `<grok-home>/bin/grok` (Unix) or
+/// `grok.exe` (Windows). The overlay CLI (`grokx`) does not occupy this name.
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())
 }
 
 /// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
 pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
-    home.join("bin").join(xai_grok_product::executable_name())
+    home.join("bin")
+        .join(xai_grok_product::official_executable_name())
 }
 
 /// Shared system-wide Grok config directory: `/etc/grok/` on Unix, `None` on Windows.

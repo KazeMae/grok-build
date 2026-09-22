@@ -15,8 +15,9 @@ The upstream license and notices remain unchanged.
   When the upstream package version repeats, append the short `SOURCE_REV` of the
   new snapshot, as in `merge/upstream-1.0.24-c4ea71cf`.
 - `merge/grokzen`: Simplified Chinese UI and compile-time privacy ported from
-  [GrokZen](https://github.com/Catapult291/GrokZen). The executable remains `grok`.
-  Official auto-update and GrokZen installers are not part of this overlay.
+  [GrokZen](https://github.com/Catapult291/GrokZen). The overlay command is
+  `grokx`; official grok-build keeps `grok`. Official auto-update and GrokZen
+  installers are not part of this overlay.
 
 For a fresh clone:
 
@@ -46,8 +47,10 @@ Overlay resolution keeps upstream structure and re-threads locale / CJK /
 privacy on top, including `TitleState.locale`, `Option<Duration>` session-event
 copy, and dashboard peek locale.
 
-The executable name stays `grok` / `xai-grok-pager`. Official auto-update is
-unchanged; GrokZen installers are not included.
+The overlay command is `grokx`. Cargo still builds `xai-grok-pager`; install it
+as `$GROK_HOME/bin/grokx` and leave `$GROK_HOME/bin/grok` for official
+grok-build. Official auto-update still targets `bin/grok`. GrokZen installers
+are not included.
 
 Personal patches on top of that base:
 
