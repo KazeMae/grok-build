@@ -2316,6 +2316,16 @@ fn version_text(channel_label: &str) -> String {
 fn write_version(writer: &mut impl std::io::Write, channel_label: &str) -> std::io::Result<()> {
     writer.write_all(version_text(channel_label).as_bytes())
 }
+/// The leader gets its own crash directory: `install()` opens `last-crash.bin` with `O_TRUNC`, so a pager and a
+/// leader sharing one directory would each wipe the other's pending crash blob on start.
+fn crash_dir_for(args: &PagerArgs) -> std::path::PathBuf {
+    let base = xai_grok_shell::util::grok_home::grok_home().join("crash");
+    let is_leader = matches!(
+        &args.command,
+        Some(Command::Agent(agent)) if matches!(agent.mode, Some(AgentCmd::Leader(_)))
+    );
+    if is_leader { base.join("leader") } else { base }
+}
 fn dispatch_version_if_requested(args: &PagerArgs) -> bool {
     if !args.version {
         return false;
@@ -2458,7 +2468,7 @@ fn main() {
     );
     xai_crash_handler::install_terminal_restore_only();
     if xai_grok_shell::util::config::load_crash_handler_enabled_sync() {
-        let crash_dir = xai_grok_shell::util::grok_home::grok_home().join("crash");
+        let crash_dir = crash_dir_for(&args);
         if let Some(report) = xai_crash_handler::check_previous_crash(&crash_dir) {
             eprintln!("grok crashed during your last session.");
             eprintln!("  Signal:  {}", report.signal_name);
@@ -2475,13 +2485,6 @@ fn main() {
                 crash_dir.display()
             );
         }
-    }
-    let crashed = xai_grok_active_sessions::collect_crashed().unwrap_or_default();
-    if !crashed.is_empty() {
-        tracing::info!(
-            count = crashed.len(),
-            "Found crashed sessions from a previous run"
-        );
     }
     let workers = cli_worker_threads();
     let runtime = tokio::runtime::Builder::new_multi_thread()

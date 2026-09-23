@@ -91,6 +91,7 @@ pub async fn run_with_locale(
     agent_config: &AgentConfig,
     locale: &crate::locale::LocaleContext,
 ) -> Result<()> {
+    let command = args.command;
     let cancel = CancellationToken::new();
     xai_grok_telemetry::startup::mark_utility_process();
     let spawned = crate::acp::spawn::spawn_grok_shell(agent_config.clone(), &cancel, None).await?;
@@ -118,7 +119,7 @@ pub async fn run_with_locale(
         &spawned.channel.tx,
     )
     .await?;
-    dispatch(args.command, &spawned.channel.tx, locale).await
+    dispatch(command, &spawned.channel.tx, locale).await
 }
 
 async fn dispatch(
@@ -219,7 +220,7 @@ async fn cmd_show(
     match rec {
         Some(r) => {
             let written =
-                display::print_show_with_locale(&r, &mut std::io::stdout().lock(), locale);
+                display::print_show_with_locale(&r, None, &mut std::io::stdout().lock(), locale);
             Ok(crate::util::ignore_broken_pipe(written)?)
         }
         None => bail!(localized_named(

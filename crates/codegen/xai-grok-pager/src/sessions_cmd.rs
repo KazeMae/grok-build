@@ -275,6 +275,15 @@ pub async fn run(
     Ok(())
 }
 
+/// The placeholder every session listing shows for a blank title
+pub(crate) fn summary_or_untitled(title: &str) -> &str {
+    if title.trim().is_empty() {
+        "(untitled)"
+    } else {
+        title
+    }
+}
+
 /// Print sessions grouped by worktree label, preserving the original table
 /// format with a `Label: <label>` header before each group.
 fn print_sessions_grouped(sessions: &[MergedSession], locale: &LocaleContext) {
