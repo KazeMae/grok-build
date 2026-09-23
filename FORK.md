@@ -35,8 +35,8 @@ commits. Stage named files instead of the whole worktree.
 
 ## Current Version
 
-Version: `1.0.41+kazemae.9` (not tagged yet). Review branch
-`merge/upstream-1.0.41`; not on `main` until CI.
+Version: `1.0.41+kazemae.9` (annotated tag `v1.0.41+kazemae.9`). Review branch
+`merge/upstream-1.0.41`, merged into `main` as `634b365e` via PR #11 after CI.
 
 Upstream base is `07e35a3d` (upstream package version `1.0.41`,
 `SOURCE_REV` `84745de98b3d`), merged in `27da0dba`. That single monorepo sync
@@ -101,7 +101,17 @@ Validation of `1.0.41+kazemae.9` on macOS Apple Silicon (Rust 1.94.0):
 - `cargo test -p xai-grok-pager --lib` still fails to compile on the same 44
   upstream `#[cfg(test)]` call sites as `main` (verified identical); `CI` runs
   `clippy`/`build` without `--all-targets`, so this is unchanged and pre-existing.
-- GitHub Actions `fmt / clippy / build` on the merge PR is the remaining gate.
+- GitHub Actions `fmt / clippy / build` passed on PR #11 for both
+  `linux-x86_64` and `macos-aarch64`; the PR was then merged into `main`.
+- `GROK_VERSION=1.0.41+kazemae.9 cargo build --locked -p xai-grok-pager-bin --release`
+  produced `target/release/xai-grok-pager` (sha256 `621fe363ff531414684f9da189080ec275dba4e6e83661f9a6ba66b670274faf`).
+- Live single-turn `read_file` round trip returned the exact token on all three
+  backends: `uniapi-gpt-5.6-sol` (responses), `uniapi-claude-sonnet-5` (messages),
+  and `uniapi-gemini-38-flash` (the personal Gemini backend), each run with
+  `--permission-mode dontAsk --leader-socket ~/.grok/leader-verify.sock`.
+- Installed as `~/.grok/bin/grokx-1.0.41+kazemae.9` with `~/.grok/bin/grokx`
+  symlinked to it; the previous `grokx-1.0.38+kazemae.8{.1}` binaries and a
+  timestamped `config.toml` backup are retained for rollback.
 
 ## Previous Versions
 
