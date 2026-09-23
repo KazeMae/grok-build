@@ -35,17 +35,27 @@ commits. Stage named files instead of the whole worktree.
 
 ## Current Version
 
-Version: `1.0.38+kazemae.8` (not tagged yet). Review branch
-`merge/upstream-1.0.38`; not on `main` until CI.
+Version: `1.0.41+kazemae.9` (not tagged yet). Review branch
+`merge/upstream-1.0.41`; not on `main` until CI.
 
-Upstream base is `4247f661` (upstream package version `1.0.38`,
-`SOURCE_REV` `9bb727ccdff0`), merged in `288d6842`. That snapshot jumps
-1.0.36–1.0.38 in one monorepo sync (403 files). Git reported 11 content
-conflicts, again the GrokZen pager overlay against dashboard preview, prompt
-wrap, headless locale, background-task verbs, and related structure changes.
-Overlay resolution keeps upstream structure and re-threads locale / CJK /
-privacy on top, including `TitleState.locale`, `Option<Duration>` session-event
-copy, and dashboard peek locale.
+Upstream base is `07e35a3d` (upstream package version `1.0.41`,
+`SOURCE_REV` `84745de98b3d`), merged in `27da0dba`. That single monorepo sync
+jumps 1.0.38–1.0.41 (419 files, +25k/−6k). Git reported 27 content conflicts,
+again the GrokZen pager overlay against upstream refactors: locale threading in
+`worktree_cmd` / `disk_usage_cmd`, the settings render split
+(`wrap_expanded_description` now takes text, `wrapped_description_height`
+returns wrapped lines), the session-summary and subagent label helpers, and the
+new `save_success_toast_with_locale` call site in `setters.rs`. The privacy
+Mixpanel no-op also conflicts with upstream's `engage` / `base_url` / `post`
+refactor; the overlay keeps the hard no-op and drops the transmission
+internals. Overlay resolution keeps upstream structure and re-threads locale /
+CJK / privacy on top, and adds the new-version community changelog
+(`1.0.41.zh-CN.md` / `.json`) that `extract_builtin_files` includes.
+
+Two upstream removals are followed rather than re-added: the *disabled* inline
+edit-and-resubmit feature (`dispatch_inline_edit_submit`, `pending_inline_resubmit`)
+and the workflow agent-count columns. `subagent_type` no longer feeds the
+subagent label; upstream keys it on persona → role → tag → `subagent`.
 
 The overlay command is `grokx`. Cargo still builds `xai-grok-pager`; install it
 as `$GROK_HOME/bin/grokx` and leave `$GROK_HOME/bin/grok` for official
@@ -73,22 +83,40 @@ Personal patches on top of that base:
   `SessionModelSwitch.is_family_switch`.
 - `81904d59` adds a native Gemini `generateContent` REST/SSE backend
   (`api_backend = "gemini"`), distinct from OpenAI-compatible Chat Completions.
+  `ApiBackend::default_max_request_bytes` (new upstream) now also covers the
+  `Gemini` arm.
 
 Upstream still implements neither heartbeat ignore nor reasoning omission, so those
 two patches remain required. Telemetry stays compile-time locked. The Gemini backend
 is also personal; upstream still has Chat Completions, Responses, and Messages only.
 
-Validation of `1.0.38+kazemae.8` on macOS Apple Silicon (Rust 1.94.0):
+Validation of `1.0.41+kazemae.9` on macOS Apple Silicon (Rust 1.94.0):
 
-- Local `cargo check --locked -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel`
+- `cargo check --locked -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel`
   and `cargo clippy --locked -p xai-grok-pager -p xai-grok-pager-bin -p xai-grok-shell -p xai-mixpanel -- -D warnings`
   passed after overlay fixups.
+- `cargo test --locked -p xai-grok-sampler -p xai-grok-sampling-types --lib -- --test-threads=1`
+  passed (254 + 300 tests), covering the keepalive and reasoning-portability patches.
+- `cargo fmt --all -- --check` is clean.
+- `cargo test -p xai-grok-pager --lib` still fails to compile on the same 44
+  upstream `#[cfg(test)]` call sites as `main` (verified identical); `CI` runs
+  `clippy`/`build` without `--all-targets`, so this is unchanged and pre-existing.
 - GitHub Actions `fmt / clippy / build` on the merge PR is the remaining gate.
-- `cargo clippy --workspace --all-targets -- -D warnings` still fails on
-  upstream test and bench targets; treat only findings inside overlay files as
-  personal regressions.
 
 ## Previous Versions
+
+### 1.0.38+kazemae.8
+
+Not tagged. Upstream base was `4247f661` (package version `1.0.38`,
+`SOURCE_REV` `9bb727ccdff0`), merged in `288d6842`. That snapshot jumped
+1.0.36–1.0.38 in one monorepo sync (403 files) with 11 content conflicts, again
+the GrokZen pager overlay against dashboard preview, prompt wrap, headless
+locale, background-task verbs, and related structure changes. Overlay
+resolution kept upstream structure and re-threaded locale / CJK / privacy on
+top, including `TitleState.locale`, `Option<Duration>` session-event copy, and
+dashboard peek locale. Validation: local `check` and strict `clippy` on the
+pager/shell/mixpanel set passed; `cargo clippy --workspace --all-targets` still
+failed on upstream test/bench targets.
 
 ### 1.0.35+kazemae.7
 
@@ -199,7 +227,7 @@ command below for this baseline; the tracing test itself is unchanged.
 ## Verify and Build
 
 Install the toolchain in `rust-toolchain.toml` and DotSlash as described in
-[README.md](README.md#building-from-source). Version `1.0.38+kazemae.8` uses
+[README.md](README.md#building-from-source). Version `1.0.41+kazemae.9` uses
 Rust 1.94.0.
 
 ```sh
@@ -213,7 +241,7 @@ rustfmt --edition 2024 --check \
 
 cargo clippy --locked --workspace --no-deps --keep-going -- -D warnings
 
-GROK_VERSION=1.0.38+kazemae.8 cargo build --locked -p xai-grok-pager-bin --release
+GROK_VERSION=1.0.41+kazemae.9 cargo build --locked -p xai-grok-pager-bin --release
 ./target/release/xai-grok-pager --version
 ```
 
@@ -278,6 +306,6 @@ git push origin main
 
 Use a new `GROK_VERSION` value and annotated tag for each published personal
 version, preserving the upstream numeric version (for example,
-`1.0.38+kazemae.8`). Update this document's patch and validation records for the
+`1.0.41+kazemae.9`). Update this document's patch and validation records for the
 new version. Do not change the generated root `Cargo.toml` just to stamp a local
 binary version.

@@ -45,8 +45,6 @@ fn hovered_bg(theme: &Theme) -> ratatui::style::Color {
     theme.bg_hover
 }
 
-// ── Enums ──────────────────────────────────────────────────────────────
-
 /// Per-question selection state.
 #[derive(Debug, Clone)]
 pub enum QuestionSelection {
@@ -179,7 +177,7 @@ pub struct QuestionViewState {
     /// Independent of the text content; text is preserved on untoggle.
     pub per_question_freeform_selected: Vec<bool>,
 
-    // ── Cached chrome caps (recomputed on resize / question switch) ──
+    // Recomputed on resize / question switch.
     /// Cached cap on description lines in chrome (capped in non-fullscreen).
     pub cached_desc_cap: u16,
     /// Cached cap on preview lines in chrome (capped in non-fullscreen).
@@ -215,8 +213,6 @@ pub struct QuestionViewState {
     /// sharing back on (and says so in its description).
     pub feedback_offer_reenables_sharing: bool,
 }
-
-// ── Constructor & basic helpers ────────────────────────────────────────
 
 impl QuestionViewState {
     /// Initializes per-question vectors (selections, cursors, scroll) based on each question's type (single vs multi-select).
@@ -575,8 +571,6 @@ pub fn item_index_at_screen_row(
     ))
 }
 
-// ── Layout helpers ─────────────────────────────────────────────────────
-
 /// Compute the aligned label column width.
 pub fn compute_max_label_w(options: &[QuestionOption], content_w: usize) -> usize {
     let cap = content_w * 3 / 5;
@@ -704,8 +698,6 @@ fn split_question_label_desc(text: &str) -> (&str, &str) {
         (text.trim(), "")
     }
 }
-
-// ── Selection helpers ──────────────────────────────────────────────────
 
 impl QuestionViewState {
     /// Toggle an option for a question. Multi: toggle in/out of the HashSet. Single: set to
@@ -931,8 +923,6 @@ impl QuestionViewState {
     }
 }
 
-// ── ACP response builders ──────────────────────────────────────────────
-
 impl QuestionViewState {
     /// Only answered questions appear in `answers` (unanswered omitted). Freeform-only (no option, only
     /// typed text): the label is `"Other"` and the typed text goes in `annotations[q].notes`. Preview
@@ -1034,8 +1024,6 @@ impl QuestionViewState {
     }
 }
 
-// ── Tab cycling ────────────────────────────────────────────────────────
-
 impl QuestionViewState {
     /// Advance to the next question (clamped, no wrap).
     pub fn next_question(&mut self) {
@@ -1049,8 +1037,6 @@ impl QuestionViewState {
         self.active_tab = self.active_tab.saturating_sub(1);
     }
 }
-
-// ── Rendering ──────────────────────────────────────────────────────────
 
 /// Desired height for the question view overlay. The description and preview caps shrink
 /// dynamically so at least [`MIN_VISIBLE_OPTION_ROWS`] option rows stay visible under the chrome.
@@ -1872,7 +1858,6 @@ pub fn render_question_view_with_placeholder(
     // Vertical padding at the top.
     y += 1;
 
-    // ── Question chrome (label, counter, description) ──
     // Clip to the panel bottom: the accounted height and the rendered height can disagree (wrap-width drift, stale caps)
     // The chrome must degrade to truncation instead of writing past the area; set_line past the buffer bottom aborts the TUI
     y = render_question_chrome(
@@ -1890,12 +1875,10 @@ pub fn render_question_view_with_placeholder(
         locale,
     );
 
-    // ── Gap ──
     y += 1;
 
     let options_start_y = y;
 
-    // ── Option rows (scrollable) + sticky freeform row ──
     let visible_bottom = area.y + area.height;
     let scroll = state.per_question_scroll.get(q_idx).copied().unwrap_or(0) as usize;
     let cursor = state.cursor();
@@ -1949,7 +1932,6 @@ pub fn render_question_view_with_placeholder(
         y += 1;
     }
 
-    // ── Sticky freeform row at the bottom ──
     if sticky_freeform {
         let freeform_y = visible_bottom.saturating_sub(1);
         if freeform_y >= y {
@@ -2087,7 +2069,6 @@ fn render_question_chrome(
     // Split into label (first paragraph) and description (rest).
     let (label_text, desc_text) = split_question_label_desc(&question.question);
 
-    // ── Label (bold, primary text, word-wrapped) ──
     let label_style = Style::default()
         .fg(theme.text_primary)
         .add_modifier(Modifier::BOLD);
@@ -2107,7 +2088,6 @@ fn render_question_chrome(
         cur_y += 1;
     }
 
-    // ── Description (dimmed, markdown-rendered) ──
     if !desc_text.is_empty() {
         let desc_lines = styled_description_lines(
             &QuestionOption {
@@ -2146,7 +2126,6 @@ fn render_question_chrome(
         }
     }
 
-    // ── Preview for focused option (dimmed, word-wrapped) ──
     if let Some(preview_text) = state.focused_preview()
         && !preview_text.is_empty()
     {
@@ -2208,8 +2187,6 @@ fn render_question_chrome(
 
     cur_y
 }
-
-// ── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -2507,8 +2484,6 @@ mod tests {
         );
     }
 
-    // ── new() ──────────────────────────────────────────────────────────
-
     #[test]
     fn new_initializes_vectors_correctly() {
         let q1 = make_question("Pick one?", &["A", "B", "C"], false);
@@ -2549,8 +2524,6 @@ mod tests {
         assert!(state.per_question_scroll.iter().all(|&s| s == 0));
     }
 
-    // ── toggle_option ──────────────────────────────────────────────────
-
     #[test]
     fn toggle_option_multi_toggles_in_out() {
         let q = make_question("Pick?", &["A", "B", "C"], true);
@@ -2571,8 +2544,6 @@ mod tests {
         assert_eq!(state.selected_labels(0), vec!["A"]);
     }
 
-    // ── select_option ──────────────────────────────────────────────────
-
     #[test]
     fn select_option_single_replaces_previous() {
         let q = make_question("Pick?", &["A", "B", "C"], false);
@@ -2584,8 +2555,6 @@ mod tests {
         state.select_option(0, 2);
         assert_eq!(state.selected_labels(0), vec!["C"]);
     }
-
-    // ── selected_labels ────────────────────────────────────────────────
 
     #[test]
     fn selected_labels_mixed_selections() {
@@ -2602,8 +2571,6 @@ mod tests {
         multi.sort();
         assert_eq!(multi, vec!["P", "R"]);
     }
-
-    // ── next_question / prev_question ──────────────────────────────────
 
     #[test]
     fn question_cycling_clamps_at_boundaries() {
@@ -2629,8 +2596,6 @@ mod tests {
         state.prev_question();
         assert_eq!(state.active_tab, 0); // clamped at start
     }
-
-    // ── compute_max_label_w ────────────────────────────────────────────
 
     #[test]
     fn compute_max_label_w_caps_long_labels_at_60_percent() {
@@ -2802,8 +2767,6 @@ mod tests {
         assert_eq!(heights as usize, lines.len());
     }
 
-    // ── is_on_freeform_row ─────────────────────────────────────────────
-
     #[test]
     fn is_on_freeform_row_returns_true_at_end() {
         let q = make_question("Pick?", &["A", "B"], false);
@@ -2816,8 +2779,6 @@ mod tests {
         state.set_cursor(2);
         assert!(state.is_on_freeform_row());
     }
-
-    // ── cursor / set_cursor ────────────────────────────────────────────
 
     #[test]
     fn set_cursor_clamps_to_valid_range() {
@@ -2832,16 +2793,12 @@ mod tests {
         assert_eq!(state.cursor(), 0);
     }
 
-    // ── total_items ────────────────────────────────────────────────────
-
     #[test]
     fn total_items_counts_options_plus_freeform() {
         let q = make_question("Pick?", &["A", "B", "C"], false);
         let state = QuestionViewState::new("tc".into(), vec![q], StashedPrompt::default());
         assert_eq!(state.total_items(0), 4); // 3 options + 1 freeform
     }
-
-    // ── no_freeform ────────────────────────────────────────────────────
 
     /// `no_freeform` questions (e.g. the SuperGrok upsell) have no "Other" row, so activating freeform input must be impossible.
     /// Focus stays in Navigation and nothing gets marked selected.
@@ -2893,8 +2850,6 @@ mod tests {
         assert_eq!(h_with, h_without + 1);
     }
 
-    // ── option_visual_height ───────────────────────────────────────────
-
     #[test]
     fn option_visual_height_unfocused_always_1() {
         let opt = QuestionOption {
@@ -2918,8 +2873,6 @@ mod tests {
         let h = option_visual_height(&opt, 30, 6, 5, true);
         assert!(h >= 3, "expected >= 3, got {h}");
     }
-
-    // ── chrome_height ──────────────────────────────────────────────────
 
     #[test]
     fn split_question_label_desc_no_break() {
@@ -3159,8 +3112,6 @@ mod tests {
         );
     }
 
-    // ── focused_preview ──────────────────────────────────────────────
-
     #[test]
     fn focused_preview_returns_preview_when_on_option() {
         let q = Question {
@@ -3195,8 +3146,6 @@ mod tests {
         state.set_cursor(2);
         assert_eq!(state.focused_preview(), None);
     }
-
-    // ── toggle on Single ───────────────────────────────────────────────
 
     #[test]
     fn toggle_option_single_deselects_when_same() {
@@ -3265,8 +3214,6 @@ mod tests {
         assert_eq!(*at(&state.per_question_scroll, 0), expected_max);
     }
 
-    // ── truncation cap tests ───────────────────────────────────────────
-
     #[test]
     fn chrome_height_caps_long_description() {
         // 10-line description using CommonMark hard breaks (`  \n`) so each logical line renders as its own visual line
@@ -3320,8 +3267,6 @@ mod tests {
         // vpad(1) + label(1) + gap(1) + desc(1) + gap(1) = 5
         assert_eq!(h, 5);
     }
-
-    // ── question_view_height / minimum visible option rows ─────────────
 
     /// Helper: build a QuestionViewState for height tests.
     fn make_state_for_height(
@@ -3410,8 +3355,6 @@ mod tests {
         assert_eq!(state.cached_desc_cap, u16::MAX);
         assert_eq!(state.cached_preview_cap, u16::MAX);
     }
-
-    // ── focus-driven option height ─────────────────────────────────────
 
     #[test]
     fn unfocused_option_is_one_line_focused_is_full() {

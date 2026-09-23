@@ -909,27 +909,6 @@ fn dedup_persona_role<'a, 'b>(
     }
 }
 
-pub(crate) fn format_type_label(subagent_type: &str) -> &str {
-    match subagent_type {
-        "general-purpose" => "general",
-        other => other,
-    }
-}
-
-fn localized_builtin_subagent_type<'a>(
-    subagent_type: &str,
-    locale: Option<&'a crate::locale::LocaleContext>,
-) -> Option<&'a str> {
-    let locale = locale?;
-    let (key, english) = match subagent_type {
-        "general-purpose" => ("subagent.label.general", "general"),
-        "explore" => ("subagent.label.explore", "explore"),
-        "plan" => ("subagent.label.plan", "plan"),
-        _ => return None,
-    };
-    Some(locale.named_static_text(key, english))
-}
-
 pub(crate) fn format_context_badge(info: &SubagentInfo) -> &str {
     match info.attempt.context_source.as_deref() {
         Some("resumed") => "resumed",
@@ -1013,23 +992,11 @@ pub(crate) fn format_subagent_label_with_locale(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if r.eq_ignore_ascii_case(info.subagent_type.as_ref()) {
-            localized_builtin_subagent_type(&info.subagent_type, locale)
-                .unwrap_or(r)
-                .to_string()
-        } else {
-            r.to_string()
-        }
-    } else if info.subagent_type.as_ref() != "general-purpose" {
-        localized_builtin_subagent_type(&info.subagent_type, locale)
-            .unwrap_or_else(|| format_type_label(&info.subagent_type))
-            .to_string()
+        r.to_string()
     } else if let Some(tag) = tag {
         tag.to_string()
     } else {
-        localized_builtin_subagent_type("general-purpose", locale)
-            .unwrap_or("general")
-            .to_string()
+        "subagent".to_string()
     };
 
     // Iterating handles uppercase mappings that span several codepoints (`ß` becomes `SS`)

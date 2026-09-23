@@ -2454,5 +2454,8 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             app.show_toast(&message);
             vec![]
         }
+        TaskResult::FeatureOverridePersisted { feature, result } => {
+            settings::handle_feature_override_persisted(app, feature, result)
+        }
     }
 }

@@ -5854,6 +5854,7 @@ mod tests {
             disable_model_invocation: false,
             has_user_specified_description: false,
             paths: None,
+            origin: None,
             enabled: true,
             body: None,
         }
