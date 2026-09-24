@@ -35,6 +35,47 @@ commits. Stage named files instead of the whole worktree.
 
 ## Current Version
 
+Version: `1.0.41+kazemae.10` (annotated tag `v1.0.41+kazemae.10`). Review branch
+`merge/upstream-1.0.41-036a5d83`, merged into `main` as `8c096396` via PR #12
+after Linux x86_64 and macOS aarch64 CI passed. Upstream package version remains
+`1.0.41`; the new monorepo snapshot is `f0e3be11` (`SOURCE_REV` `036a5d8348cd`).
+It changed 187 files and produced 12 merge conflicts. The resolution preserves
+the fork's locale, CJK, privacy, Responses keepalive, reasoning portability,
+and Gemini support. It follows upstream's removal of dashboard subagent rows
+and the subagent catalog pane, and threads locale through upstream's new
+dashboard activity and minimal resize/reprint paths.
+
+Validation on macOS Apple Silicon (Rust 1.94.0):
+
+- `cargo fmt --all -- --check`, the locked application `cargo check`, and strict
+  Clippy for pager, pager-bin, pager-minimal, shell, and mixpanel passed.
+- Grok's core library run passed 568 tests covering keepalive, reasoning
+  portability, Gemini, locale, and privacy. Pager `--lib` tests still cannot
+  compile because of the 44 pre-existing upstream test-target errors; the
+  production application check and PR CI passed.
+- A locked offline release build with `GROK_VERSION=1.0.41+kazemae.10`
+  produced a 188,390,160-byte privacy build
+  reporting commit `8c096396861a`. SHA-256:
+  `bc9e65a73e7171af652064e945a32aabe31cf4bf53f629739633a01bda1b571b`.
+- Isolated `read_file` round trips returned `verify-token-036a5d83` with
+  `uniapi-gpt-5.6-sol` (Responses) and `uniapi-gemini-38-flash` (Gemini),
+  both before and after the final-commit rebuild.
+- Installed as `~/.grok/bin/grokx-1.0.41+kazemae.10`, then atomically switched
+  only `~/.grok/bin/grokx` to it. The previous versioned binary remains for
+  rollback; `~/.grok/bin/grok` still points to `grok-1.0.41`. Configuration
+  was backed up before installation and otherwise left unchanged, including
+  its existing `auto_update = true` setting. The official updater targets
+  `bin/grok`, not `bin/grokx`.
+- GitHub Actions run [35962510949](https://github.com/KazeMae/grok-build/actions/runs/35962510949)
+  passed all four Linux/macOS build jobs and `Publish GitHub Release`.
+  [Release `v1.0.41+kazemae.10`](https://github.com/KazeMae/grok-build/releases/tag/v1.0.41%2Bkazemae.10)
+  is published with four platform tarballs and `SHA256SUMS.txt`; the released
+  checksum file lists all four tarballs.
+
+## Previous Versions
+
+### 1.0.41+kazemae.9
+
 Version: `1.0.41+kazemae.9` (annotated tag `v1.0.41+kazemae.9`). Review branch
 `merge/upstream-1.0.41`, merged into `main` as `634b365e` via PR #11 after CI.
 
@@ -112,8 +153,6 @@ Validation of `1.0.41+kazemae.9` on macOS Apple Silicon (Rust 1.94.0):
 - Installed as `~/.grok/bin/grokx-1.0.41+kazemae.9` with `~/.grok/bin/grokx`
   symlinked to it; the previous `grokx-1.0.38+kazemae.8{.1}` binaries and a
   timestamped `config.toml` backup are retained for rollback.
-
-## Previous Versions
 
 ### 1.0.38+kazemae.8
 
@@ -237,7 +276,7 @@ command below for this baseline; the tracing test itself is unchanged.
 ## Verify and Build
 
 Install the toolchain in `rust-toolchain.toml` and DotSlash as described in
-[README.md](README.md#building-from-source). Version `1.0.41+kazemae.9` uses
+[README.md](README.md#building-from-source). Version `1.0.41+kazemae.10` uses
 Rust 1.94.0.
 
 ```sh
@@ -251,7 +290,7 @@ rustfmt --edition 2024 --check \
 
 cargo clippy --locked --workspace --no-deps --keep-going -- -D warnings
 
-GROK_VERSION=1.0.41+kazemae.9 cargo build --locked -p xai-grok-pager-bin --release
+GROK_VERSION=1.0.41+kazemae.10 cargo build --locked -p xai-grok-pager-bin --release
 ./target/release/xai-grok-pager --version
 ```
 
@@ -273,7 +312,7 @@ inside patched files as personal regressions.
 
 The artifact is `target/release/xai-grok-pager`. Install it as a new versioned
 binary under `~/.grok/bin/`, back up the existing binary and configuration, and
-atomically replace the `grok` symlink only after verification. Retain the old
+atomically replace the `grokx` symlink only after verification. Retain the old
 binary for rollback. Running Grok sessions keep their old executable until restart.
 
 The official updater is **not** redirected to this fork. To retain a custom build,
