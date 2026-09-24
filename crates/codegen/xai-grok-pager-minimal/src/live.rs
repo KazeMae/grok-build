@@ -803,15 +803,15 @@ fn render_prompt_info(
         let gaps = (segs.len().saturating_sub(1) as u16).saturating_mul(3);
         text.saturating_add(gaps)
     };
-    if line_width(&segs) > area.width {
-        if let Some(idx) = segs.iter().position(|seg| seg.drop == 2) {
-            segs.remove(idx);
-        }
+    if line_width(&segs) > area.width
+        && let Some(idx) = segs.iter().position(|seg| seg.drop == 2)
+    {
+        segs.remove(idx);
     }
-    if line_width(&segs) > area.width {
-        if let Some(idx) = segs.iter().position(|seg| seg.drop == 1) {
-            segs.remove(idx);
-        }
+    if line_width(&segs) > area.width
+        && let Some(idx) = segs.iter().position(|seg| seg.drop == 1)
+    {
+        segs.remove(idx);
     }
     if segs.is_empty() {
         return;
