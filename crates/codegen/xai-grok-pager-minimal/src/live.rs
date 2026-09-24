@@ -761,18 +761,18 @@ fn render_prompt_info(
             .and_then(|c| (c.total > 0).then_some(c.total))
             .or_else(|| agent.session.models.get_context_window());
         let throughput = agent.throughput_labels();
+        if let Some(ttft) = throughput.ttft {
+            segs.push(InfoSeg {
+                text: ttft,
+                style: base,
+                drop: 2,
+            });
+        }
         if let Some(tps) = throughput.tps {
             segs.push(InfoSeg {
                 style: if tps.warn { warn } else { base },
                 text: tps.text,
                 drop: 1,
-            });
-        }
-        if let Some(rpm) = throughput.rpm {
-            segs.push(InfoSeg {
-                text: rpm,
-                style: base,
-                drop: 2,
             });
         }
         if let (Some(used), Some(total)) = (used, total)

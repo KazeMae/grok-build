@@ -149,6 +149,7 @@ async fn fixture(
                     tool_id: "update".to_owned(),
                     tool_name: "update".to_owned(),
                     call_id: "fixture.update".to_owned(),
+                    description_sha256: String::new(),
                 },
             )],
         )));

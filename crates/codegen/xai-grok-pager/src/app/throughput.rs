@@ -1,26 +1,24 @@
-//! In-memory tps/rpm for the session on screen.
+//! In-memory ttft/tps for the session on screen.
 //!
 //! The shell reports each model request when it is sent and when it finishes.
-//! Streamed text and reasoning that this process actually receives fill the live
-//! estimate. A finished call replaces that estimate with the server token count
-//! over the shell's first-token-to-end interval. Nothing is written to disk.
+//! TTFT is the wait from that send until the first token, including queue time.
+//! Streamed text and reasoning fill the live speed. A finished call replaces
+//! that estimate with the server token count over the shell's decode interval.
+//! The chips are not kept after the process exits. `/stats` reads the on-disk log.
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-/// Requests older than this drop out of `rpm`.
-pub const RPM_WINDOW: Duration = Duration::from_secs(60);
-
 /// One shown sample. `tps` is absent until the owning call has produced a token.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Labels {
+    pub ttft: Option<String>,
     pub tps: Option<TpsLabel>,
-    pub rpm: Option<String>,
 }
 
 impl Labels {
     pub fn is_empty(&self) -> bool {
-        self.tps.is_none() && self.rpm.is_none()
+        self.ttft.is_none() && self.tps.is_none()
     }
 }
 
@@ -35,33 +33,34 @@ pub struct TpsLabel {
 #[derive(Debug, Clone)]
 struct Call {
     chars: u64,
+    started_at: Instant,
     first_token_at: Option<Instant>,
-    /// This call may paint tps. A background call loses this while a user call is in flight.
+    /// This call may paint the chips. A background call loses this while a user call is in flight.
     owns: bool,
 }
 
 /// Per-session counters. One view, one tracker.
 #[derive(Debug, Default, Clone)]
 pub struct Throughput {
-    requests: VecDeque<Instant>,
     calls: HashMap<String, Call>,
     user_owner: Option<String>,
     background_owner: Option<String>,
-    /// Background calls that started while a user call owned tps, oldest first.
+    /// Background calls that started while a user call owned the chips, oldest first.
     waiting_background: VecDeque<String>,
+    retained_ttft_ms: Option<u64>,
     retained_tps: Option<f64>,
 }
 
 impl Throughput {
     pub fn start(&mut self, id: &str, user_turn: bool, now: Instant) {
-        self.prune(now);
-        self.requests.push_back(now);
         if self.calls.contains_key(id) {
-            // A retry of the same request. Count it again and wait for its first token.
+            // A retry of the same request. The clock starts over with this attempt.
             let call = self.calls.get_mut(id).expect("just checked");
             call.chars = 0;
+            call.started_at = now;
             call.first_token_at = None;
             if call.owns {
+                self.retained_ttft_ms = None;
                 self.retained_tps = None;
             }
             return;
@@ -80,12 +79,14 @@ impl Throughput {
             false
         };
         if owns {
+            self.retained_ttft_ms = None;
             self.retained_tps = None;
         }
         self.calls.insert(
             id.to_string(),
             Call {
                 chars: 0,
+                started_at: now,
                 first_token_at: None,
                 owns,
             },
@@ -123,7 +124,6 @@ impl Throughput {
         decode_ms: Option<u64>,
         now: Instant,
     ) {
-        self.prune(now);
         let Some(call) = self.calls.remove(id) else {
             return;
         };
@@ -137,6 +137,7 @@ impl Throughput {
         }
         self.waiting_background.retain(|waiting| waiting != id);
         if call.owns {
+            self.retained_ttft_ms = Some(ttft_ms(&call, now));
             self.retained_tps = rate_of(&call, output_tokens, decode_ms, now);
         }
         if was_user {
@@ -145,10 +146,12 @@ impl Throughput {
     }
 
     pub fn labels(&self, now: Instant, warn_below: f64) -> Labels {
-        let rpm = self.rpm_at(now);
-        let live = self.live_tps(now);
-        let tps_rate = live.or(self.retained_tps);
-        if tps_rate.is_none() && rpm == 0 {
+        let (ttft_ms, tps_rate) = if let Some(live) = self.live(now) {
+            (Some(live.0), live.1)
+        } else {
+            (self.retained_ttft_ms, self.retained_tps)
+        };
+        if ttft_ms.is_none() && tps_rate.is_none() {
             return Labels::default();
         }
         let tps = tps_rate.map(|rate| {
@@ -160,19 +163,13 @@ impl Throughput {
             }
         });
         Labels {
-            rpm: Some(format!("{rpm} rpm")),
+            ttft: ttft_ms.map(format_ttft),
             tps,
         }
     }
 
-    fn rpm_at(&self, now: Instant) -> usize {
-        self.requests
-            .iter()
-            .filter(|sent| now.saturating_duration_since(**sent) <= RPM_WINDOW)
-            .count()
-    }
-
-    fn live_tps(&self, now: Instant) -> Option<f64> {
+    /// Owning call: elapsed ttft, and tps once a token has arrived.
+    fn live(&self, now: Instant) -> Option<(u64, Option<f64>)> {
         let id = self
             .user_owner
             .as_ref()
@@ -181,23 +178,7 @@ impl Throughput {
         if !call.owns {
             return None;
         }
-        let started = call.first_token_at?;
-        let tokens = estimated_tokens(call.chars)?;
-        let secs = now
-            .saturating_duration_since(started)
-            .as_secs_f64()
-            .max(0.001);
-        Some(tokens as f64 / secs)
-    }
-
-    fn prune(&mut self, now: Instant) {
-        while self
-            .requests
-            .front()
-            .is_some_and(|sent| now.saturating_duration_since(*sent) > RPM_WINDOW)
-        {
-            self.requests.pop_front();
-        }
+        Some((ttft_ms(call, now), live_rate(call, now)))
     }
 
     fn disown_user(&mut self) {
@@ -227,6 +208,7 @@ impl Throughput {
                 if let Some(call) = self.calls.get_mut(&id) {
                     call.owns = true;
                     if call.first_token_at.is_none() {
+                        self.retained_ttft_ms = None;
                         self.retained_tps = None;
                     }
                 }
@@ -234,6 +216,35 @@ impl Throughput {
                 return;
             }
         }
+    }
+}
+
+fn ttft_ms(call: &Call, now: Instant) -> u64 {
+    let end = call.first_token_at.unwrap_or(now);
+    u64::try_from(end.saturating_duration_since(call.started_at).as_millis()).unwrap_or(u64::MAX)
+}
+
+fn live_rate(call: &Call, now: Instant) -> Option<f64> {
+    let started = call.first_token_at?;
+    let tokens = estimated_tokens(call.chars)?;
+    let secs = now
+        .saturating_duration_since(started)
+        .as_secs_f64()
+        .max(0.001);
+    Some(tokens as f64 / secs)
+}
+
+/// Under 10s keeps one decimal. Longer waits show whole seconds, then minutes.
+pub fn format_ttft(ms: u64) -> String {
+    let secs = ms as f64 / 1000.0;
+    if secs < 10.0 {
+        let tenths = (secs * 10.0 + 0.5).floor() as u64;
+        format!("{}.{}s ttft", tenths / 10, tenths % 10)
+    } else if secs < 90.0 {
+        format!("{}s ttft", (secs + 0.5).floor() as u64)
+    } else {
+        let tenths = (secs / 60.0 * 10.0 + 0.5).floor() as u64;
+        format!("{}.{}m ttft", tenths / 10, tenths % 10)
     }
 }
 
@@ -346,13 +357,13 @@ mod tests {
     }
 
     #[test]
-    fn sent_request_shows_rpm_until_the_first_token() {
+    fn sent_request_shows_ttft_until_the_first_token() {
         let mut tp = t();
         let now = base();
         tp.start("a", true, now);
-        let labels = tp.labels(now, 10.0);
+        let labels = tp.labels(now + Duration::from_millis(1_200), 10.0);
         assert!(labels.tps.is_none());
-        assert_eq!(labels.rpm.as_deref(), Some("1 rpm"));
+        assert_eq!(labels.ttft.as_deref(), Some("1.2s ttft"));
     }
 
     #[test]
@@ -375,37 +386,35 @@ mod tests {
         );
         let done = tp.labels(now + Duration::from_millis(1_100), 10.0);
         assert_eq!(done.tps.unwrap().text, "5.0 tps");
-        assert_eq!(done.rpm.as_deref(), Some("1 rpm"));
+        assert_eq!(done.ttft.as_deref(), Some("0.1s ttft"));
     }
 
     #[test]
-    fn retained_tps_shows_zero_rpm_after_the_window() {
+    fn finished_call_keeps_ttft_and_tps_until_the_next_one() {
         let mut tp = t();
         let now = base();
         tp.start("a", true, now);
-        tp.add_chars(8, now);
+        tp.add_chars(8, now + Duration::from_millis(1_200));
         tp.finish(
             "a",
             Some(12),
             Some(1_000),
-            now + Duration::from_millis(1_000),
+            now + Duration::from_millis(2_000),
         );
-        let later = now + RPM_WINDOW + Duration::from_millis(1);
-        let labels = tp.labels(later, 10.0);
+        let labels = tp.labels(now + Duration::from_secs(120), 10.0);
         assert_eq!(labels.tps.unwrap().text, "12 tps");
-        assert_eq!(labels.rpm.as_deref(), Some("0 rpm"));
+        assert_eq!(labels.ttft.as_deref(), Some("1.2s ttft"));
     }
 
     #[test]
-    fn tokenless_call_hides_after_the_window() {
+    fn tokenless_call_keeps_the_wait_and_hides_tps() {
         let mut tp = t();
         let now = base();
         tp.start("a", true, now);
-        tp.finish("a", Some(0), None, now + Duration::from_millis(10));
-        assert_eq!(tp.labels(now, 10.0).rpm.as_deref(), Some("1 rpm"));
-        assert!(tp.labels(now, 10.0).tps.is_none());
-        let later = now + RPM_WINDOW + Duration::from_millis(1);
-        assert!(tp.labels(later, 10.0).is_empty());
+        tp.finish("a", Some(0), None, now + Duration::from_millis(1_500));
+        let labels = tp.labels(now + Duration::from_secs(30), 10.0);
+        assert!(labels.tps.is_none());
+        assert_eq!(labels.ttft.as_deref(), Some("1.5s ttft"));
     }
 
     #[test]
@@ -427,19 +436,19 @@ mod tests {
         tp.start("b", true, now);
         let labels = tp.labels(now, 10.0);
         assert!(labels.tps.is_none());
-        assert_eq!(labels.rpm.as_deref(), Some("2 rpm"));
+        assert_eq!(labels.ttft.as_deref(), Some("0.0s ttft"));
     }
 
     #[test]
-    fn retry_of_the_same_id_counts_again_and_clears_tps() {
+    fn retry_of_the_same_id_restarts_ttft_and_clears_tps() {
         let mut tp = t();
         let now = base();
         tp.start("a", true, now);
         tp.add_chars(40, now);
         tp.start("a", true, now + Duration::from_millis(10));
-        let labels = tp.labels(now + Duration::from_millis(10), 10.0);
+        let labels = tp.labels(now + Duration::from_millis(1_210), 10.0);
         assert!(labels.tps.is_none());
-        assert_eq!(labels.rpm.as_deref(), Some("2 rpm"));
+        assert_eq!(labels.ttft.as_deref(), Some("1.2s ttft"));
     }
 
     #[test]
@@ -457,7 +466,7 @@ mod tests {
         );
         let labels = tp.labels(now + Duration::from_millis(1_000), 10.0);
         assert_eq!(labels.tps.unwrap().text, "10 tps");
-        assert_eq!(labels.rpm.as_deref(), Some("2 rpm"));
+        assert_eq!(labels.ttft.as_deref(), Some("0.0s ttft"));
     }
 
     #[test]

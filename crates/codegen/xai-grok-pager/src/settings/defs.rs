@@ -577,8 +577,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
             label: "Show throughput",
-            description: "Show tokens per second and requests per minute beside the context indicator.",
-            keywords: &["throughput", "tps", "rpm", "tokens", "speed", "rate"],
+            description: "Show time to first token and tokens per second beside the context indicator.",
+            keywords: &["throughput", "tps", "ttft", "tokens", "speed", "latency"],
             kind: SettingKind::Bool {
                 default: ui_default.show_throughput_enabled(),
             },

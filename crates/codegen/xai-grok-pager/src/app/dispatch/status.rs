@@ -403,6 +403,22 @@ pub(super) fn dispatch_show_context_info(app: &mut AppView) -> Vec<Effect> {
 
 /// `/usage`: open the usage modal on its "Usage limit" tab.
 /// Minimal mode keeps the scrollback flow: session token/cost, then consumer credits.
+pub(super) fn dispatch_show_stats(app: &mut AppView) -> Vec<Effect> {
+    use crate::views::modal::ActiveModal;
+    use crate::views::stats_modal::StatsModalState;
+    let ActiveView::Agent(id) = app.active_view else {
+        app.show_toast("Run /stats from a session");
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    agent.active_modal = Some(ActiveModal::Stats {
+        state: Box::new(StatsModalState::open()),
+    });
+    vec![]
+}
+
 pub(super) fn dispatch_show_usage(app: &mut AppView) -> Vec<Effect> {
     if !app.screen_mode.is_minimal() {
         return open_usage_info_modal(app, crate::views::usage_modal::UsageInfoTab::UsageLimit);

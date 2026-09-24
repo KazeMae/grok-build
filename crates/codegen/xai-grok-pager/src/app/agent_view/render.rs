@@ -1376,12 +1376,12 @@ impl AgentView {
         let chip_bg = theme.bg_base;
         let chip_normal = Style::default().fg(theme.gray).bg(chip_bg);
         let chip_warn = Style::default().fg(theme.warning).bg(chip_bg);
+        if let Some(ttft) = throughput.ttft {
+            status.push("ttft", Line::from(Span::styled(ttft, chip_normal)));
+        }
         if let Some(tps) = throughput.tps {
             let style = if tps.warn { chip_warn } else { chip_normal };
             status.push("tps", Line::from(Span::styled(tps.text, style)));
-        }
-        if let Some(rpm) = throughput.rpm {
-            status.push("rpm", Line::from(Span::styled(rpm, chip_normal)));
         }
         let ctx_used = self.context_state.as_ref().map(|c| c.used);
         let model_window = self.session.models.get_context_window();
@@ -1451,7 +1451,7 @@ impl AgentView {
             }
         }
         if status.overflows(layout.status_bar.width) {
-            status.remove("rpm");
+            status.remove("ttft");
         }
         if status.overflows(layout.status_bar.width) {
             status.remove("tps");

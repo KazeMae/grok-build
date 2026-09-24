@@ -416,6 +416,11 @@ impl SessionActor {
                 // The retry is a new request on the same id. The pager counts it and
                 // hides tps until this attempt produces a token.
                 self.emit_model_call_started(request_id.as_str(), true);
+                crate::stats::append_retry(
+                    &self.session_id_string(),
+                    request_id.as_str(),
+                    kind.as_ref(),
+                );
                 if kind == xai_grok_sampler::SamplingErrorKind::DoomLoopDetected {
                     let triggers = doom_loop_triggers.unwrap_or_default();
                     let (should_count, should_stamp) = {

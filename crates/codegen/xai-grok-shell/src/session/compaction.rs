@@ -178,10 +178,42 @@ impl SessionActor {
                     Some((out.content.len() as u64 / 4).max(1))
                 };
                 self.emit_model_call_finished(&compact_request_id, tokens, out.stream_ms);
+                let model = self.current_model_id().await;
+                crate::stats::append_call(crate::stats::CallStat {
+                    session_id: self.session_id_string(),
+                    model,
+                    request_id: compact_request_id,
+                    ok: true,
+                    input_tokens: 0,
+                    output_tokens: tokens.unwrap_or(0),
+                    cache_read_tokens: 0,
+                    reasoning_tokens: 0,
+                    ttft_ms: None,
+                    decode_ms: out.stream_ms,
+                    duration_ms: out.stream_ms,
+                    cost_usd_ticks: None,
+                    error_kind: None,
+                });
                 Some(out)
             }
             Err(e) => {
                 self.emit_model_call_finished(&compact_request_id, None, None);
+                let model = self.current_model_id().await;
+                crate::stats::append_call(crate::stats::CallStat {
+                    session_id: self.session_id_string(),
+                    model,
+                    request_id: compact_request_id,
+                    ok: false,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    reasoning_tokens: 0,
+                    ttft_ms: None,
+                    decode_ms: None,
+                    duration_ms: None,
+                    cost_usd_ticks: None,
+                    error_kind: Some("compact".to_string()),
+                });
                 tracing::warn!(error = ?e, "two_pass: summarization sample failed");
                 None
             }

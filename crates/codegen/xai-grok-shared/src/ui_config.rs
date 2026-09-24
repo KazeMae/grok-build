@@ -42,7 +42,7 @@ pub struct UiConfig {
     /// Written by the pager's appearance persist module.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_timestamps: Option<bool>,
-    /// tps/rpm chips beside the context indicator. Unset means on.
+    /// ttft/tps chips beside the context indicator. Unset means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_throughput: Option<bool>,
     /// Paint tps in the warning color when the drawn number is below this.

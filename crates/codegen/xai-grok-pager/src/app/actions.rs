@@ -673,6 +673,8 @@ pub enum Action {
     ShowContextInfo,
     /// `/usage`: session token/cost, plus consumer credits when visible.
     ShowUsage,
+    /// `/stats`: tokens, TTFT, TPS, and cost across local sessions.
+    ShowStats,
     /// `/usage manage`: open consumer billing (a no-op when billing is hidden).
     ManageBilling,
     /// Commit a read-only list of the queued prompts as a system block (`/queue`).

@@ -505,7 +505,7 @@ pub enum AutoCompactCancelReason {
 /// `Switching model…` loader (family-switch compact runs with no turn in flight).
 pub const MODEL_FAMILY_SWITCH_COMPACT_BANNER: &str = "Switching model. Compacting…";
 
-/// Live sample for the tps/rpm chips. `Finished.output_tokens` already includes reasoning
+/// Live sample for the ttft/tps chips. `Finished.output_tokens` already includes reasoning
 /// when the provider reports reasoning inside the completion total.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -702,7 +702,7 @@ pub enum SessionUpdate {
     },
     /// Status snapshot for client status lines. Send-only: never persisted, since the next emit supersedes it.
     SessionStatus(Box<xai_grok_status_line::StatusLineContext>),
-    /// One model request's start or finish, for the tps/rpm chips.
+    /// One model request's start or finish, for the ttft/tps chips.
     /// Send-only: never persisted. A replay must not revive a rate from a previous process.
     ModelCall(ModelCallNotice),
     /// Session summary was generated for a new session.
