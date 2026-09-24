@@ -1007,7 +1007,6 @@ impl AgentView {
                 AgentPane::Todo => self.handle_todo_key(key, registry),
                 AgentPane::Queue => self.handle_queue_key(key, registry),
                 AgentPane::Tasks => self.handle_bg_tasks_key(key, registry),
-                AgentPane::Catalog => self.handle_catalog_key(key, registry),
                 AgentPane::Dock => self.handle_dock_key(key),
             },
             Event::Paste(text) => {
@@ -1036,7 +1035,6 @@ impl AgentView {
                     let consumed = match self.active_pane {
                         AgentPane::Todo => self.todo.handle_paste(text),
                         AgentPane::Tasks => self.tasks.handle_paste(text),
-                        AgentPane::Catalog => self.catalog.handle_paste(text),
                         AgentPane::Queue => self.queue.handle_paste(text),
                         AgentPane::Prompt | AgentPane::Scrollback | AgentPane::Dock => false,
                     };
@@ -1385,9 +1383,6 @@ impl AgentView {
             if target != AgentPane::Tasks {
                 self.tasks.overlay.focused = false;
             }
-            if target != AgentPane::Catalog {
-                self.catalog.overlay.focused = false;
-            }
             if target != AgentPane::Queue {
                 self.queue.overlay.focused = false;
             }
@@ -1402,9 +1397,6 @@ impl AgentView {
         }
         if target != AgentPane::Tasks {
             self.tasks.overlay.focused = false;
-        }
-        if target != AgentPane::Catalog {
-            self.catalog.overlay.focused = false;
         }
         if target != AgentPane::Queue {
             self.queue.overlay.focused = false;

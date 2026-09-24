@@ -2622,6 +2622,7 @@
   "session.share_disabled": "会话分享功能暂时停用",
   "privacy.zdr_locked": "✗ 无法更改：已启用零数据保留",
   "privacy.team_admin_locked": "✗ 数据分享由团队管理员控制",
+  "privacy.ask_team_admin": "请联系团队管理员更改此设置。",
   "error.server_see_logs": "服务器错误（详情请查看日志）",
   "gboom.graphics_required": "这里没有恶魔——GBOOM 需要支持图形的终端（kitty、Ghostty、WezTerm、iTerm2）",
   "privacy.update_failed": "✗ 无法更新编程数据分享设置：{error}",
@@ -3203,5 +3204,4 @@
   "settings.ui.value.privacy_locked": "隐私构建锁定",
   "settings.setting.coding_data_sharing.choice.opt-out.description": "编码数据保留已锁定为退出状态，此隐私构建不提供选择加入。"
 }
-
 

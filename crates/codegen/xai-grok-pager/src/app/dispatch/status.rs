@@ -276,19 +276,13 @@ pub(super) fn set_coding_data_sharing_tracked(
         app.show_toast(message);
         return (vec![], SharingWriteOutcome::Refused);
     }
-    if app.team_name.is_some() {
-        let is_admin = app
-            .team_role
-            .as_deref()
-            .is_some_and(|r| r.eq_ignore_ascii_case("admin"));
-        if !is_admin {
-            let message = app.locale.named_static_text(
-                "privacy.team_admin_locked",
-                "\u{2717} Data sharing is controlled by your team admin",
-            );
-            app.show_toast(message);
-            return (vec![], SharingWriteOutcome::Refused);
-        }
+    if app.can_administer_team == Some(false) {
+        let message = app.locale.named_static_text(
+            "privacy.team_admin_locked",
+            "\u{2717} Data sharing is controlled by your team admin",
+        );
+        app.show_toast(message);
+        return (vec![], SharingWriteOutcome::Refused);
     }
     let agent_id = coding_data_sharing_agent_id(app);
     let prev = !app.coding_data_retention_opt_out;
@@ -337,24 +331,34 @@ pub(super) fn set_coding_data_sharing_tracked(
 
 /// The toast for a setting that could not be written to `config.toml`.
 pub(super) fn toast_persist_failure(app: &mut AppView, key: &str, error: &str) {
-    let scrubbed = scrub_error_for_toast(error);
-    app.show_toast(&format!("\u{2717} Could not save {key}: {scrubbed}"));
+    let scrubbed = scrub_error_for_toast_with_locale(error, &app.locale);
+    let message = app
+        .locale
+        .named_text(
+            "settings.persist.save_failed",
+            "\u{2717} Could not save {key}: {error}",
+        )
+        .replace("{key}", key)
+        .replace("{error}", &scrubbed);
+    app.show_toast(&message);
 }
 
 /// Scrub an untrusted error string for toast display.
-/// Substitutes a generic placeholder when the input exceeds 120 chars or contains control / bidi-override characters.
-/// That prevents escape-sequence injection and visual spoofing.
+/// Control / bidi-override characters are replaced wholesale: escape-sequence injection and visual spoofing.
 pub(super) fn scrub_error_for_toast(error: &str) -> String {
-    const MAX_TOAST_ERROR_LEN: usize = 120;
-    if error.len() > MAX_TOAST_ERROR_LEN
-        || error
-            .chars()
-            .any(crate::render::line_utils::is_unsafe_display_char)
+    const MAX_TOAST_ERROR_CHARS: usize = 120;
+    if error
+        .chars()
+        .any(crate::render::line_utils::is_unsafe_display_char)
     {
-        "server error (see logs for details)".to_string()
-    } else {
-        error.to_string()
+        return "server error (see logs for details)".to_owned();
     }
+    if error.chars().count() > MAX_TOAST_ERROR_CHARS {
+        let mut cut: String = error.chars().take(MAX_TOAST_ERROR_CHARS - 1).collect();
+        cut.push('\u{2026}');
+        return cut;
+    }
+    error.to_owned()
 }
 
 pub(super) fn scrub_error_for_toast_with_locale(
@@ -652,6 +656,9 @@ pub(super) fn handle_coding_data_sharing_updated(
     vec![]
 }
 
+/// Well-known-error marker the API forwards verbatim in its `error` string when the caller lacks the team-management permission.
+const WKE_TEAM_MEMBER_MISSING_ACL: &str = "[WKE=permissions:team-member-missing-acl]";
+
 pub(super) fn handle_coding_data_sharing_failed(
     app: &mut AppView,
     agent_id: AgentId,
@@ -670,15 +677,23 @@ pub(super) fn handle_coding_data_sharing_failed(
         set_coding_data_sharing_inner(app, rollback);
     }
     refresh_open_settings_modals(app);
-    // Scrub long/unsafe error strings before toasting.
-    let scrubbed = scrub_error_for_toast_with_locale(&error, app.locale.as_ref());
+    let reason = if error.contains(WKE_TEAM_MEMBER_MISSING_ACL) {
+        app.locale
+            .named_text(
+                "privacy.ask_team_admin",
+                "Ask a team admin to change this setting.",
+            )
+            .into_owned()
+    } else {
+        scrub_error_for_toast_with_locale(&error, app.locale.as_ref())
+    };
     let message = app
         .locale
         .named_text(
             "privacy.update_failed",
             "✗ Couldn't update coding data sharing: {error}",
         )
-        .replace("{error}", &scrubbed);
+        .replace("{error}", &reason);
     app.show_toast(&message);
     tracing::warn!(
         target: "settings",

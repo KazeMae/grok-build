@@ -707,7 +707,7 @@ fn dispatch_open_settings_focus_reopens_when_already_open() {
     );
 }
 /// Chooser when editable, browse row when locked.
-/// The team-admin arm is the one a `team_name.is_some()` shortcut would break.
+/// The privacy lock applies regardless of team capability.
 #[test]
 fn dispatch_open_settings_focus_skips_the_chooser_only_when_locked() {
     use crate::views::modal::ActiveModal;
@@ -746,7 +746,7 @@ fn dispatch_open_settings_focus_skips_the_chooser_only_when_locked() {
     );
     let mut app = test_app_with_agent();
     app.team_name = Some("acme".to_string());
-    app.team_role = Some("member".to_string());
+    app.can_administer_team = Some(false);
     assert!(
         matches!(
             open_focused(&mut app, "coding_data_sharing"),
@@ -754,16 +754,19 @@ fn dispatch_open_settings_focus_skips_the_chooser_only_when_locked() {
         ),
         "a team-managed lock must stop at the row that says so"
     );
-    let mut app = test_app_with_agent();
-    app.team_name = Some("acme".to_string());
-    app.team_role = Some("admin".to_string());
-    assert!(
-        matches!(
-            open_focused(&mut app, "theme"),
-            SettingsModalMode::PickingEnum { .. }
-        ),
-        "a team admin is not locked"
-    );
+    for capability in [Some(true), None] {
+        let mut app = test_app_with_agent();
+        app.team_name = Some("acme".to_string());
+        app.team_role = Some("member".to_string());
+        app.can_administer_team = capability;
+        assert!(
+            matches!(
+                open_focused(&mut app, "coding_data_sharing"),
+                SettingsModalMode::Browse
+            ),
+            "privacy build remains locked with capability {capability:?}"
+        );
+    }
 }
 /// Focused open that enters the chooser sets `close_on_picker_exit` so Esc dismisses the modal.
 /// Locked landings stay in Browse with the flag clear; chrome Esc already closes.

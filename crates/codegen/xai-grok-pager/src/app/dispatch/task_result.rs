@@ -41,10 +41,10 @@ use super::session::load::{
 };
 use super::session::modal::remove_agent_and_cleanup;
 use super::session::picker_routing::PickerRequest;
-use super::settings::ui::apply_setting_rollback;
+use super::settings::ui::{apply_setting_rollback, refresh_open_settings_modals};
 use super::status::{
     handle_coding_data_sharing_failed, handle_coding_data_sharing_updated,
-    handle_context_info_complete, handle_session_usage_result, scrub_error_for_toast_with_locale,
+    handle_context_info_complete, handle_session_usage_result, toast_persist_failure,
     usage_modal_state_mut,
 };
 use super::transcript::{
@@ -2165,36 +2165,6 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             tracing::warn!(error = %error, "bundle status fetch failed");
             vec![]
         }
-        TaskResult::CatalogEntryReady {
-            kind,
-            name,
-            content,
-        } => {
-            if let ActiveView::Agent(id) = app.active_view
-                && let Some(agent) = app.agents.get_mut(&id)
-            {
-                let title = format!("{kind}: {name}");
-                agent.show_block_viewer(
-                    crate::views::block_viewer::BlockViewerPane::for_plain_text(&title, &content),
-                );
-            }
-            vec![]
-        }
-        TaskResult::CatalogEntryFailed { error } => {
-            tracing::warn!(error = %error, "catalog entry fetch failed");
-            let message = localized_template(
-                locale.as_ref(),
-                "catalog.entry.load_failed",
-                "Couldn't load entry: {error}",
-                &[("{error}", &error)],
-            );
-            if let ActiveView::Agent(id) = app.active_view
-                && let Some(agent) = app.agents.get_mut(&id)
-            {
-                agent.scrollback.push_block(RenderBlock::system(message));
-            }
-            vec![]
-        }
         TaskResult::BtwResponse {
             agent_id,
             result,
@@ -2313,6 +2283,19 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::CheckSubscriptionComplete { verify, meta } => {
             handle_check_subscription_complete(app, verify, meta)
         }
+        TaskResult::TeamCapabilityHydrated {
+            identity,
+            can_administer_team,
+        } => {
+            if can_administer_team.is_some()
+                && app.can_administer_team.is_none()
+                && identity.matches(&app.auth_identity())
+            {
+                app.can_administer_team = can_administer_team;
+                refresh_open_settings_modals(app);
+            }
+            vec![]
+        }
         TaskResult::GateVerifyTimeout { generation } => handle_gate_verify_timeout(app, generation),
         TaskResult::CreditLimitRecheckComplete { agent_id, meta } => {
             handle_credit_limit_recheck_complete(app, agent_id, meta)
@@ -2428,14 +2411,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         } => {
             let rollback_effects = apply_setting_rollback(app, key, &rollback_value);
             tracing::warn!(target: "settings", ?key, ?rollback_value, %error, "setting persist failed; rolled back");
-            let scrubbed = scrub_error_for_toast_with_locale(&error, locale.as_ref());
-            let message = localized_template(
-                locale.as_ref(),
-                "settings.persist.save_failed",
-                "\u{2717} Could not save {key}: {error}",
-                &[("{key}", key), ("{error}", &scrubbed)],
-            );
-            app.show_toast(&message);
+            toast_persist_failure(app, key, &error);
             rollback_effects
         }
         TaskResult::SettingPersistFailedBestEffort { key, error } => {
@@ -2444,14 +2420,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 ?key, %error,
                 "setting persist failed (best-effort); in-memory state stays at optimistic value",
             );
-            let scrubbed = scrub_error_for_toast_with_locale(&error, locale.as_ref());
-            let message = localized_template(
-                locale.as_ref(),
-                "settings.persist.save_failed",
-                "\u{2717} Could not save {key}: {error}",
-                &[("{key}", key), ("{error}", &scrubbed)],
-            );
-            app.show_toast(&message);
+            toast_persist_failure(app, key, &error);
             vec![]
         }
         TaskResult::FeatureOverridePersisted { feature, result } => {

@@ -1,7 +1,8 @@
 //! Activity and secondary-line presentation for local dashboard rows.
 
 use crate::app::agent_view::AgentView;
-use crate::app::subagent::format_activity_label;
+use crate::app::subagent::format_activity_label_with_locale;
+use crate::locale::LocaleContext;
 use crate::views::dashboard::row::{RowBadge, sanitize};
 use crate::views::dashboard::state::RowState;
 
@@ -16,21 +17,46 @@ pub(crate) fn has_live_parent_activity(agent: &AgentView) -> bool {
 }
 
 /// Pending input takes precedence over live activity and the last-turn preview.
+#[cfg(test)]
 pub(crate) fn top_level_secondary_line(
     agent: &AgentView,
     state: RowState,
     activity: Option<&str>,
+) -> Option<String> {
+    top_level_secondary_line_with_locale(agent, state, activity, None)
+}
+
+pub(crate) fn top_level_secondary_line_with_locale(
+    agent: &AgentView,
+    state: RowState,
+    activity: Option<&str>,
+    locale: Option<&LocaleContext>,
 ) -> Option<String> {
     match state {
         RowState::NeedsInput => {
             if let Some(perm) = agent.permission_queue.front() {
                 let title = perm.title.trim();
                 if !title.is_empty() {
-                    return Some(format!("Pending: {}", sanitize(title)));
+                    let title =
+                        crate::views::permission_view::localized_permission_title(locale, title);
+                    let template = locale
+                        .map(|l| l.named_static_text("dashboard.row.pending", "Pending: {detail}"))
+                        .unwrap_or("Pending: {detail}");
+                    return Some(template.replace("{detail}", &sanitize(&title)));
                 }
             }
             if agent.question_view.is_some() {
-                return Some("Pending: question".to_string());
+                return Some(
+                    locale
+                        .map(|l| {
+                            l.named_static_text(
+                                "dashboard.row.pending_question",
+                                "Pending: question",
+                            )
+                        })
+                        .unwrap_or("Pending: question")
+                        .to_string(),
+                );
             }
             activity.map(sanitize)
         }
@@ -77,18 +103,46 @@ fn first_nonempty_line(s: &str) -> Option<&str> {
     None
 }
 
+#[cfg(test)]
 pub(crate) fn top_level_activity(agent: &AgentView, state: RowState) -> Option<String> {
+    top_level_activity_with_locale(agent, state, None)
+}
+
+pub(crate) fn top_level_activity_with_locale(
+    agent: &AgentView,
+    state: RowState,
+    locale: Option<&LocaleContext>,
+) -> Option<String> {
     match state {
-        RowState::NeedsInput => Some("Awaiting your input".to_owned()),
+        RowState::NeedsInput => Some(
+            locale
+                .map(|l| {
+                    l.named_static_text("dashboard.row.awaiting_your_input", "Awaiting your input")
+                })
+                .unwrap_or("Awaiting your input")
+                .to_owned(),
+        ),
         RowState::Working if has_live_parent_activity(agent) => {
             if let Some(cmd) = agent.session.state.command_in_flight() {
-                Some(format!("{}…", cmd.display_name()))
+                Some(format!("{}…", cmd.display_name_with_locale(locale)))
             } else if let Some(activity) = agent.resolve_turn_activity() {
-                Some(sanitize(&format_activity_label(&activity)))
+                Some(sanitize(&format_activity_label_with_locale(
+                    &activity, locale,
+                )))
             } else if agent.session.loading_replay {
-                Some("Loading…".to_string())
+                Some(
+                    locale
+                        .map(|l| l.named_static_text("dashboard.row.loading", "Loading…"))
+                        .unwrap_or("Loading…")
+                        .to_string(),
+                )
             } else {
-                Some("Working".to_string())
+                Some(
+                    locale
+                        .map(|l| l.named_static_text("dashboard.row.working", "Working"))
+                        .unwrap_or("Working")
+                        .to_string(),
+                )
             }
         }
         RowState::Working
