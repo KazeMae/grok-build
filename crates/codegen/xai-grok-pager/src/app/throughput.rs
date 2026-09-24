@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 pub const RPM_WINDOW: Duration = Duration::from_secs(60);
 
 /// One shown sample. `tps` is absent until the owning call has produced a token.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Labels {
     pub tps: Option<TpsLabel>,
     pub rpm: Option<String>,
@@ -21,15 +21,6 @@ pub struct Labels {
 impl Labels {
     pub fn is_empty(&self) -> bool {
         self.tps.is_none() && self.rpm.is_none()
-    }
-}
-
-impl Default for Labels {
-    fn default() -> Self {
-        Self {
-            tps: None,
-            rpm: None,
-        }
     }
 }
 
