@@ -518,51 +518,38 @@ fn paint_trends(buf: &mut Buffer, area: Rect, state: &mut StatsModalState, theme
     if buckets.is_empty() {
         return;
     }
+    let cols = layout_columns(area.x, area.width, &trend_specs());
+    let header = ["time", "req", "tokens", "ttft", "tps"];
+    let head = Style::default().fg(theme.gray).add_modifier(Modifier::BOLD);
+    paint_cells(buf, area.y, &cols, &header, head);
     let visible = area.height.saturating_sub(1) as usize;
     let start = state.scroll.min(buckets.len().saturating_sub(1));
-    let mut y = area.y;
-    put(
-        buf,
-        area.x,
-        y,
-        "time      req   tokens        ttft    tps",
-        area.width,
-        Style::default().fg(theme.gray).add_modifier(Modifier::BOLD),
-    );
-    y = y.saturating_add(1);
-    let max_req = buckets.iter().map(|b| b.requests).max().unwrap_or(1).max(1);
-    for bucket in buckets.iter().skip(start).take(visible.max(1)) {
+    for (i, bucket) in buckets.iter().skip(start).take(visible.max(1)).enumerate() {
+        let y = area.y.saturating_add(1).saturating_add(i as u16);
         if y >= area.y + area.height {
             break;
         }
-        let label = bucket_label(bucket.start_ms, state.daily);
-        let bar_w = 8usize;
-        let bar = blocks(bucket.requests as f64, max_req as f64, bar_w);
-        let ttft_style = ttft_style(bucket.ttft_avg_ms, theme);
-        put(
-            buf,
-            area.x,
-            y,
-            &format!(
-                "{label:<8} {:>4} {bar} {:>10}  ",
-                bucket.requests,
-                format_tokens(bucket.input_tokens.saturating_add(bucket.output_tokens))
-            ),
-            area.width,
-            Style::default().fg(theme.text_primary),
-        );
+        let tokens = format_tokens(bucket.input_tokens.saturating_add(bucket.output_tokens));
         let ttft = format_ms(bucket.ttft_avg_ms.map(|v| v.round() as u64));
         let tps = format_tps(bucket.tps_avg);
-        let x = area.x.saturating_add(28);
-        put(
-            buf,
-            x,
-            y,
-            &format!("{ttft:<8}{tps}"),
-            area.width.saturating_sub(28),
-            ttft_style,
-        );
-        y = y.saturating_add(1);
+        let values = [
+            bucket_label(bucket.start_ms, state.daily),
+            bucket.requests.to_string(),
+            tokens,
+            ttft,
+            tps,
+        ];
+        let body = Style::default().fg(theme.text_primary);
+        paint_cells(buf, y, &cols, &values, body);
+        if let Some(col) = cols.get(3) {
+            paint_cell(
+                buf,
+                col,
+                y,
+                values.get(3).map(String::as_str).unwrap_or(""),
+                ttft_style(bucket.ttft_avg_ms, theme),
+            );
+        }
     }
 }
 
@@ -590,7 +577,8 @@ fn paint_groups(
     let mut rows = source;
     sort_groups(&mut rows, state.sort_col, state.sort_desc);
     let rows = filtered_groups(&rows, &state.filter);
-    paint_header(buf, area, state, theme, &headers);
+    let cols = layout_columns(area.x, area.width, &group_specs());
+    paint_header(buf, area, state, theme, &cols, &headers);
     let body_y = area.y.saturating_add(1);
     let visible = area.height.saturating_sub(1) as usize;
     fit_scroll(state, rows.len(), visible);
@@ -608,7 +596,7 @@ fn paint_groups(
             Style::default().fg(theme.text_primary)
         };
         let cells = group_cells(row, models);
-        put(buf, area.x, y, &join_cells(&cells), area.width, style);
+        paint_cells(buf, y, &cols, &cells, style);
     }
 }
 
@@ -617,7 +605,8 @@ fn paint_requests(buf: &mut Buffer, area: Rect, state: &mut StatsModalState, the
     let mut rows = state.report.requests.clone();
     sort_requests(&mut rows, state.sort_col, state.sort_desc);
     let rows = filtered_requests(&rows, &state.filter);
-    paint_header(buf, area, state, theme, &headers);
+    let cols = layout_columns(area.x, area.width, &request_specs());
+    paint_header(buf, area, state, theme, &cols, &headers);
     let body_y = area.y.saturating_add(1);
     let visible = area.height.saturating_sub(1) as usize;
     fit_scroll(state, rows.len(), visible);
@@ -637,7 +626,7 @@ fn paint_requests(buf: &mut Buffer, area: Rect, state: &mut StatsModalState, the
             Style::default().fg(theme.accent_error)
         };
         let cells = request_cells(row);
-        put(buf, area.x, y, &join_cells(&cells), area.width, style);
+        paint_cells(buf, y, &cols, &cells, style);
     }
 }
 
@@ -712,14 +701,11 @@ fn paint_header(
     area: Rect,
     state: &mut StatsModalState,
     theme: &Theme,
+    cols: &[Col],
     headers: &[&str],
 ) {
-    let mut x = area.x;
-    for (i, header) in headers.iter().enumerate() {
-        let width = col_width(i, headers.len(), area.width);
-        if width == 0 {
-            break;
-        }
+    let style = Style::default().fg(theme.gray).add_modifier(Modifier::BOLD);
+    for (i, (col, header)) in cols.iter().zip(headers.iter()).enumerate() {
         let marked = if state.sort_col == i {
             if state.sort_desc {
                 format!("{header}↓")
@@ -729,24 +715,16 @@ fn paint_header(
         } else {
             (*header).to_string()
         };
-        put(
-            buf,
-            x,
-            area.y,
-            &marked,
-            width,
-            Style::default().fg(theme.gray).add_modifier(Modifier::BOLD),
-        );
+        paint_cell(buf, col, area.y, &marked, style);
         state.header_hits.push((
             Rect {
-                x,
+                x: col.x,
                 y: area.y,
-                width,
+                width: col.width,
                 height: 1,
             },
             i,
         ));
-        x = x.saturating_add(width);
     }
 }
 
@@ -787,20 +765,193 @@ fn request_cells(row: &RequestRow) -> Vec<String> {
     ]
 }
 
-fn join_cells(cells: &[String]) -> String {
-    let mut out = String::new();
-    for (i, cell) in cells.iter().enumerate() {
-        let width = if i == 0 { 18 } else { 8 };
-        if i > 0 {
-            out.push(' ');
+struct ColSpec {
+    width: u16,
+    right: bool,
+    /// Leftover modal width is split across flex columns.
+    flex: bool,
+}
+
+struct Col {
+    x: u16,
+    width: u16,
+    right: bool,
+}
+
+fn trend_specs() -> [ColSpec; 5] {
+    [
+        ColSpec {
+            width: 8,
+            right: false,
+            flex: false,
+        },
+        ColSpec {
+            width: 6,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 12,
+            right: true,
+            flex: true,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+    ]
+}
+
+fn group_specs() -> [ColSpec; 8] {
+    [
+        ColSpec {
+            width: 14,
+            right: false,
+            flex: true,
+        },
+        ColSpec {
+            width: 7,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 6,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 7,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 10,
+            right: true,
+            flex: false,
+        },
+    ]
+}
+
+fn request_specs() -> [ColSpec; 8] {
+    [
+        ColSpec {
+            width: 12,
+            right: false,
+            flex: false,
+        },
+        ColSpec {
+            width: 12,
+            right: false,
+            flex: true,
+        },
+        ColSpec {
+            width: 12,
+            right: false,
+            flex: true,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 8,
+            right: true,
+            flex: false,
+        },
+        ColSpec {
+            width: 6,
+            right: true,
+            flex: false,
+        },
+    ]
+}
+
+fn layout_columns(origin: u16, total: u16, specs: &[ColSpec]) -> Vec<Col> {
+    let extra = total.saturating_sub(specs.iter().map(|spec| spec.width).sum());
+    let flex_count = specs.iter().filter(|spec| spec.flex).count();
+    let mut x = origin;
+    let mut flex_seen = 0usize;
+    let mut given = 0u16;
+    let mut cols = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let bonus = if spec.flex && flex_count > 0 {
+            flex_seen += 1;
+            if flex_seen == flex_count {
+                extra.saturating_sub(given)
+            } else {
+                let share = extra / u16::try_from(flex_count).unwrap_or(1);
+                given = given.saturating_add(share);
+                share
+            }
+        } else {
+            0
+        };
+        let room = origin.saturating_add(total).saturating_sub(x);
+        if room == 0 {
+            break;
         }
-        out.push_str(&clip(cell, width));
-        let pad = width.saturating_sub(cell.width().min(width));
-        for _ in 0..pad {
-            out.push(' ');
-        }
+        let width = spec.width.saturating_add(bonus).min(room);
+        cols.push(Col {
+            x,
+            width,
+            right: spec.right,
+        });
+        x = x.saturating_add(width);
     }
-    out
+    cols
+}
+
+fn paint_cells(buf: &mut Buffer, y: u16, cols: &[Col], texts: &[impl AsRef<str>], style: Style) {
+    for (col, text) in cols.iter().zip(texts.iter()) {
+        paint_cell(buf, col, y, text.as_ref(), style);
+    }
+}
+
+fn paint_cell(buf: &mut Buffer, col: &Col, y: u16, text: &str, style: Style) {
+    if col.width == 0 {
+        return;
+    }
+    let width = col.width as usize;
+    let shown = clip(text, width);
+    let gap = width.saturating_sub(shown.width());
+    let padded = if col.right {
+        format!("{}{shown}", " ".repeat(gap))
+    } else {
+        format!("{shown}{}", " ".repeat(gap))
+    };
+    put(buf, col.x, y, &padded, col.width, style);
 }
 
 fn sort_groups(rows: &mut [GroupRow], col: usize, desc: bool) {
@@ -947,19 +1098,6 @@ fn spark_line(
     y.saturating_add(1)
 }
 
-fn blocks(value: f64, max: f64, width: usize) -> String {
-    if width == 0 || max <= 0.0 {
-        return String::new();
-    }
-    let filled = ((value.max(0.0) / max) * width as f64).round() as usize;
-    let filled = filled.min(width);
-    let mut out = String::new();
-    for i in 0..width {
-        out.push(if i < filled { '█' } else { '·' });
-    }
-    out
-}
-
 fn ttft_style(avg_ms: Option<f64>, theme: &Theme) -> Style {
     let ms = avg_ms.unwrap_or(0.0);
     let color = if ms <= 5_000.0 {
@@ -991,18 +1129,6 @@ fn clock(ts_ms: i64) -> String {
     dt.with_timezone(&chrono::Local)
         .format("%m-%d %H:%M")
         .to_string()
-}
-
-fn col_width(index: usize, count: usize, total: u16) -> u16 {
-    if count == 0 {
-        return 0;
-    }
-    let each = total / count as u16;
-    if index + 1 == count {
-        total.saturating_sub(each.saturating_mul(count.saturating_sub(1) as u16))
-    } else {
-        each
-    }
 }
 
 fn clip(text: &str, width: usize) -> String {
@@ -1046,4 +1172,129 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|dur| i64::try_from(dur.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xai_grok_shell::stats::{Bucket, GroupRow, Report, Spark, Summary};
+
+    fn report_with(hourly: Vec<Bucket>, models: Vec<GroupRow>) -> Report {
+        Report {
+            summary: Summary {
+                requests: 7,
+                ..Summary::default()
+            },
+            hourly,
+            daily: Vec::new(),
+            models,
+            sessions: Vec::new(),
+            requests: Vec::new(),
+            reasons: Vec::new(),
+            errors: Vec::new(),
+            spark: Spark::default(),
+        }
+    }
+
+    fn state(report: Report) -> StatsModalState {
+        StatsModalState {
+            window: mw::ModalWindowState::new(),
+            tab: 1,
+            range: TimeRange::All,
+            daily: false,
+            paused: true,
+            filter: String::new(),
+            filtering: false,
+            cursor: 0,
+            scroll: 0,
+            sort_col: 1,
+            sort_desc: true,
+            report,
+            loaded_at: Instant::now(),
+            header_hits: Vec::new(),
+        }
+    }
+
+    fn line(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width).fold(String::new(), |mut text, x| {
+            if let Some(cell) = buf.cell((x, y)) {
+                text.push_str(cell.symbol());
+            }
+            text
+        })
+    }
+
+    fn right_edge(buf: &Buffer, y: u16, x: u16, width: u16) -> Option<u16> {
+        let mut edge = None;
+        let mut col = x;
+        while col < x.saturating_add(width) {
+            if buf.cell((col, y)).is_some_and(|cell| cell.symbol() != " ") {
+                edge = Some(col);
+            }
+            col = col.saturating_add(1);
+        }
+        edge
+    }
+
+    #[test]
+    fn trend_row_prints_the_token_count() {
+        let mut modal = state(report_with(
+            vec![Bucket {
+                start_ms: 1_700_000_000_000,
+                requests: 7,
+                failures: 0,
+                input_tokens: 1_000,
+                cache_read_tokens: 0,
+                output_tokens: 200,
+                ttft_avg_ms: Some(1_900.0),
+                tps_avg: Some(346.0),
+            }],
+            Vec::new(),
+        ));
+        let area = Rect::new(0, 0, 80, 4);
+        let mut buf = Buffer::empty(area);
+        paint_trends(&mut buf, area, &mut modal, &Theme::grokday());
+        let row = line(&buf, 1);
+        assert!(row.contains("1.2K"), "{row}");
+        assert!(!row.contains('█'), "{row}");
+        assert!(row.contains("1.9s"), "{row}");
+        assert!(row.contains("346"), "{row}");
+    }
+
+    #[test]
+    fn model_header_and_values_share_a_right_edge() {
+        let mut modal = state(report_with(
+            Vec::new(),
+            vec![GroupRow {
+                key: "m".into(),
+                label: "grok-4.7-build-fast".into(),
+                requests: 8,
+                failures: 0,
+                retries: 0,
+                input_tokens: 1_000,
+                output_tokens: 200,
+                cache_read_tokens: 995,
+                ttft_p50_ms: Some(1_900),
+                ttft_p95_ms: Some(1_900),
+                tps_avg: Some(346.0),
+                cost_usd_ticks: Some(14_000_000_000),
+                cost_partial: false,
+                last_ts_ms: 0,
+            }],
+        ));
+        let area = Rect::new(0, 0, 100, 3);
+        let mut buf = Buffer::empty(area);
+        paint_groups(&mut buf, area, &mut modal, &Theme::grokday(), true);
+        let cols = layout_columns(area.x, area.width, &group_specs());
+        for (i, col) in cols.iter().enumerate().skip(1) {
+            assert_eq!(
+                right_edge(&buf, 0, col.x, col.width),
+                right_edge(&buf, 1, col.x, col.width),
+                "column {i}"
+            );
+        }
+        let row = line(&buf, 1);
+        assert!(row.contains("99.5%"), "{row}");
+        assert!(row.contains("$1.40"), "{row}");
+    }
 }
