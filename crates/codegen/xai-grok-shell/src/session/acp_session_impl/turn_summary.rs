@@ -85,7 +85,10 @@ impl SessionActor {
             )
             .await;
 
-        let response = match setup.client.conversation_collect(request).await {
+        let response = match self
+            .collect_background(&setup.client, request, std::time::Duration::from_secs(300))
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "turn summary: model call failed");

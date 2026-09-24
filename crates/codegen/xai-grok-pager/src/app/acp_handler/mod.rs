@@ -334,6 +334,11 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         let changed = if swallow_send_now_echo {
                             false
                         } else {
+                            crate::app::throughput::note_streamed_output(
+                                agent,
+                                &update,
+                                meta.is_replay,
+                            );
                             agent
                                 .session
                                 .handle_update(update, &meta, &mut agent.scrollback)
@@ -463,6 +468,11 @@ fn handle_inner(msg: AcpClientMessage, app: &mut AppView) -> bool {
                                     }
                                     backdate_child_turn_clock(child_view);
                                 }
+                                crate::app::throughput::note_streamed_output(
+                                    child_view,
+                                    &notif.request.update,
+                                    !is_live,
+                                );
                                 child_view.session.handle_update(
                                     notif.request.update,
                                     &meta,

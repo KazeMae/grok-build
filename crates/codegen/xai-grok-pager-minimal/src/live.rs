@@ -700,15 +700,30 @@ fn render_prompt_info(
     theme: &Theme,
     locale: Option<&xai_grok_pager::locale::LocaleContext>,
 ) {
+    use unicode_width::UnicodeWidthStr as _;
     use xai_grok_pager::views::context_bar::fmt_tokens;
     let base = theme.primary().bg(Color::Reset);
     let sep = theme.dim().bg(Color::Reset);
-    let mut segs: Vec<(String, Style)> = Vec::new();
+    let warn = Style::default().fg(theme.warning).bg(Color::Reset);
+    // Higher drop rank leaves the row first when the line does not fit.
+    struct InfoSeg {
+        text: String,
+        style: Style,
+        drop: u8,
+    }
+    let mut segs: Vec<InfoSeg> = Vec::new();
+    let push = |segs: &mut Vec<InfoSeg>, text: String, style: Style| {
+        segs.push(InfoSeg {
+            text,
+            style,
+            drop: 0,
+        });
+    };
     if let Some(label) = agent
         .prompt_input_mode
         .prompt_info_override_with_locale(locale)
     {
-        segs.push((label.to_string(), base));
+        push(&mut segs, label.to_string(), base);
     } else {
         if let Some(model) = agent.session.models.current_model_name() {
             let label = xai_grok_pager::views::localized_model_name(
@@ -716,7 +731,7 @@ fn render_prompt_info(
                 agent.session.models.reasoning_effort,
                 locale,
             );
-            segs.push((label, base));
+            push(&mut segs, label, base);
         }
         let effective_plan =
             minimal_api::plan_mode_pending(agent).unwrap_or(minimal_api::plan_mode_active(agent));
@@ -737,7 +752,7 @@ fn render_prompt_info(
             let label = locale
                 .map(|locale| locale.named_text(key, label).into_owned())
                 .unwrap_or_else(|| label.to_string());
-            segs.push((label, base.fg(color)));
+            push(&mut segs, label, base.fg(color));
         }
         let used = agent.context_state.as_ref().map(|c| c.used);
         let total = agent
@@ -745,14 +760,30 @@ fn render_prompt_info(
             .as_ref()
             .and_then(|c| (c.total > 0).then_some(c.total))
             .or_else(|| agent.session.models.get_context_window());
+        let throughput = agent.throughput_labels();
+        if let Some(tps) = throughput.tps {
+            segs.push(InfoSeg {
+                style: if tps.warn { warn } else { base },
+                text: tps.text,
+                drop: 1,
+            });
+        }
+        if let Some(rpm) = throughput.rpm {
+            segs.push(InfoSeg {
+                text: rpm,
+                style: base,
+                drop: 2,
+            });
+        }
         if let (Some(used), Some(total)) = (used, total)
             && total > 0
         {
             let pct = xai_token_estimation::usage_percentage(used, total);
-            segs.push((
+            push(
+                &mut segs,
                 format!("{} / {} ({:.0}%)", fmt_tokens(used), fmt_tokens(total), pct),
                 base,
-            ));
+            );
         }
     }
     if queued > 0 {
@@ -763,23 +794,39 @@ fn render_prompt_info(
                     .replace("{count}", &queued.to_string())
             })
             .unwrap_or_else(|| format!("{queued} queued"));
-        segs.push((queued_label, base));
-        segs.push(("/queue".to_string(), base));
+        push(&mut segs, queued_label, base);
+        push(&mut segs, "/queue".to_string(), base);
     }
-    segs.push((transcript_hint.to_string(), base));
+    push(&mut segs, transcript_hint.to_string(), base);
+    let line_width = |segs: &[InfoSeg]| -> u16 {
+        let text: u16 = segs.iter().map(|seg| seg.text.width() as u16).sum();
+        let gaps = (segs.len().saturating_sub(1) as u16).saturating_mul(3);
+        text.saturating_add(gaps)
+    };
+    if line_width(&segs) > area.width {
+        if let Some(idx) = segs.iter().position(|seg| seg.drop == 2) {
+            segs.remove(idx);
+        }
+    }
+    if line_width(&segs) > area.width {
+        if let Some(idx) = segs.iter().position(|seg| seg.drop == 1) {
+            segs.remove(idx);
+        }
+    }
     if segs.is_empty() {
         return;
     }
     buf.set_style(area, base);
     let mut spans: Vec<Span<'static>> = Vec::new();
-    for (i, (text, style)) in segs.into_iter().enumerate() {
+    for (i, seg) in segs.into_iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(" · ", sep));
         }
-        spans.push(Span::styled(text, style));
+        spans.push(Span::styled(seg.text, seg.style));
     }
     buf.set_line(area.x, area.y, &Line::from(spans), area.width);
 }
+
 /// The double-press confirmation hint to show under the prompt (e.g. "press Ctrl+q again to quit").
 /// `None` when nothing is pending, the hint expired, or the pending action has no label (silent).
 /// Mirrors the full-TUI shortcuts-bar `PendingHint`, which minimal does not render.

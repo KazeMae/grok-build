@@ -154,6 +154,8 @@ impl SessionActor {
             .wall_clock_budget_secs;
         let hosted_tools = self.hosted_tools_for_turn();
         let (cancel, _cancel_scope) = self.compaction.cancel.enter();
+        let compact_request_id = xai_grok_sampler::RequestId::random().as_str().to_string();
+        self.emit_model_call_started(&compact_request_id, false);
         match generate_session_compact(
             history,
             compaction_tool_tokens,
@@ -169,8 +171,17 @@ impl SessionActor {
         )
         .await
         {
-            Ok(out) => Some(out),
+            Ok(out) => {
+                let tokens = if out.content.is_empty() {
+                    None
+                } else {
+                    Some((out.content.len() as u64 / 4).max(1))
+                };
+                self.emit_model_call_finished(&compact_request_id, tokens, out.stream_ms);
+                Some(out)
+            }
             Err(e) => {
+                self.emit_model_call_finished(&compact_request_id, None, None);
                 tracing::warn!(error = ?e, "two_pass: summarization sample failed");
                 None
             }

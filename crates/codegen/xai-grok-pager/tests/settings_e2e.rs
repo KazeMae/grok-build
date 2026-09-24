@@ -25,6 +25,8 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "screen_mode",
     "locale",
     "show_timestamps",
+    "show_throughput",
+    "throughput_warn_tps",
     "show_timeline",
     "page_flip_on_send",
     "dashboard_preview",
@@ -201,6 +203,9 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
         ("show_timestamps", Action::SetTimestamps(b)) => {
             assert_eq!(b, expected, "SetTimestamps value differs from expected")
         }
+        ("show_throughput", Action::SetShowThroughput(b)) => {
+            assert_eq!(b, expected, "SetShowThroughput value differs from expected")
+        }
         ("show_timeline", Action::SetTimeline(b)) => {
             assert_eq!(b, expected, "SetTimeline value differs from expected")
         }
@@ -367,6 +372,66 @@ fn space_on_compact_mode_dispatches_typed_setter() {
     navigate_to(&mut s, "compact_mode");
     let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
     assert_set_bool_action(outcome, "compact_mode", true);
+}
+
+#[test]
+fn space_on_show_throughput_dispatches_typed_setter() {
+    let mut s = make_state();
+    navigate_to(&mut s, "show_throughput");
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
+    assert_set_bool_action(outcome, "show_throughput", false);
+}
+
+#[test]
+fn mouse_click_on_show_throughput_indicator_toggles_in_one_click() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let row_y = row_idx_for(&s, "show_throughput") as u16;
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        72,
+        row_y,
+    );
+    assert_set_bool_action(outcome, "show_throughput", false);
+}
+
+#[test]
+fn throughput_warn_tps_int_stepper_commit_dispatches_typed_setter() {
+    let mut s = make_state();
+    navigate_to(&mut s, "throughput_warn_tps");
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    assert!(matches!(outcome, SettingsKeyOutcome::Changed));
+    assert_eq!(s.editing_buffer(), Some("10"));
+    let _ = handle_settings_key(&mut s, &press(KeyCode::Up));
+    let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
+    match outcome {
+        SettingsKeyOutcome::Action(Action::SetThroughputWarnTps(11)) => {}
+        other => panic!("expected SetThroughputWarnTps(11), got {other:?}"),
+    }
+}
+
+#[test]
+fn throughput_warn_tps_mouse_click_opens_editor() {
+    let mut s = make_state();
+    synth_rects(&mut s);
+    let row_y = row_idx_for(&s, "throughput_warn_tps") as u16;
+    let _ = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        10,
+        row_y,
+    );
+    let outcome = handle_settings_mouse(
+        &mut s,
+        MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        10,
+        row_y,
+    );
+    assert!(matches!(outcome, SettingsKeyOutcome::Changed));
+    assert!(
+        matches!(s.mode(), SettingsModalMode::EditingValue { key, .. } if key == "throughput_warn_tps")
+    );
 }
 
 #[test]
@@ -1865,6 +1930,7 @@ fn registry_kind_membership_through_pr_14() {
             "show_thinking_blocks",
             "show_timeline",
             "show_timestamps",
+            "show_throughput",
             "page_flip_on_send",
             "dashboard_preview",
             "confirm_before_rewind",
@@ -1937,7 +2003,12 @@ fn registry_kind_membership_through_pr_14() {
     sorted_int.sort();
     assert_eq!(
         sorted_int,
-        vec!["max_thoughts_width", "scroll_lines", "scroll_speed"],
+        vec![
+            "max_thoughts_width",
+            "scroll_lines",
+            "scroll_speed",
+            "throughput_warn_tps",
+        ],
         "Int kind membership drift (PR 8)",
     );
 
@@ -2025,6 +2096,8 @@ fn defaults_round_trip_through_registry() {
             "screen_mode" => SettingValue::Enum("fullscreen"),
             "locale" => SettingValue::Enum("zh-CN"),
             "show_timestamps" => SettingValue::Bool(true),
+            "show_throughput" => SettingValue::Bool(true),
+            "throughput_warn_tps" => SettingValue::Int(10),
             "show_timeline" => SettingValue::Bool(false),
             "page_flip_on_send" => SettingValue::Bool(true),
             "dashboard_preview" => SettingValue::Bool(true),

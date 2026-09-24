@@ -512,6 +512,10 @@ pub enum Action {
     SetCompactMode(bool),
     /// Set timestamp display on messages.
     SetTimestamps(bool),
+    /// Show or hide the tps/rpm chips. Persists to `[ui].show_throughput`.
+    SetShowThroughput(bool),
+    /// Warning threshold for the tps chip. Persists to `[ui].throughput_warn_tps`.
+    SetThroughputWarnTps(i64),
     /// Set timeline sidebar visibility (per-turn tick rail).
     SetTimeline(bool),
     /// This action saves `[ui].dashboard_preview`.

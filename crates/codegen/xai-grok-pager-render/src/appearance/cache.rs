@@ -105,6 +105,55 @@ pub fn set_timestamps(enabled: bool) {
     TIMESTAMPS_LOADED.with(|l| l.set(true));
 }
 
+// -- Throughput chips ---------------------------------------------------------
+
+thread_local! {
+    static THROUGHPUT_CURRENT: Cell<bool> = const { Cell::new(true) };
+    static THROUGHPUT_LOADED: Cell<bool> = const { Cell::new(false) };
+    static THROUGHPUT_WARN_CURRENT: Cell<f64> = const { Cell::new(10.0) };
+    static THROUGHPUT_WARN_LOADED: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn load_show_throughput() -> bool {
+    THROUGHPUT_LOADED.with(|loaded| {
+        if !loaded.get() {
+            THROUGHPUT_CURRENT
+                .with(|c| c.set(load_bool_from_effective_config("show_throughput", true)));
+            loaded.set(true);
+        }
+    });
+    THROUGHPUT_CURRENT.with(|c| c.get())
+}
+
+pub fn set_show_throughput(enabled: bool) {
+    THROUGHPUT_CURRENT.with(|c| c.set(enabled));
+    THROUGHPUT_LOADED.with(|l| l.set(true));
+}
+
+pub fn load_throughput_warn_tps() -> f64 {
+    THROUGHPUT_WARN_LOADED.with(|loaded| {
+        if !loaded.get() {
+            let raw = load_f64_from_effective_config("throughput_warn_tps");
+            THROUGHPUT_WARN_CURRENT.with(|c| c.set(resolve_cached_warn_tps(raw)));
+            loaded.set(true);
+        }
+    });
+    THROUGHPUT_WARN_CURRENT.with(|c| c.get())
+}
+
+pub fn set_throughput_warn_tps(value: f64) {
+    THROUGHPUT_WARN_CURRENT.with(|c| c.set(resolve_cached_warn_tps(Some(value))));
+    THROUGHPUT_WARN_LOADED.with(|l| l.set(true));
+}
+
+fn resolve_cached_warn_tps(raw: Option<f64>) -> f64 {
+    match raw {
+        None => 10.0,
+        Some(value) if value.is_finite() && value >= 0.0 => value,
+        Some(_) => 10.0,
+    }
+}
+
 // -- Timeline sidebar ----------------------------------------------------------
 
 thread_local! {
@@ -623,6 +672,8 @@ pub fn set_render_mermaid(value: RenderMermaid) {
 pub fn prime(ui: &UiConfig) {
     set(ui.compact_mode);
     set_timestamps(ui.show_timestamps.unwrap_or(TIMESTAMPS_DEFAULT));
+    set_show_throughput(ui.show_throughput_enabled());
+    set_throughput_warn_tps(ui.throughput_warn_tps());
     set_show_timeline(ui.show_timeline_enabled());
     set_page_flip_on_send(ui.page_flip_on_send_enabled());
     set_combine_queued_prompts(
@@ -663,6 +714,14 @@ fn load_bool_option_from_effective_config(key: &str) -> Option<bool> {
     root.get("ui")
         .and_then(|ui| ui.get(key))
         .and_then(|v| v.as_bool())
+}
+
+fn load_f64_from_effective_config(key: &str) -> Option<f64> {
+    let root = xai_grok_config::load_effective_config_disk_only().ok()?;
+    let value = root.get("ui")?.get(key)?;
+    value
+        .as_float()
+        .or_else(|| value.as_integer().map(|n| n as f64))
 }
 
 /// Explicit `keep_text_selection` wins over a retired on-disk `double_click_action`.

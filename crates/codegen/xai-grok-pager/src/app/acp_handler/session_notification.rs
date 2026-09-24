@@ -317,11 +317,17 @@ pub(super) fn handle_session_notification_with_origin(
         XaiSessionUpdate::ToolCallDeltaChunk {
             ref name,
             tool_index,
+            ref arguments_delta,
             ..
         } => {
             if meta.is_replay || agent.session.loading_replay || agent.running_wake_turn.is_some() {
                 false
             } else {
+                let chars = arguments_delta
+                    .as_ref()
+                    .map(|d| d.len() as u64)
+                    .unwrap_or(0);
+                agent.throughput.add_chars(chars, std::time::Instant::now());
                 let had_activity_before = agent.session.tracker.activity().is_some();
                 let changed = agent
                     .session
@@ -1337,6 +1343,14 @@ pub(super) fn handle_session_notification_with_origin(
             status_snapshot_applied = true;
             false
         }
+        XaiSessionUpdate::ModelCall(notice) => {
+            if meta.is_replay || agent.session.loading_replay {
+                false
+            } else {
+                apply_model_call(agent, &notice);
+                true
+            }
+        }
         _ => {
             tracing::trace!(
                 "Ignoring {}: {:?}",
@@ -1490,6 +1504,7 @@ pub(super) fn handle_child_session_notification(
         XaiSessionUpdate::ToolCallDeltaChunk {
             ref name,
             tool_index,
+            ref arguments_delta,
             ..
         } => {
             let Some(child_view) = agent.subagent_views.get_mut(child_sid) else {
@@ -1498,6 +1513,13 @@ pub(super) fn handle_child_session_notification(
             if child_view.session.loading_replay {
                 return false;
             }
+            let chars = arguments_delta
+                .as_ref()
+                .map(|d| d.len() as u64)
+                .unwrap_or(0);
+            child_view
+                .throughput
+                .add_chars(chars, std::time::Instant::now());
             let row_live = agent
                 .subagent_sessions
                 .get(child_sid)
@@ -1561,6 +1583,16 @@ pub(super) fn handle_child_session_notification(
                 sync_subagent_activity(agent, child_sid, label);
             }
             finished
+        }
+        XaiSessionUpdate::ModelCall(notice) => {
+            let Some(child_view) = agent.child_view_for_live_update_mut(child_sid) else {
+                return false;
+            };
+            if child_view.session.loading_replay {
+                return false;
+            }
+            apply_model_call(child_view, &notice);
+            true
         }
         _ => false,
     }
@@ -1767,6 +1799,29 @@ pub(super) fn apply_session_event(
         _ => false,
     }
 }
+fn apply_model_call(
+    agent: &mut crate::app::agent_view::AgentView,
+    notice: &xai_grok_shell::extensions::notification::ModelCallNotice,
+) {
+    use xai_grok_shell::extensions::notification::ModelCallPhase;
+    let now = std::time::Instant::now();
+    match notice.phase {
+        ModelCallPhase::Started => {
+            agent
+                .throughput
+                .start(&notice.request_id, notice.user_turn, now);
+        }
+        ModelCallPhase::Finished => {
+            agent.throughput.finish(
+                &notice.request_id,
+                notice.output_tokens,
+                notice.decode_ms,
+                now,
+            );
+        }
+    }
+}
+
 /// True if the trailing run of session/system blocks contains a [`SessionEvent::CompactionFailed`].
 /// Used so we don't stack a [`SessionEvent::ContextTooLarge`] prompt on top of the compaction handler's "too large to compact" message.
 pub(super) fn scrollback_has_recent_compaction_failed(

@@ -505,6 +505,30 @@ pub enum AutoCompactCancelReason {
 /// `Switching model…` loader (family-switch compact runs with no turn in flight).
 pub const MODEL_FAMILY_SWITCH_COMPACT_BANNER: &str = "Switching model. Compacting…";
 
+/// Live sample for the tps/rpm chips. `Finished.output_tokens` already includes reasoning
+/// when the provider reports reasoning inside the completion total.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCallNotice {
+    pub request_id: String,
+    pub phase: ModelCallPhase,
+    #[serde(default)]
+    pub user_turn: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    /// Milliseconds from the first content token to the end of the call.
+    /// Absent when the call produced no content token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallPhase {
+    Started,
+    Finished,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "sessionUpdate")]
 pub enum SessionUpdate {
@@ -678,6 +702,9 @@ pub enum SessionUpdate {
     },
     /// Status snapshot for client status lines. Send-only: never persisted, since the next emit supersedes it.
     SessionStatus(Box<xai_grok_status_line::StatusLineContext>),
+    /// One model request's start or finish, for the tps/rpm chips.
+    /// Send-only: never persisted. A replay must not revive a rate from a previous process.
+    ModelCall(ModelCallNotice),
     /// Session summary was generated for a new session.
     /// Sent after the first user prompt when the LLM generates a title.
     SessionSummaryGenerated {

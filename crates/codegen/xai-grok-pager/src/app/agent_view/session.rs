@@ -124,6 +124,17 @@ impl AgentView {
         agent.post_turn_plan_review = app.post_turn_plan_review;
         agent
     }
+    /// tps/rpm for the status row and the minimal info line. Empty when the chips are off or idle.
+    pub fn throughput_labels(&self) -> crate::app::throughput::Labels {
+        if !crate::appearance::cache::load_show_throughput() {
+            return crate::app::throughput::Labels::default();
+        }
+        self.throughput.labels(
+            std::time::Instant::now(),
+            crate::appearance::cache::load_throughput_warn_tps(),
+        )
+    }
+
     /// Create a new agent view with default UI state.
     ///
     /// The prompt widget is initialized with the session's working directory.
@@ -193,6 +204,7 @@ impl AgentView {
             modal_buttons: Vec::new(),
             modal_hovered_key: None,
             context_state: None,
+            throughput: crate::app::throughput::Throughput::default(),
             status_context: None,
             last_status_line_size: None,
             chat_kind: false,
