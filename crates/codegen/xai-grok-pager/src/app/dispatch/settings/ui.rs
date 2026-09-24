@@ -12,9 +12,10 @@ use super::setters::{
     set_prompt_suggestions_inner, set_remember_tool_approvals_inner, set_render_mermaid_inner,
     set_respect_manual_folds_inner, set_screen_mode_inner, set_scroll_lines_inner,
     set_scroll_mode_inner, set_scroll_speed_inner, set_show_thinking_blocks_inner,
-    set_show_tips_inner, set_simple_mode_inner, set_theme_inner, set_timeline_inner,
-    set_timestamps, set_timestamps_inner, set_ui_locale_inner, set_vim_mode_inner,
-    set_voice_capture_mode_inner, set_voice_keybind_enabled_inner, set_voice_stt_language_inner,
+    set_show_throughput_inner, set_show_tips_inner, set_simple_mode_inner, set_theme_inner,
+    set_throughput_warn_tps_inner, set_timeline_inner, set_timestamps, set_timestamps_inner,
+    set_ui_locale_inner, set_vim_mode_inner, set_voice_capture_mode_inner,
+    set_voice_keybind_enabled_inner, set_voice_stt_language_inner,
 };
 use crate::app::actions::{Action, Effect};
 use crate::app::app_view::{ActiveView, AppView};
@@ -797,6 +798,7 @@ pub(in crate::app::dispatch) fn action_for_reset(
     match (key, value) {
         ("compact_mode", SettingValue::Bool(b)) => Some(Action::SetCompactMode(*b)),
         ("show_timestamps", SettingValue::Bool(b)) => Some(Action::SetTimestamps(*b)),
+        ("show_throughput", SettingValue::Bool(b)) => Some(Action::SetShowThroughput(*b)),
         ("show_timeline", SettingValue::Bool(b)) => Some(Action::SetTimeline(*b)),
         ("page_flip_on_send", SettingValue::Bool(b)) => Some(Action::SetPageFlipOnSend(*b)),
         ("dashboard_preview", SettingValue::Bool(enabled)) => {
@@ -852,6 +854,7 @@ pub(in crate::app::dispatch) fn action_for_reset(
             crate::appearance::TextSelection::from_canonical(s).map(Action::SetKeepTextSelection)
         }
         ("scroll_speed", SettingValue::Int(v)) => Some(Action::SetScrollSpeed(*v)),
+        ("throughput_warn_tps", SettingValue::Int(v)) => Some(Action::SetThroughputWarnTps(*v)),
         ("scroll_mode", SettingValue::Enum(s)) => {
             crate::appearance::ScrollMode::from_canonical(s).map(Action::SetScrollMode)
         }
@@ -977,6 +980,7 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
     match (key, rollback_value) {
         ("compact_mode", SettingValue::Bool(b)) => set_compact_mode_inner(app, *b),
         ("show_timestamps", SettingValue::Bool(b)) => set_timestamps_inner(app, *b),
+        ("show_throughput", SettingValue::Bool(b)) => set_show_throughput_inner(app, *b),
         ("show_timeline", SettingValue::Bool(b)) => set_timeline_inner(app, *b),
         ("page_flip_on_send", SettingValue::Bool(b)) => set_page_flip_on_send_inner(app, *b),
         ("dashboard_preview", SettingValue::Bool(enabled)) => {
@@ -1150,6 +1154,7 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
         ("max_thoughts_width", SettingValue::Int(i)) => set_max_thoughts_width_inner(app, *i),
         // scroll_speed: direct inner call (clamp handled by inner).
         ("scroll_speed", SettingValue::Int(i)) => set_scroll_speed_inner(app, *i as u8),
+        ("throughput_warn_tps", SettingValue::Int(i)) => set_throughput_warn_tps_inner(app, *i),
         // scroll_mode: restore the cache mirror to the canonical value.
         ("scroll_mode", SettingValue::Enum(s)) => {
             if let Some(mode) = crate::appearance::ScrollMode::from_canonical(s) {

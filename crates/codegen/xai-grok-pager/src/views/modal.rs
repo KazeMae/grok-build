@@ -328,6 +328,10 @@ pub enum ActiveModal {
     UsageInfo {
         state: Box<crate::views::usage_modal::UsageInfoModalState>,
     },
+    /// Local call statistics (`/stats`): tokens, TTFT, TPS, cost, across sessions.
+    Stats {
+        state: Box<crate::views::stats_modal::StatsModalState>,
+    },
     /// Reset-settings confirmation, stacked above Settings. The underlying `SettingsModalState` is
     /// moved in/out so cancel preserves the user's filter/scroll position. The setting key lives only
     /// here (single source of truth for dispatch).
@@ -755,6 +759,7 @@ impl ActiveModal {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::UsageInfo { .. }
+            | ActiveModal::Stats { .. }
             | ActiveModal::RememberNoteReview { .. } => vec![],
         }
     }
@@ -787,6 +792,7 @@ impl ActiveModal {
             ActiveModal::ResetSettingsConfirm { .. } => "Reset setting?",
             ActiveModal::RememberNoteReview { .. } => "Memory Note",
             ActiveModal::UsageInfo { .. } => "Usage",
+            ActiveModal::Stats { .. } => "Stats",
         }
     }
 }

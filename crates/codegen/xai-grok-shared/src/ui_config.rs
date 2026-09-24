@@ -42,6 +42,13 @@ pub struct UiConfig {
     /// Written by the pager's appearance persist module.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_timestamps: Option<bool>,
+    /// ttft/tps chips beside the context indicator. Unset means on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_throughput: Option<bool>,
+    /// Paint tps in the warning color when the drawn number is below this.
+    /// `0` turns the color off. Unset means 10. Negatives are ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub throughput_warn_tps: Option<f64>,
     /// Timeline sidebar (per-turn tick rail in place of the scrollbar).
     /// `None` means off (client default; opt-in). Written by the pager's settings modal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -264,6 +271,8 @@ impl Default for UiConfig {
             approval_mode: None,
             default_selected_permission: None,
             show_timestamps: None,
+            show_throughput: None,
+            throughput_warn_tps: None,
             show_timeline: None,
             dashboard_preview: None,
             page_flip_on_send: None,
@@ -315,6 +324,33 @@ impl UiConfig {
     /// The one place the default is applied: every layer (cache, appearance config, settings modal) reads through here so they cannot drift.
     pub fn show_timeline_enabled(&self) -> bool {
         self.show_timeline.unwrap_or(Self::SHOW_TIMELINE_DEFAULT)
+    }
+
+    pub const SHOW_THROUGHPUT_DEFAULT: bool = true;
+    pub const THROUGHPUT_WARN_TPS_DEFAULT: f64 = 10.0;
+
+    pub fn show_throughput_enabled(&self) -> bool {
+        self.show_throughput
+            .unwrap_or(Self::SHOW_THROUGHPUT_DEFAULT)
+    }
+
+    /// Resolved warning threshold. `0` disables the color. Invalid values use the default.
+    pub fn throughput_warn_tps(&self) -> f64 {
+        match self.throughput_warn_tps {
+            None => Self::THROUGHPUT_WARN_TPS_DEFAULT,
+            Some(value) if value.is_finite() && value >= 0.0 => value,
+            Some(_) => Self::THROUGHPUT_WARN_TPS_DEFAULT,
+        }
+    }
+
+    /// Whole number the settings stepper shows for [`Self::throughput_warn_tps`].
+    pub fn throughput_warn_tps_setting(&self) -> i64 {
+        let rounded = self.throughput_warn_tps().round();
+        if rounded.is_finite() {
+            (rounded as i64).clamp(0, 100)
+        } else {
+            Self::THROUGHPUT_WARN_TPS_DEFAULT as i64
+        }
     }
 
     /// Default for [`Self::page_flip_on_send`] when unset.

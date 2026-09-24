@@ -144,7 +144,7 @@ impl SessionActor {
 
         let response = match tokio::time::timeout(
             TITLE_REFRESH_MODEL_TIMEOUT,
-            setup.client.conversation_collect(request),
+            self.collect_background(&setup.client, request, TITLE_REFRESH_MODEL_TIMEOUT),
         )
         .await
         {

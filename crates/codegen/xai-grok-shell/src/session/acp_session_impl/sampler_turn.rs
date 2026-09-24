@@ -1752,6 +1752,7 @@ impl SessionActor {
         };
 
         let request_id_str = request_id.as_str().to_string();
+        self.emit_model_call_started(&request_id_str, true);
         let collected = {
             let gate_span = region!("turn.sampling_gate", Parent::Inherit);
             let _permit = acquire_subagent_sampling_permit(&self.sampling_gate).await;
@@ -1786,6 +1787,24 @@ impl SessionActor {
         }
         match collected.result {
             Ok((response, metrics)) => {
+                let model = self.current_model_id().await;
+                self.emit_model_call_finished(
+                    &request_id_str,
+                    response
+                        .usage
+                        .as_ref()
+                        .map(completion_tokens_including_reasoning),
+                    decode_ms_of(&metrics),
+                );
+                record_sampled_call(
+                    self,
+                    &model,
+                    &request_id_str,
+                    Some(&response),
+                    Some(&metrics),
+                    true,
+                    None,
+                );
                 // Current span is the turn span (this fn is inline-awaited from process_conversation_turn, no own #[instrument])
                 let span = tracing::Span::current();
                 span.record("request_id", request_id_str.as_str());
@@ -1854,6 +1873,13 @@ impl SessionActor {
                 ))
             }
             Err(rich_err) => {
+                let model = self.current_model_id().await;
+                let kind = xai_grok_sampler::SamplingErrorInfo::from(&rich_err)
+                    .kind
+                    .as_ref()
+                    .to_string();
+                self.emit_model_call_finished(&request_id_str, None, None);
+                record_sampled_call(self, &model, &request_id_str, None, None, false, Some(kind));
                 // Detector labels are already merged from the awaited result.
                 // Wait briefly for the UI/error event rail, then fail open so a stuck drainer cannot prevent recovery or turn teardown
                 let original = xai_grok_sampler::SamplingErrorInfo::from(&rich_err);
@@ -2240,6 +2266,173 @@ impl SessionActor {
                 .push_unreported_model_output(assistant_item);
         }
     }
+
+    pub(crate) fn emit_model_call_started(&self, request_id: &str, user_turn: bool) {
+        self.emit_model_call(crate::extensions::notification::ModelCallNotice {
+            request_id: request_id.to_string(),
+            phase: crate::extensions::notification::ModelCallPhase::Started,
+            user_turn,
+            output_tokens: None,
+            decode_ms: None,
+        });
+    }
+
+    pub(crate) fn emit_model_call_finished(
+        &self,
+        request_id: &str,
+        output_tokens: Option<u64>,
+        decode_ms: Option<u64>,
+    ) {
+        self.emit_model_call(crate::extensions::notification::ModelCallNotice {
+            request_id: request_id.to_string(),
+            phase: crate::extensions::notification::ModelCallPhase::Finished,
+            user_turn: false,
+            output_tokens,
+            decode_ms,
+        });
+    }
+
+    pub(crate) fn emit_model_call(&self, notice: crate::extensions::notification::ModelCallNotice) {
+        self.send_xai_notification_transient(
+            crate::extensions::notification::SessionUpdate::ModelCall(notice),
+        );
+    }
+
+    /// One auxiliary model request (compaction, memory, title, recap, and the rest).
+    /// Counts toward rpm immediately and reports tps when the call returns usage.
+    pub(crate) async fn collect_background(
+        &self,
+        client: &xai_grok_sampler::SamplingClient,
+        request: xai_grok_sampling_types::ConversationRequest,
+        idle: std::time::Duration,
+    ) -> xai_grok_sampling_types::Result<xai_grok_sampling_types::ConversationResponse> {
+        let request_id = xai_grok_sampler::RequestId::random().as_str().to_string();
+        self.emit_model_call_started(&request_id, false);
+        let mut guard = BackgroundCallGuard {
+            session: self,
+            request_id: request_id.clone(),
+            done: false,
+        };
+        let result = client.conversation_collect_metered(request, idle).await;
+        guard.done = true;
+        let model = self.current_model_id().await;
+        match &result {
+            Ok((response, metrics)) => {
+                self.emit_model_call_finished(
+                    &request_id,
+                    response
+                        .usage
+                        .as_ref()
+                        .map(completion_tokens_including_reasoning),
+                    decode_ms_of(metrics),
+                );
+                record_sampled_call(
+                    self,
+                    &model,
+                    &request_id,
+                    Some(response),
+                    Some(metrics),
+                    true,
+                    None,
+                );
+                if metrics.attempts > 1 {
+                    for _ in 1..metrics.attempts {
+                        crate::stats::append_retry(&self.session_id_string(), &request_id, "retry");
+                    }
+                }
+            }
+            Err(err) => {
+                let kind = xai_grok_sampler::SamplingErrorInfo::from(err)
+                    .kind
+                    .as_ref()
+                    .to_string();
+                self.emit_model_call_finished(&request_id, None, None);
+                record_sampled_call(self, &model, &request_id, None, None, false, Some(kind));
+            }
+        }
+        result.map(|(response, _)| response)
+    }
+}
+
+struct BackgroundCallGuard<'a> {
+    session: &'a SessionActor,
+    request_id: String,
+    done: bool,
+}
+
+impl Drop for BackgroundCallGuard<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            self.session
+                .emit_model_call_finished(&self.request_id, None, None);
+            crate::stats::append_call(crate::stats::CallStat {
+                session_id: self.session.session_id_string(),
+                model: String::new(),
+                request_id: self.request_id.clone(),
+                ok: false,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                reasoning_tokens: 0,
+                ttft_ms: None,
+                decode_ms: None,
+                duration_ms: None,
+                cost_usd_ticks: None,
+                error_kind: Some("cancelled".to_string()),
+            });
+        }
+    }
+}
+
+fn record_sampled_call(
+    session: &SessionActor,
+    model: &str,
+    request_id: &str,
+    response: Option<&xai_grok_sampling_types::ConversationResponse>,
+    metrics: Option<&xai_grok_sampler::InferenceLatencyStats>,
+    ok: bool,
+    error_kind: Option<String>,
+) {
+    let usage = response.and_then(|response| response.usage.as_ref());
+    crate::stats::append_call(crate::stats::CallStat {
+        session_id: session.session_id_string(),
+        model: model.to_string(),
+        request_id: request_id.to_string(),
+        ok,
+        input_tokens: usage
+            .map(|usage| u64::from(usage.prompt_tokens))
+            .unwrap_or(0),
+        output_tokens: usage
+            .map(completion_tokens_including_reasoning)
+            .unwrap_or(0),
+        cache_read_tokens: usage
+            .map(|usage| u64::from(usage.cached_prompt_tokens))
+            .unwrap_or(0),
+        reasoning_tokens: usage
+            .map(|usage| u64::from(usage.reasoning_tokens))
+            .unwrap_or(0),
+        ttft_ms: metrics.and_then(|metrics| metrics.time_to_first_token_ms),
+        decode_ms: metrics.and_then(decode_ms_of),
+        duration_ms: metrics.map(|metrics| metrics.time_to_last_byte_ms),
+        cost_usd_ticks: response.and_then(|response| response.cost_usd_ticks),
+        error_kind,
+    });
+}
+
+fn completion_tokens_including_reasoning(usage: &xai_grok_sampling_types::TokenUsage) -> u64 {
+    let completion = u64::from(usage.completion_tokens);
+    let reasoning = u64::from(usage.reasoning_tokens);
+    if completion >= reasoning {
+        completion
+    } else {
+        completion.saturating_add(reasoning)
+    }
+}
+
+fn decode_ms_of(metrics: &xai_grok_sampler::InferenceLatencyStats) -> Option<u64> {
+    metrics
+        .time_to_first_token_ms
+        .map(|ttft| metrics.time_to_last_byte_ms.saturating_sub(ttft))
 }
 
 /// Per-tool precedence: a non-empty `over` wins, else the non-empty `seed`.

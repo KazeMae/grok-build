@@ -109,6 +109,17 @@ impl<'a> AgentStatusBar<'a> {
         self.items.insert(0, StatusEntry { id, line, width });
     }
 
+    pub fn overflows(&self, area_width: u16) -> bool {
+        area_width > 0 && self.width() > area_width
+    }
+
+    /// Drop one item by id. Used when the row is too narrow for the tps/rpm chips.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.items.len();
+        self.items.retain(|entry| entry.id != id);
+        self.items.len() != before
+    }
+
     /// Columns a prepended item may take in a row `area_width` wide: what the current group and its joining separator leave.
     pub fn room_for_front(&self, area_width: u16) -> u16 {
         let joining_sep = if self.items.is_empty() {

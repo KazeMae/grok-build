@@ -87,6 +87,17 @@ pub async fn set_show_timestamps(value: bool) -> Result<()> {
     update_config(|cfg| cfg.ui.show_timestamps = Some(value)).await
 }
 
+/// Persist `[ui].show_throughput`.
+pub async fn set_show_throughput(value: bool) -> Result<()> {
+    update_config(|cfg| cfg.ui.show_throughput = Some(value)).await
+}
+
+/// Persist `[ui].throughput_warn_tps`. Clamped to `0..=100`.
+pub async fn set_throughput_warn_tps(value: i64) -> Result<()> {
+    let clamped = value.clamp(0, 100) as f64;
+    update_config(|cfg| cfg.ui.throughput_warn_tps = Some(clamped)).await
+}
+
 /// Persist `[ui].show_timeline` via `update_config`.
 /// The `Option<bool>` shape matches `show_timestamps`.
 pub async fn set_show_timeline(value: bool) -> Result<()> {

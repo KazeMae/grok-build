@@ -583,6 +583,8 @@ pub fn current_value_for(
         // SHARED: UiConfig is the source of truth, the pager keeps a cache
         "compact_mode" => Some(SettingValue::Bool(ui.compact_mode)),
         "show_timestamps" => Some(SettingValue::Bool(ui.show_timestamps.unwrap_or(true))),
+        "show_throughput" => Some(SettingValue::Bool(ui.show_throughput_enabled())),
+        "throughput_warn_tps" => Some(SettingValue::Int(ui.throughput_warn_tps_setting())),
         "show_timeline" => Some(SettingValue::Bool(ui.show_timeline_enabled())),
         "dashboard_preview" => Some(SettingValue::Bool(ui.dashboard_preview_enabled())),
         // The cache is the send-path source of truth (same pattern as group_tool_verbs)
@@ -919,6 +921,20 @@ mod tests {
                         *default,
                         ui.show_timestamps.unwrap_or(true),
                         "show_timestamps default drifts from UiConfig::default()"
+                    );
+                }
+                ("show_throughput", SettingKind::Bool { default }) => {
+                    assert_eq!(
+                        *default,
+                        ui.show_throughput_enabled(),
+                        "show_throughput default drifts from UiConfig::default()"
+                    );
+                }
+                ("throughput_warn_tps", SettingKind::Int { default, .. }) => {
+                    assert_eq!(
+                        *default,
+                        ui.throughput_warn_tps_setting(),
+                        "throughput_warn_tps default drifts from UiConfig::default()"
                     );
                 }
                 ("show_timeline", SettingKind::Bool { default }) => {

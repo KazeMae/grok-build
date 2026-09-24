@@ -526,8 +526,12 @@ impl SessionActor {
             x_grok_agent_id: Some(xai_grok_telemetry::id::agent_id()),
             ..Default::default()
         };
-        let response = sampling_client
-            .conversation_collect(request)
+        let response = self
+            .collect_background(
+                &sampling_client,
+                request,
+                std::time::Duration::from_secs(300),
+            )
             .await
             .map_err(|e| {
                 acp::Error::internal_error().data(format!("dream model call failed: {e}"))
@@ -891,8 +895,12 @@ impl SessionActor {
         };
 
         // Collect via the client so the LengthPolicy gate applies: a note truncated at the 1024-token cap must not persist to MEMORY.md
-        match sampling_client
-            .conversation_collect_with_idle_timeout(request, std::time::Duration::from_secs(15))
+        match self
+            .collect_background(
+                &sampling_client,
+                request,
+                std::time::Duration::from_secs(15),
+            )
             .await
         {
             Ok(response) => {

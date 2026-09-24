@@ -444,6 +444,40 @@ impl AgentView {
             }
         }
 
+        if let ActiveModal::Stats { state } = modal {
+            let chrome_cfg = mw::ModalWindowConfig {
+                title: "",
+                tabs: Some(&crate::views::stats_modal::TAB_LABELS),
+                shortcuts: &[],
+                sizing: mw::ModalSizing::default(),
+                fold_info: None,
+            };
+            let chrome_outcome = mw::handle_modal_key(&mut state.window, key, &chrome_cfg);
+            match chrome_outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::TabChanged(tab) => {
+                    crate::views::stats_modal::apply_tab(state, tab);
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::Unhandled => {
+                    return match crate::views::stats_modal::handle_stats_key(state, key) {
+                        crate::views::stats_modal::StatsOutcome::Close => {
+                            self.active_modal = None;
+                            InputOutcome::Changed
+                        }
+                        crate::views::stats_modal::StatsOutcome::Changed => InputOutcome::Changed,
+                        crate::views::stats_modal::StatsOutcome::Unchanged => {
+                            InputOutcome::Unchanged
+                        }
+                    };
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
         // UsageInfo: chrome (Esc/close) first, then tabs / scroll / copy.
         if let ActiveModal::UsageInfo { state } = modal {
             let outcome = crate::views::usage_modal::route_usage_modal_key(state, key);
@@ -501,6 +535,7 @@ impl AgentView {
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
             | ActiveModal::UsageInfo { .. }
+            | ActiveModal::Stats { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. } => unreachable!(),
         }
@@ -1591,6 +1626,39 @@ impl AgentView {
             }
         }
 
+        if let Some(ActiveModal::Stats { state }) = &mut self.active_modal {
+            let outcome =
+                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
+            match outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::TabChanged(tab) => {
+                    crate::views::stats_modal::apply_tab(state, tab);
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::Unhandled => {
+                    return match crate::views::stats_modal::handle_stats_mouse(
+                        state,
+                        mouse.kind,
+                        mouse.column,
+                        mouse.row,
+                    ) {
+                        crate::views::stats_modal::StatsOutcome::Close => {
+                            self.active_modal = None;
+                            InputOutcome::Changed
+                        }
+                        crate::views::stats_modal::StatsOutcome::Changed => InputOutcome::Changed,
+                        crate::views::stats_modal::StatsOutcome::Unchanged => {
+                            InputOutcome::Unchanged
+                        }
+                    };
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
         // UsageInfo: chrome first (tabs / close / footer stay clickable), then drag / wheel.
         if let Some(ActiveModal::UsageInfo { state }) = &mut self.active_modal {
             let outcome = crate::views::usage_modal::route_usage_modal_mouse(
@@ -2481,6 +2549,8 @@ impl AgentView {
                         locale,
                     );
                 }
+            } else if let modal::ActiveModal::Stats { state } = active_modal {
+                crate::views::stats_modal::render_stats_modal(buf, area, state, &theme);
             } else if let modal::ActiveModal::UsageInfo { state } = active_modal {
                 let default_locale = crate::locale::LocaleContext::default();
                 let locale = locale.unwrap_or(&default_locale);

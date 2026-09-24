@@ -2495,6 +2495,17 @@ impl SamplingClient {
         request: ConversationRequest,
         idle_timeout: std::time::Duration,
     ) -> Result<ConversationResponse> {
+        self.conversation_collect_metered(request, idle_timeout)
+            .await
+            .map(|(response, _metrics)| response)
+    }
+
+    /// [`Self::conversation_collect_with_idle_timeout`] plus the latency stats of that call.
+    pub async fn conversation_collect_metered(
+        &self,
+        request: ConversationRequest,
+        idle_timeout: std::time::Duration,
+    ) -> Result<(ConversationResponse, crate::metrics::InferenceLatencyStats)> {
         let request_id = crate::types::RequestId::random();
         let length_policy = request.length_policy;
         let result = match self.api_backend() {
@@ -2521,10 +2532,8 @@ impl SamplingClient {
                 crate::stream::collect_response(events).await
             }
         };
-        let response = result
-            .map(|(response, _metrics)| response)
-            .map_err(stream_collect_error)?;
-        apply_length_policy(length_policy, response)
+        let (response, metrics) = result.map_err(stream_collect_error)?;
+        apply_length_policy(length_policy, response).map(|response| (response, metrics))
     }
 }
 

@@ -1365,6 +1365,24 @@ impl AgentView {
                 Line::from(Span::styled(label, mode_style)),
             );
         }
+        let throughput = if crate::appearance::cache::load_show_throughput() {
+            self.throughput.labels(
+                std::time::Instant::now(),
+                crate::appearance::cache::load_throughput_warn_tps(),
+            )
+        } else {
+            crate::app::throughput::Labels::default()
+        };
+        let chip_bg = theme.bg_base;
+        let chip_normal = Style::default().fg(theme.gray).bg(chip_bg);
+        let chip_warn = Style::default().fg(theme.warning).bg(chip_bg);
+        if let Some(ttft) = throughput.ttft {
+            status.push("ttft", Line::from(Span::styled(ttft, chip_normal)));
+        }
+        if let Some(tps) = throughput.tps {
+            let style = if tps.warn { chip_warn } else { chip_normal };
+            status.push("tps", Line::from(Span::styled(tps.text, style)));
+        }
         let ctx_used = self.context_state.as_ref().map(|c| c.used);
         let model_window = self.session.models.get_context_window();
         let ctx_total = self
@@ -1431,6 +1449,12 @@ impl AgentView {
                 let link_style = Style::default().fg(theme.link_fg).bg(theme.bg_base);
                 status.push_front("link_url", Line::from(Span::styled(display, link_style)));
             }
+        }
+        if status.overflows(layout.status_bar.width) {
+            status.remove("ttft");
+        }
+        if status.overflows(layout.status_bar.width) {
+            status.remove("tps");
         }
         let areas = status.render(buf, layout.status_bar);
         self.hit_bg_status.rect = areas.get("bg_tasks").copied();

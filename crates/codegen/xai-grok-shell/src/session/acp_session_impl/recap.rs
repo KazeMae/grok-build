@@ -352,7 +352,10 @@ impl SessionActor {
         // The artifact records the exact model-facing items after trust projection; the canonical conversation state remains raw
         let chat_history_for_artifact = request.items.clone();
 
-        let response = match setup.client.conversation_collect(request).await {
+        let response = match self
+            .collect_background(&setup.client, request, std::time::Duration::from_secs(300))
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!(error = %e, "recap: model call failed");
@@ -614,8 +617,8 @@ impl SessionActor {
         };
 
         // Collect via the client so the LengthPolicy gate applies: a suggestion truncated at the 50-token cap must not become ghost text
-        match sampling_client
-            .conversation_collect_with_idle_timeout(request, std::time::Duration::from_secs(5))
+        match self
+            .collect_background(&sampling_client, request, std::time::Duration::from_secs(5))
             .await
         {
             Ok(response) => {
@@ -775,7 +778,14 @@ impl SessionActor {
             });
         };
 
-        let response = match sampling_client.conversation_collect(request).await {
+        let response = match self
+            .collect_background(
+                &sampling_client,
+                request,
+                std::time::Duration::from_secs(300),
+            )
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::debug!(error = %e, "prompt suggest inference failed");

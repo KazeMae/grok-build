@@ -52,6 +52,7 @@ pub mod settings_modal;
 pub mod shortcuts_bar;
 pub mod shortcuts_help;
 pub mod slash_dropdown;
+pub mod stats_modal;
 pub mod status_bar;
 pub mod status_line;
 pub mod suggestion_controller;

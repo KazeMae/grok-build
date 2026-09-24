@@ -913,6 +913,7 @@ pub(super) fn action_for_bool(key: SettingKey, new: bool) -> Option<Action> {
     match key {
         "compact_mode" => Some(Action::SetCompactMode(new)),
         "show_timestamps" => Some(Action::SetTimestamps(new)),
+        "show_throughput" => Some(Action::SetShowThroughput(new)),
         "show_timeline" => Some(Action::SetTimeline(new)),
         "simple_mode" => Some(Action::SetSimpleMode(new)),
         "contextual_hints.undo" => Some(Action::SetContextualHintUndo(new)),
@@ -1066,6 +1067,7 @@ pub(super) fn action_for_int(key: SettingKey, value: i64) -> Option<Action> {
     match key {
         "max_thoughts_width" => Some(Action::SetMaxThoughtsWidth(value)),
         "scroll_speed" => Some(Action::SetScrollSpeed(value)),
+        "throughput_warn_tps" => Some(Action::SetThroughputWarnTps(value)),
         "scroll_lines" => Some(Action::SetScrollLines(value)),
         _ => None,
     }

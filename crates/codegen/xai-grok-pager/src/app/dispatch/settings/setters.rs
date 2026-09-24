@@ -1086,6 +1086,63 @@ pub(in crate::app::dispatch) fn set_timestamps(app: &mut AppView, new: bool) -> 
     }]
 }
 
+pub(super) fn set_show_throughput_inner(app: &mut AppView, new: bool) {
+    app.current_ui.show_throughput = Some(new);
+    crate::appearance::cache::set_show_throughput(new);
+}
+
+pub(in crate::app::dispatch) fn set_show_throughput(app: &mut AppView, new: bool) -> Vec<Effect> {
+    let prev = app.current_ui.show_throughput_enabled();
+    if prev == new {
+        return vec![];
+    }
+    set_show_throughput_inner(app, new);
+    refresh_open_settings_modals(app);
+    tracing::info!(target: "settings", key = "show_throughput", value = new, "setting changed");
+    show_setting_success_toast(app, "show_throughput", "Show throughput", new);
+    vec![Effect::PersistSetting {
+        key: "show_throughput",
+        value: crate::settings::SettingValue::Bool(new),
+        rollback_value: crate::settings::SettingValue::Bool(prev),
+    }]
+}
+
+pub(super) fn set_throughput_warn_tps_inner(app: &mut AppView, raw: i64) {
+    let clamped = raw.clamp(0, 100);
+    app.current_ui.throughput_warn_tps = Some(clamped as f64);
+    crate::appearance::cache::set_throughput_warn_tps(clamped as f64);
+}
+
+pub(in crate::app::dispatch) fn set_throughput_warn_tps(
+    app: &mut AppView,
+    raw: i64,
+) -> Vec<Effect> {
+    let clamped = raw.clamp(0, 100);
+    let prev = app.current_ui.throughput_warn_tps_setting();
+    if prev == clamped {
+        return vec![];
+    }
+    set_throughput_warn_tps_inner(app, clamped);
+    refresh_open_settings_modals(app);
+    tracing::info!(
+        target: "settings",
+        key = "throughput_warn_tps",
+        value = clamped,
+        "setting changed"
+    );
+    show_setting_value_toast(
+        app,
+        "throughput_warn_tps",
+        "Slow throughput threshold",
+        &clamped.to_string(),
+    );
+    vec![Effect::PersistSetting {
+        key: "throughput_warn_tps",
+        value: crate::settings::SettingValue::Int(clamped),
+        rollback_value: crate::settings::SettingValue::Int(prev),
+    }]
+}
+
 /// State-only mutation for `show_timeline`. Mirrors `set_timestamps_inner`.
 pub(super) fn set_timeline_inner(app: &mut AppView, new: bool) {
     app.current_ui.show_timeline = Some(new);

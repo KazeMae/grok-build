@@ -573,6 +573,36 @@ pub fn default_settings() -> Vec<SettingMeta> {
             hidden_in_minimal: false,
         },
         SettingMeta {
+            key: "show_throughput",
+            category: SettingCategory::Appearance,
+            owner: SettingOwner::Shared,
+            label: "Show throughput",
+            description: "Show time to first token and tokens per second beside the context indicator.",
+            keywords: &["throughput", "tps", "ttft", "tokens", "speed", "latency"],
+            kind: SettingKind::Bool {
+                default: ui_default.show_throughput_enabled(),
+            },
+            restart_required: false,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
+            key: "throughput_warn_tps",
+            category: SettingCategory::Appearance,
+            owner: SettingOwner::Shared,
+            label: "Slow throughput threshold",
+            description: "Color the tps chip as a warning when the shown number is below this. \
+                          0 turns the color off. Default 10. A decimal in config.toml is kept \
+                          until you change this.",
+            keywords: &["throughput", "tps", "warn", "slow", "threshold", "color"],
+            kind: SettingKind::Int {
+                default: ui_default.throughput_warn_tps_setting(),
+                min: 0,
+                max: 100,
+            },
+            restart_required: false,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
             key: "show_timeline",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
