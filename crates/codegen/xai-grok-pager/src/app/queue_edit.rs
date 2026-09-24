@@ -89,7 +89,6 @@ impl AgentView {
                     AgentPane::Queue => self.queue.overlay.focused = false,
                     AgentPane::Todo => self.todo.overlay.focused = false,
                     AgentPane::Tasks => self.tasks.overlay.focused = false,
-                    AgentPane::Catalog => self.catalog.overlay.focused = false,
                     _ => {}
                 }
                 let message = self
@@ -112,7 +111,6 @@ impl AgentView {
                 AgentPane::Queue => self.queue.overlay.focused = true,
                 AgentPane::Todo => self.todo.overlay.focused = true,
                 AgentPane::Tasks => self.tasks.overlay.focused = true,
-                AgentPane::Catalog => self.catalog.overlay.focused = true,
                 _ => {}
             }
             crate::app::turn_completion::reopen_blocked_card_if_held(self);

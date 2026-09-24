@@ -10,7 +10,7 @@ use crate::app::agent_view::test_fixtures::{
     add_running_execute, make_followup_permission_state, running_subagent_info,
 };
 use crate::scrollback::block::RenderBlock;
-use crate::views::dashboard::row::{DashboardRow, build_rows};
+use crate::views::dashboard::row::{DashboardRow, build_rows_with_roster};
 use crate::views::dashboard::state::{Filter, Grouping};
 use crate::views::workflows::WorkflowRunSnapshot;
 
@@ -25,15 +25,69 @@ fn agent() -> AgentView {
 }
 
 fn row(agent: AgentView) -> DashboardRow {
-    build_rows(
+    build_rows_with_roster(
         &IndexMap::from([(AgentId(0), agent)]),
         &Default::default(),
         &[],
         Grouping::State,
         &Filter::None,
         None,
+        &[],
     )
     .remove(0)
+}
+
+#[test]
+fn localized_roster_rows_keep_activity_and_exclude_subagent_rows() {
+    let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let mut agent = agent();
+    agent.set_locale_recursive(&locale);
+    agent.session.loading_replay = true;
+    agent
+        .subagent_sessions
+        .insert("child".into(), running_subagent_info("child"));
+    let agents = IndexMap::from([(AgentId(0), agent)]);
+    let rows = crate::views::dashboard::row::build_rows_with_roster_and_locale(
+        &agents,
+        &Default::default(),
+        &[],
+        Grouping::State,
+        &Filter::None,
+        None,
+        &[],
+        Some(&locale),
+    );
+    let [row] = rows.as_slice() else {
+        panic!("expected only the parent row")
+    };
+    assert_eq!(row.label, "Dashboard regression");
+    assert_eq!(row.activity.as_deref(), Some("加载中…"));
+    assert_eq!(row.secondary_line, row.activity);
+    assert!(row.badges.contains(&RowBadge::Subagents(1)));
+}
+
+#[test]
+fn localized_pending_preview_preserves_dynamic_title() {
+    let locale = crate::locale::LocaleContext::new(crate::locale::ResolvedLocale {
+        locale: crate::locale::UiLocale::ZhCn,
+        source: crate::locale::LocaleSource::Cli,
+    });
+    let mut agent = agent();
+    let mut permission = make_followup_permission_state();
+    permission.title = "  Run cargo test  ".into();
+    agent.permission_queue.push_back(permission);
+    assert_eq!(
+        top_level_activity_with_locale(&agent, RowState::NeedsInput, Some(&locale)).as_deref(),
+        Some("等待你的输入")
+    );
+    assert_eq!(
+        top_level_secondary_line_with_locale(&agent, RowState::NeedsInput, None, Some(&locale))
+            .as_deref(),
+        Some("待处理：Run cargo test")
+    );
 }
 
 #[test]

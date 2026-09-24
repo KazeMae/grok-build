@@ -197,9 +197,11 @@ pub(crate) fn test_app() -> AppView {
         auth_clipboard_delivery: None,
         auth_clipboard_feedback_generation: 0,
         team_id: None,
+        is_team_principal: false,
         team_name: None,
         is_zdr: false,
         team_role: None,
+        can_administer_team: None,
         coding_data_retention_opt_out: true,
         privacy_notice_rollout: false,
         privacy_banner_reshow_days: None,
@@ -2295,10 +2297,6 @@ fn is_restricted_tier_classification() {
     assert!(!is_restricted_tier(Some("X Premium")));
     assert!(!is_restricted_tier(Some("X Premium+")));
     assert!(!is_restricted_tier(Some("SomeFutureTier")));
-}
-#[test]
-fn voice_included_in_tier_restricted_commands() {
-    assert!(TIER_RESTRICTED_COMMANDS.contains(&"voice"));
 }
 #[test]
 fn is_voice_tier_restricted_tracks_tier() {
@@ -5278,7 +5276,6 @@ fn moved_after_press_ends_gesture_instead_of_promoting() {
         None,
         false,
         crate::app::agent_view::BannerSlotParams::none(),
-        &BundleState::default(),
         false,
         &mut Vec::new(),
         crate::app::agent_view::AppRenderParams::default(),
@@ -5325,7 +5322,6 @@ fn moved_without_button_does_not_promote_pending_scrollback_drag() {
         None,
         false,
         crate::app::agent_view::BannerSlotParams::none(),
-        &BundleState::default(),
         false,
         &mut Vec::new(),
         crate::app::agent_view::AppRenderParams::default(),
@@ -5375,7 +5371,6 @@ fn scrollback_click_still_selects_entry_on_mouse_up() {
         None,
         false,
         crate::app::agent_view::BannerSlotParams::none(),
-        &BundleState::default(),
         false,
         &mut Vec::new(),
         crate::app::agent_view::AppRenderParams::default(),
