@@ -826,6 +826,7 @@ async fn bounded_clipboard_probe_maps_each_drop_reason_to_its_completion() {
         (Reason::PasteboardChangedAfterRead, Some(probe_raster()), "ProbeDropped"),
         (Reason::BracketedPayloadMismatch, None, "ProbeDropped"),
         (Reason::BracketedOriginReadFailed, None, "ProbeDropped"),
+        (Reason::BracketedPayloadTextOnly, None, "ProbeDropped"),
         (Reason::PersistFailed, Some(probe_raster()), "PersistFailed(disk full)"),
         (Reason::ReadFailed, None, "ProbeFailed"),
         (Reason::Timeout, None, "ProbeFailed"),
@@ -966,8 +967,10 @@ fn bracketed_probe_drops_a_mismatched_payload_before_reading_the_raster() {
     assert!(drop.image.is_none());
     assert_eq!(0, probe_calls);
 }
+/// A frame that carries text inserted text, so the raster still on the board belongs to an earlier copy.
 #[test]
-fn bracketed_probe_attaches_when_the_payload_matches_clipboard_text() {
+fn bracketed_probe_drops_a_text_frame_that_matches_the_clipboard_text() {
+    use xai_grok_telemetry::events::ClipboardProbeDropReason as Reason;
     crate::clipboard::set_clipboard_probe_hook(crate::clipboard::ClipboardProbeHook {
         text: Some("caption".to_owned()),
         ..crate::clipboard::ClipboardProbeHook::with_raster(Some(probe_raster()))
@@ -978,10 +981,12 @@ fn bracketed_probe_attaches_when_the_payload_matches_clipboard_text() {
         true,
         None,
     );
+    let probe_calls = crate::clipboard::clipboard_probe_call_count();
     crate::clipboard::clear_clipboard_probe_hook();
-    let (attachment, file_urls) = outcome.expect("a matching caption still probes");
-    assert!(matches!(attachment, ProbedAttachment::Image(_)), "got {attachment:?}");
-    assert!(file_urls.is_none());
+    let drop = outcome.expect_err("a text frame must not attach the board's raster");
+    assert_eq!(Reason::BracketedPayloadTextOnly, drop.reason);
+    assert!(drop.image.is_none());
+    assert_eq!(0, probe_calls);
 }
 #[test]
 fn bracketed_probe_attaches_an_image_only_paste() {

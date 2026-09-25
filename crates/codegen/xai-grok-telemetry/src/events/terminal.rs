@@ -121,6 +121,9 @@ pub enum ClipboardProbeDropReason {
     /// Bracketed paste whose clipboard-origin text could not be read. Fail-closed and silent:
     /// the text already landed, so this is not a user-facing clipboard error.
     BracketedOriginReadFailed,
+    /// The bracketed frame carried text, so it inserted text; a raster still on the pasteboard belongs to an
+    /// earlier copy (an IME committing a composition pastes the frame the board already answered for).
+    BracketedPayloadTextOnly,
     ReadFailed,
     Timeout,
     PersistFailed,
