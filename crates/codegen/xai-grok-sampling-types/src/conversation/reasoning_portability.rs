@@ -1,5 +1,6 @@
 //! Outbound thinking/reasoning is minted per wire protocol and rejected if replayed
-//! onto another (`Invalid signature in thinking block`, `Invalid 'input[N].id': ''`).
+//! onto another (`Invalid signature in thinking block`, `Invalid 'input[N].id': ''`,
+//! `Could not decrypt the provided encrypted_content`).
 //! Conversation history is left intact; converters omit foreign payloads at request build.
 
 use crate::gemini::GEMINI_THOUGHT_SIG_PREFIX;
@@ -18,24 +19,41 @@ fn blob(r: &ReasoningItem) -> &str {
     r.encrypted_content.as_deref().unwrap_or("")
 }
 
+fn is_openai_reasoning(r: &ReasoningItem) -> bool {
+    r.id.starts_with(OPENAI_REASONING_ID_PREFIX) || blob(r).starts_with(OPENAI_ENC_PREFIX)
+}
+
+fn is_xai_reasoning(r: &ReasoningItem) -> bool {
+    r.id.starts_with(XAI_ENC_PREFIX) || blob(r).starts_with(XAI_ENC_PREFIX)
+}
+
+fn dest_name_contains(model: Option<&str>, needle: &str) -> bool {
+    model.is_some_and(|m| m.to_ascii_lowercase().contains(needle))
+}
+
 /// Whether this item can be sent on `/v1/responses` without a foreign-payload 400.
-pub(crate) fn reasoning_is_portable_to_responses(r: &ReasoningItem) -> bool {
-    let id = r.id.as_str();
-    let enc = blob(r);
-    if id.starts_with(OPENAI_REASONING_ID_PREFIX)
-        || id.starts_with(XAI_ENC_PREFIX)
-        || enc.starts_with(OPENAI_ENC_PREFIX)
-        || enc.starts_with(XAI_ENC_PREFIX)
-    {
-        return true;
+///
+/// OpenAI (`gAAAAA` / `rs_`) and xAI (`tco_`) blobs only round-trip to the
+/// provider that minted them. `dest_model` is the request's target slug
+/// (`gpt-6-astra`, `uniapi-gpt-6-astra`, `grok-4.7`, …).
+pub(crate) fn reasoning_is_portable_to_responses(
+    r: &ReasoningItem,
+    dest_model: Option<&str>,
+) -> bool {
+    if is_openai_reasoning(r) {
+        return dest_name_contains(dest_model, "gpt");
     }
+    if is_xai_reasoning(r) {
+        return dest_name_contains(dest_model, "grok");
+    }
+    let enc = blob(r);
     if enc.starts_with(ANTHROPIC_SIG_PREFIX) || enc.starts_with(GEMINI_THOUGHT_SIG_PREFIX) {
         return false;
     }
     // Synthesized plaintext thinking (empty id, no blob) is not a Responses item.
     // Claude thinking is the `CA…` case above. Other encrypted blobs with an
     // empty id still go out; the API may assign identity.
-    !(id.is_empty() && enc.is_empty())
+    !(r.id.is_empty() && enc.is_empty())
 }
 
 /// Whether this item can be sent on `/v1/messages` as a thinking block.
@@ -77,32 +95,46 @@ mod tests {
     }
 
     #[test]
-    fn responses_keeps_openai_and_xai_drops_claude() {
-        assert!(reasoning_is_portable_to_responses(&item(
-            "rs_abc",
-            Some("gAAAAAencrypted")
-        )));
-        assert!(reasoning_is_portable_to_responses(&item(
-            "tco_res-uuid",
-            Some("tco_SEALED")
-        )));
-        assert!(reasoning_is_portable_to_responses(&item(
-            "r1",
-            Some("enc_secret_reasoning_chain")
-        )));
-        assert!(!reasoning_is_portable_to_responses(&item(
-            "",
-            Some("CAsignature")
-        )));
-        assert!(!reasoning_is_portable_to_responses(&item("", None)));
-        assert!(reasoning_is_portable_to_responses(&item(
-            "",
-            Some("enc_hidden_thoughts")
-        )));
-        assert!(!reasoning_is_portable_to_responses(&item(
-            "",
-            Some("gsig:GEMINI_SIG")
-        )));
+    fn responses_keeps_openai_only_for_gpt_destination() {
+        let openai = item("rs_abc", Some("gAAAAAencrypted"));
+        let xai = item("tco_res-uuid", Some("tco_SEALED"));
+        let generic = item("r1", Some("enc_secret_reasoning_chain"));
+        let claude = item("", Some("CAsignature"));
+        let empty = item("", None);
+        let other_enc = item("", Some("enc_hidden_thoughts"));
+        let gemini = item("", Some("gsig:GEMINI_SIG"));
+
+        assert!(reasoning_is_portable_to_responses(
+            &openai,
+            Some("gpt-6-astra")
+        ));
+        assert!(reasoning_is_portable_to_responses(
+            &openai,
+            Some("uniapi-gpt-6-astra")
+        ));
+        assert!(!reasoning_is_portable_to_responses(
+            &openai,
+            Some("grok-4.7")
+        ));
+        assert!(!reasoning_is_portable_to_responses(&openai, None));
+
+        assert!(reasoning_is_portable_to_responses(
+            &xai,
+            Some("grok-4.7-build-fast")
+        ));
+        assert!(!reasoning_is_portable_to_responses(
+            &xai,
+            Some("gpt-6-astra")
+        ));
+        assert!(!reasoning_is_portable_to_responses(&xai, None));
+
+        for dest in [Some("grok-4.7"), Some("gpt-6-astra"), None] {
+            assert!(reasoning_is_portable_to_responses(&generic, dest));
+            assert!(!reasoning_is_portable_to_responses(&claude, dest));
+            assert!(!reasoning_is_portable_to_responses(&empty, dest));
+            assert!(reasoning_is_portable_to_responses(&other_enc, dest));
+            assert!(!reasoning_is_portable_to_responses(&gemini, dest));
+        }
     }
 
     #[test]

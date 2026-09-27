@@ -87,6 +87,8 @@ Grok 支持四种 API 后端。在 `[model.*]` 配置中设置 `api_backend`，�
 
 `"gemini"` 的 `base_url` 是 API 根地址。末尾的 `/v1` 或 `/v1beta` 会被去掉，因此 OpenAI 风格的 URL 仍会打到 Gemini 原生路径。认证沿用现有 Bearer / `x-api-key`，并额外带上 python-genai 使用的 `x-goog-api-key`。思考内容和 `thoughtSignature` 只在 Gemini 上原样回传。
 
+会话中途换模型时（例如 Responses 的 `gpt-6-astra` 换到 Messages 的 Claude，或换到 Grok）会保留全文。下一次请求会丢掉目标解不开的思考块：OpenAI 的 `gAAAAA…` / `rs_…` 只在目标模型名含 `gpt` 时带回；xAI 的 `tco_…` 只在含 `grok` 时带回；Responses 上丢掉 Anthropic 的 `CA…` / 空 id；非 Gemini 丢掉 `gsig:…`。这样不用做有损压缩，也能避开 `Invalid signature in thinking block`、`Invalid 'input[N].id': ''` 和 `Could not decrypt the provided encrypted_content`。不同的 `model_family` 仍会单独触发压缩。
+
 若要发送提供商专用的身份验证或版本标头——例如 Anthropic 的 `x-api-key`——请使用下面介绍的 `extra_headers` 字段。Grok 会将这些标头原样随每个请求发送到端点。
 
 ---

@@ -1658,9 +1658,8 @@ fn input_reasoning_ids(req: &ConversationRequest) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn responses_omits_claude_thinking_keeps_openai_and_xai() {
-    let req = ConversationRequest::from_items(vec![
+fn mixed_provider_history() -> Vec<ConversationItem> {
+    vec![
         ConversationItem::user("hi"),
         reasoning_sibling("", "claude thought", Some("CAsignature")),
         ConversationItem::assistant("from claude"),
@@ -1668,23 +1667,45 @@ fn responses_omits_claude_thinking_keeps_openai_and_xai() {
         ConversationItem::assistant("from astra"),
         reasoning_sibling("tco_res", "grok thought", Some("tco_SEALED")),
         ConversationItem::assistant("from grok"),
-    ]);
-    let ids = input_reasoning_ids(&req);
-    assert_eq!(
-        ids,
-        vec!["rs_1".to_string(), "tco_res".to_string()],
-        "{ids:?}"
-    );
-    let input = input_items_json(&req);
-    let texts: Vec<&str> = input
-        .iter()
+    ]
+}
+
+fn assistant_texts(req: &ConversationRequest) -> Vec<String> {
+    input_items_json(req)
+        .into_iter()
         .filter(|v| v.get("role").and_then(|r| r.as_str()) == Some("assistant"))
-        .filter_map(|v| v.get("content").and_then(|c| c.as_str()))
-        .collect();
-    assert!(
-        texts.contains(&"from claude")
-            && texts.contains(&"from astra")
-            && texts.contains(&"from grok"),
-        "assistant text must survive outbound reasoning sanitizing: {input:?}"
+        .filter_map(|v| v.get("content").and_then(|c| c.as_str()).map(str::to_owned))
+        .collect()
+}
+
+#[test]
+fn responses_to_gpt_keeps_openai_drops_xai_and_claude() {
+    let req = ConversationRequest::from_items(mixed_provider_history()).with_model("gpt-6-astra");
+    assert_eq!(input_reasoning_ids(&req), vec!["rs_1".to_string()]);
+    let texts = assistant_texts(&req);
+    assert_eq!(
+        texts,
+        vec![
+            "from claude".to_string(),
+            "from astra".to_string(),
+            "from grok".to_string()
+        ],
+        "{texts:?}"
+    );
+}
+
+#[test]
+fn responses_to_grok_keeps_xai_drops_openai_and_claude() {
+    let req = ConversationRequest::from_items(mixed_provider_history()).with_model("grok-4.7");
+    assert_eq!(input_reasoning_ids(&req), vec!["tco_res".to_string()]);
+    let texts = assistant_texts(&req);
+    assert_eq!(
+        texts,
+        vec![
+            "from claude".to_string(),
+            "from astra".to_string(),
+            "from grok".to_string()
+        ],
+        "{texts:?}"
     );
 }
