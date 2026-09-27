@@ -831,6 +831,14 @@ pub fn bracketed_payload_matches_clipboard_text(
     }
 }
 
+/// Whether a bracketed frame delivered text rather than a raster paste.
+/// A raster cannot travel in the frame, so a terminal-mediated image paste carries no text at all. Text in the frame
+/// means something pasted that text — an IME committing a composition, a tmux buffer — so a raster still on the
+/// pasteboard belongs to an earlier copy rather than to this paste.
+pub fn bracketed_payload_carries_text(payload: &str) -> bool {
+    !payload.trim().is_empty()
+}
+
 /// Routing plan for attachment pasteboard probes (testable without subprocesses).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentProbeRoute {
@@ -1664,6 +1672,17 @@ mod tests {
         assert!(bracketed_payload_matches_clipboard_text("  ", None));
         assert!(bracketed_payload_matches_clipboard_text("", Some("")));
         assert!(!bracketed_payload_matches_clipboard_text("", Some("text")));
+    }
+
+    #[test]
+    fn bracketed_payload_carries_text_only_when_text_travels() {
+        assert!(bracketed_payload_carries_text("中"));
+        assert!(bracketed_payload_carries_text("中文输入"));
+        assert!(bracketed_payload_carries_text("tmux buffer"));
+        assert!(bracketed_payload_carries_text("/tmp/a.png"));
+        assert!(!bracketed_payload_carries_text(""));
+        assert!(!bracketed_payload_carries_text("   "));
+        assert!(!bracketed_payload_carries_text("\r\n"));
     }
 
     #[test]

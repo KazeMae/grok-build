@@ -160,14 +160,19 @@ pub(super) fn probe_clipboard_attachment_blocking(
     probe_bracketed: bool,
     images_dir: Option<std::path::PathBuf>,
 ) -> ClipboardProbeStage {
+    // Frame shape for the paste-attach decisions below; the payload itself never reaches the log.
+    tracing::debug!(
+        bracketed = probe_bracketed,
+        payload_len = probe_text.as_deref().map_or(0, str::len),
+        "clipboard attachment probe"
+    );
     let (image, file_urls) = crate::clipboard::guarded_pasteboard_read(
         change_count,
         crate::clipboard::clipboard_change_count,
         || {
             if probe_bracketed {
-                match crate::clipboard::bracketed_payload_came_from_clipboard_result(
-                    probe_text.as_deref().unwrap_or(""),
-                ) {
+                let payload = probe_text.as_deref().unwrap_or("");
+                match crate::clipboard::bracketed_payload_came_from_clipboard_result(payload) {
                     Ok(true) => {}
                     Ok(false) => {
                         return Err(ClipboardProbeDropReason::BracketedPayloadMismatch);
@@ -175,6 +180,10 @@ pub(super) fn probe_clipboard_attachment_blocking(
                     Err(_) => {
                         return Err(ClipboardProbeDropReason::BracketedOriginReadFailed);
                     }
+                }
+                // A frame carrying text is a text insert; a raster left on the board belongs to an earlier copy.
+                if crate::clipboard::bracketed_payload_carries_text(payload) {
+                    return Err(ClipboardProbeDropReason::BracketedPayloadTextOnly);
                 }
             }
             crate::clipboard::system_clipboard_probe_attachments(probe_text.as_deref())
@@ -244,7 +253,8 @@ pub(super) async fn bounded_clipboard_probe(
                 ClipboardProbeDropReason::PasteboardChangedBeforeRead
                 | ClipboardProbeDropReason::PasteboardChangedAfterRead
                 | ClipboardProbeDropReason::BracketedPayloadMismatch
-                | ClipboardProbeDropReason::BracketedOriginReadFailed => {
+                | ClipboardProbeDropReason::BracketedOriginReadFailed
+                | ClipboardProbeDropReason::BracketedPayloadTextOnly => {
                     ProbedAttachment::ProbeDropped
                 }
             };
