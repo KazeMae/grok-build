@@ -90,7 +90,7 @@ env_key = "GEMINI_API_KEY"
 
 Auth is the existing Bearer (or `x-api-key`) credential, also sent as `x-goog-api-key` to match [python-genai](https://github.com/googleapis/python-genai). Thinking parts and `thoughtSignature` round-trip on Gemini and are omitted on other backends.
 
-Switching mid-session across backends (for example Responses `gpt-6-astra` to Messages Claude) keeps the full transcript. On the next request Grok omits thinking/reasoning blobs the destination protocol cannot verify — OpenAI `gAAAAA…` / xAI `tco_…` signatures on Messages, Anthropic `CA…` / empty-id items on Responses, and Gemini `gsig:…` thought signatures on anything but Gemini. That avoids `Invalid signature in thinking block` and `Invalid 'input[N].id': ''` without a lossy compact. Distinct `model_family` values still trigger a separate compact.
+Switching mid-session across backends (for example Responses `gpt-6-astra` to Messages Claude, or `gpt-6-astra` to Grok) keeps the full transcript. On the next request Grok omits thinking/reasoning blobs the destination cannot verify — OpenAI `gAAAAA…` / `rs_…` items except when the target model name contains `gpt`, xAI `tco_…` items except when it contains `grok`, Anthropic `CA…` / empty-id items on Responses, and Gemini `gsig:…` thought signatures on anything but Gemini. That avoids `Invalid signature in thinking block`, `Invalid 'input[N].id': ''`, and `Could not decrypt the provided encrypted_content` without a lossy compact. Distinct `model_family` values still trigger a separate compact.
 
 To send provider-specific authentication or version headers -- for example, Anthropic's `x-api-key` -- use the `extra_headers` field described below. Grok sends those headers verbatim with every request to the endpoint.
 

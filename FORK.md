@@ -112,9 +112,11 @@ Personal patches on top of that base:
   behavior. No gateway changes or switch to Chat Completions are required.
 - `4b0c930d` omits reasoning blobs the destination protocol cannot verify from
   outbound Messages and Responses requests: OpenAI `gAAAAA` and xAI `tco_`
-  signatures on Messages, Anthropic `CA` and empty-id items on Responses. A
-  mid-session backend switch then keeps the transcript instead of needing a lossy
-  compact.
+  signatures on Messages, Anthropic `CA` and empty-id items on Responses. OpenAI
+  `gAAAAA` / `rs_` items are also omitted on Responses unless the target model
+  name contains `gpt` (so Astra → Grok drops thinking instead of 400ing on
+  `encrypted_content`). A mid-session backend switch then keeps the transcript
+  instead of needing a lossy compact.
 - `1ab66565` ports GrokZen locale catalogs, default `zh-CN` UI, and the compile-time
   `privacy` feature (Mixpanel / product events / OTLP export hard-off).
 - `c07120c2` adds the settings Appearance locale switch, `[session] length_salvage_budget`,

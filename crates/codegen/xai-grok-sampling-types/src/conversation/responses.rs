@@ -161,10 +161,11 @@ impl From<&ConversationRequest> for rs::CreateResponse {
 
 /// Reasoning items stay top-level siblings rather than folding into the assistant, so the input replays the model's original order.
 pub(super) fn build_responses_input(req: &ConversationRequest) -> rs::InputParam {
+    let dest_model = req.model.as_deref();
     let items: Vec<rs::InputItem> = req
         .items
         .iter()
-        .flat_map(conversation_item_to_input_items)
+        .flat_map(|item| conversation_item_to_input_items(item, dest_model))
         .collect();
     rs::InputParam::Items(items)
 }
@@ -192,7 +193,10 @@ pub fn patch_reasoning_text_types(body: &mut serde_json::Value) {
     }
 }
 
-fn conversation_item_to_input_items(item: &ConversationItem) -> Vec<rs::InputItem> {
+fn conversation_item_to_input_items(
+    item: &ConversationItem,
+    dest_model: Option<&str>,
+) -> Vec<rs::InputItem> {
     match item {
         ConversationItem::System(s) => {
             vec![rs::InputItem::EasyMessage(rs::EasyInputMessage {
@@ -210,7 +214,7 @@ fn conversation_item_to_input_items(item: &ConversationItem) -> Vec<rs::InputIte
             })]
         }
         ConversationItem::Reasoning(r) => {
-            if !reasoning_is_portable_to_responses(r) {
+            if !reasoning_is_portable_to_responses(r, dest_model) {
                 return Vec::new();
             }
             // `status` is output-only and rejected on input.
