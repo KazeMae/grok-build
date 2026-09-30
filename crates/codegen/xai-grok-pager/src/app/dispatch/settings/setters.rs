@@ -1,12 +1,12 @@
 //! Individual setting setters with persistence effects and toasts.
 
 use super::ui::{
-    refresh_open_settings_modals, save_success_toast_with_locale, setting_already_default_toast,
-    setting_cleared_toast, show_restart_required_setting_choice_toast,
-    show_restart_required_setting_success_toast, show_setting_choice_toast,
-    show_setting_success_toast, show_setting_value_toast,
+    refresh_open_settings_modals, save_success_toast, save_success_toast_with_locale,
+    setting_already_default_toast, setting_cleared_toast,
+    show_restart_required_setting_choice_toast, show_restart_required_setting_success_toast,
+    show_setting_choice_toast, show_setting_success_toast, show_setting_value_toast,
 };
-use crate::app::actions::Effect;
+use crate::app::actions::{Effect, ModelChoice};
 use crate::app::app_view::{ActiveView, AppView};
 use crate::settings::PendingWrite;
 use agent_client_protocol as acp;
@@ -1976,8 +1976,7 @@ pub(in crate::app::dispatch) fn set_default_model(
         effects.push(Effect::SwitchModel {
             agent_id: aid,
             session_id: sid,
-            model_id: new_id,
-            effort: None,
+            choice: ModelChoice::new(new_id),
             prev_model_id: prev_id.clone(),
         });
     } else if let Some(agent) = app.agents.get_mut(&aid) {
