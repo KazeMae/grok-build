@@ -699,7 +699,6 @@ pub fn mcp_status_label_with_locale(
 
 // ── Session picker builders ──────────────────────────────────────────────────
 
-
 /// Render a search bar from a [`PickerState`] using its grapheme-safe viewport.
 pub fn render_picker_search_bar(
     buf: &mut Buffer,

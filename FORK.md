@@ -35,6 +35,33 @@ commits. Stage named files instead of the whole worktree.
 
 ## Current Version
 
+Version: `1.0.45+kazemae.16` (review branch `merge/upstream-1.0.45`). Upstream
+package version is `1.0.45`; the monorepo snapshot is `2bdd1d6a`
+(`SOURCE_REV` `559751fdcec0`). That jump covers two *Synced from monorepo*
+commits on 2026-09-29 (`97f190f` then `2bdd1d6`), 991 files from `f0e3be11`.
+Git reported 42 content conflicts. Overlay resolution keeps upstream structure
+and re-threads locale / CJK / privacy / throughput / GPT thinking omission on
+top. New upstream crates (`xai-grok-lifecycle`, `xai-grok-permission-rules`,
+`xai-grok-cloud-config`, Claude import) stay; the fork still ships
+`xai-grok-locale` and `xai-grok-product`. Recap and turn-summary keep the
+fork's `collect_background` metering inside upstream's timeout. Privacy still
+hard-disables telemetry ahead of upstream's `Distribution` gate.
+
+Validation on macOS Apple Silicon (Rust 1.94.0):
+
+- `cargo fmt --all -- --check` and strict Clippy for pager, pager-bin,
+  pager-minimal, shell, and mixpanel passed (`-D warnings`).
+- `cargo test --locked -p xai-grok-sampler -p xai-grok-sampling-types --lib -- --test-threads=1`
+  passed (257 + 309 tests), covering keepalive and reasoning portability.
+- Pager `--lib` tests still cannot compile because of pre-existing upstream
+  test-target errors; production application Clippy and PR CI are the gate.
+- GitHub Actions `fmt / clippy / build` on the merge PR is the remaining gate
+  before tagging `v1.0.45+kazemae.16` and replacing local `grokx`.
+
+## Previous Versions
+
+### 1.0.41+kazemae.10
+
 Version: `1.0.41+kazemae.10` (annotated tag `v1.0.41+kazemae.10`). Review branch
 `merge/upstream-1.0.41-036a5d83`, merged into `main` as `8c096396` via PR #12
 after Linux x86_64 and macOS aarch64 CI passed. Upstream package version remains
@@ -278,7 +305,7 @@ command below for this baseline; the tracing test itself is unchanged.
 ## Verify and Build
 
 Install the toolchain in `rust-toolchain.toml` and DotSlash as described in
-[README.md](README.md#building-from-source). Version `1.0.41+kazemae.10` uses
+[README.md](README.md#building-from-source). Version `1.0.45+kazemae.16` uses
 Rust 1.94.0.
 
 ```sh
@@ -292,7 +319,7 @@ rustfmt --edition 2024 --check \
 
 cargo clippy --locked --workspace --no-deps --keep-going -- -D warnings
 
-GROK_VERSION=1.0.41+kazemae.10 cargo build --locked -p xai-grok-pager-bin --release
+GROK_VERSION=1.0.45+kazemae.16 cargo build --locked -p xai-grok-pager-bin --release
 ./target/release/xai-grok-pager --version
 ```
 
@@ -357,6 +384,6 @@ git push origin main
 
 Use a new `GROK_VERSION` value and annotated tag for each published personal
 version, preserving the upstream numeric version (for example,
-`1.0.41+kazemae.9`). Update this document's patch and validation records for the
+`1.0.45+kazemae.16`). Update this document's patch and validation records for the
 new version. Do not change the generated root `Cargo.toml` just to stamp a local
 binary version.

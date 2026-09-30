@@ -2450,7 +2450,10 @@ impl AgentView {
         let usage_warning = usage_warning_text.as_deref();
         let usage_warning_critical = warning.is_some_and(|(_, critical)| critical);
         let model_label = crate::views::localized_model_name(
-            model_id.clone(),
+            self.session
+                .models
+                .footer_label()
+                .unwrap_or_else(|| self.session.models.current_model_name().unwrap_or_default()),
             self.session.models.reasoning_effort,
             locale,
         );

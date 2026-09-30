@@ -121,7 +121,7 @@ impl SessionActor {
 
         let response = match tokio::time::timeout(
             settings.timeout,
-            self.collect_background(&setup.client, request, std::time::Duration::from_secs(300)),
+            self.collect_background(&client, request, std::time::Duration::from_secs(300)),
         )
         .await
         {

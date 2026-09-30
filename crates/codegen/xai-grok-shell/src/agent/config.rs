@@ -56,7 +56,9 @@ pub const DEFAULT_AGENT_TYPE: &str = "grok-build-plan";
 pub(crate) fn default_agent_type() -> String {
     DEFAULT_AGENT_TYPE.to_owned()
 }
-pub use xai_grok_config::{CLI_CHAT_PROXY_BASE_URL_DEFAULT, EndpointsConfig};
+pub use xai_grok_config::{
+    CLI_CHAT_PROXY_BASE_URL_DEFAULT, EndpointsConfig, XAI_API_BASE_URL_DEFAULT,
+};
 const NO_INLINE_CITATIONS_RESPONSE_INCLUDE: &str = "no_inline_citations";
 /// One or more environment variable names that may hold a model API key.
 /// Serde `untagged`: accepts a string or an array in TOML/JSON.
@@ -5081,7 +5083,6 @@ fn force_login_team_from_requirements() -> Option<xai_grok_login::ForceLoginTeam
         &crate::config::load_merged_requirements()?,
     )
 }
-
 
 #[cfg(test)]
 #[path = "config_tests.rs"]

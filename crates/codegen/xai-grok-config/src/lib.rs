@@ -69,7 +69,7 @@ pub use config_layers::{
 };
 pub use display_refresh::DisplayRefreshSettings;
 pub use distribution::{Capability, Distribution};
-pub use endpoints::{CLI_CHAT_PROXY_BASE_URL_DEFAULT, EndpointsConfig};
+pub use endpoints::{CLI_CHAT_PROXY_BASE_URL_DEFAULT, EndpointsConfig, XAI_API_BASE_URL_DEFAULT};
 pub use env_overlay::{
     GROK_CONFIG_ENV, GROK_CONFIG_PATH_ENV, OverlaySource, ResolvedOverlay, resolved_env_overlay,
 };

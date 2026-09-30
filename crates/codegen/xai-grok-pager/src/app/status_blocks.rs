@@ -268,8 +268,7 @@ pub(crate) fn session_usage_block_text_with_locale(
             .into_owned()
         };
     }
-    let mut rows = Vec::new();
-    rows.push(
+    let mut rows = vec![
         status_text(
             locale,
             "status.usage.input_tokens",
@@ -277,8 +276,6 @@ pub(crate) fn session_usage_block_text_with_locale(
         )
         .replace("{input}", &group_thousands(t.input_tokens))
         .replace("{cached}", &group_thousands(t.cached_read_tokens)),
-    );
-    rows.push(
         status_text(
             locale,
             "status.usage.output_tokens",
@@ -286,16 +283,12 @@ pub(crate) fn session_usage_block_text_with_locale(
         )
         .replace("{output}", &group_thousands(t.output_tokens))
         .replace("{reasoning}", &group_thousands(t.reasoning_tokens)),
-    );
-    rows.push(
         status_text(
             locale,
             "status.usage.total_tokens",
             "  Total tokens:   {total}",
         )
         .replace("{total}", &group_thousands(t.total_tokens)),
-    );
-    rows.push(
         status_text(
             locale,
             "status.usage.model_calls",
@@ -306,16 +299,12 @@ pub(crate) fn session_usage_block_text_with_locale(
             "{time}",
             &format_duration(std::time::Duration::from_millis(t.api_duration_ms)),
         ),
-    );
-    rows.push(
         status_text(locale, "status.usage.cost", "  Cost:           {cost}")
             .replace("{cost}", &format_cost(t, locale)),
-    );
+    ];
     if usage.model_usage.len() > 1 {
         rows.push(String::new());
-        rows.push(
-            status_text(locale, "status.usage.by_model", "  By model:").into_owned(),
-        );
+        rows.push(status_text(locale, "status.usage.by_model", "  By model:").into_owned());
         for (model, m) in &usage.model_usage {
             rows.push(format_by_model_row(model, m, locale));
         }

@@ -1920,9 +1920,7 @@ impl AgentView {
                         &self.session.models,
                         args_query,
                     ),
-                    "theme" | "t" => {
-                        modal_static_text(locale, "picker.title.theme", "Pick theme")
-                    }
+                    "theme" | "t" => modal_static_text(locale, "picker.title.theme", "Pick theme"),
                     _ => modal_static_text(locale, "picker.title.option", "Pick option"),
                 };
                 let localized_displays: Vec<String> = items

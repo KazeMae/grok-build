@@ -1696,6 +1696,18 @@ pub(in crate::app::dispatch) fn handle_session_created(
     }
     abandoned_husk_cleanup_effects(app, session_id)
 }
+pub(in crate::app::dispatch) fn apply_session_modes_dropping_auto(
+    agent: &mut AgentView,
+    modes: Option<acp::SessionModeState>,
+    permission_mode: &mut Option<String>,
+) {
+    let was_auto = permission_mode.as_deref() == Some("auto");
+    agent.apply_session_modes(modes);
+    if was_auto {
+        *permission_mode = Some("ask".into());
+    }
+}
+
 /// Mode changes made before the session was bound (Shift+Tab on a pre-session
 /// agent) go out ahead of the queued first prompt, so the shell enforces the
 /// displayed mode when that prompt's tool calls arrive.

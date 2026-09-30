@@ -56,7 +56,6 @@ fn turn_format(
     output
 }
 
-
 /// Show each spinner frame for this many animation ticks.
 /// At ~30fps, 4 ticks is ~133ms per frame, about 7.5 spinner fps.
 pub(crate) const SPINNER_DIVISOR: u64 = 4;

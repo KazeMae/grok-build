@@ -1646,11 +1646,12 @@ fn apply_child_hook_annotation(
         return false;
     }
     let event = match kind {
-        HookAnnotationKind::Note => SessionEvent::HookAnnotation {
-            message: message.to_owned(),
-        },
         HookAnnotationKind::ToolOutcome => SessionEvent::HookOutcome {
             message: message.to_owned(),
+        },
+        _ => SessionEvent::HookAnnotation {
+            message: message.to_owned(),
+            kind: Some(*kind),
         },
     };
     child_view
