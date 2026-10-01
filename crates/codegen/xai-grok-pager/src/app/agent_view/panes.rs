@@ -435,10 +435,7 @@ impl AgentView {
                 (
                     DockWatcherId::Monitor(t.task_id.clone()),
                     crate::views::dock::DockRow {
-                        kind: locale
-                            .map(|locale| locale.named_static_text("dock.kind.monitor", "Monitor"))
-                            .unwrap_or("Monitor")
-                            .into(),
+                        kind: t.display_kind().into(),
                         description,
                         activity: None,
                         meta: crate::views::dock::fmt_elapsed(elapsed),

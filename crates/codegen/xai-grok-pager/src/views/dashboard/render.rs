@@ -13,6 +13,7 @@ use super::state::{
     DashboardRowId, DashboardState, DashboardStopAction, Filter, Focusable, Grouping,
     LocationPickerState, RenameDraft, RowState, SectionKey,
 };
+use crate::app::actions::PermissionLabel;
 use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
 use crate::render::line_utils::truncate_str;
@@ -2325,16 +2326,20 @@ fn paint_dispatch_config_badge(
             bold: false,
         }),
         DashboardDispatchMode::Auto => flags.push(PromptFlag {
-            text: dashboard_static(locale, "mode.auto.label", "auto"),
+            text: dashboard_static(
+                locale,
+                "mode.auto.label",
+                PermissionLabel::Auto.display_name(),
+            ),
             color: Some(theme.accent_system),
             bold: false,
         }),
         DashboardDispatchMode::AlwaysApprove => flags.push(PromptFlag {
-            text: locale
-                .map(|locale| {
-                    locale.named_static_text("mode.always_approve.label", "always-approve")
-                })
-                .unwrap_or("always-approve"),
+            text: dashboard_static(
+                locale,
+                "mode.always_approve.label",
+                PermissionLabel::AlwaysApprove.display_name(),
+            ),
             color: None,
             bold: false,
         }),
