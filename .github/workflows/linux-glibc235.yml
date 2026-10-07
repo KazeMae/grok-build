@@ -29,6 +29,10 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Overlay source at the tagged merge; this workflow file lives only
+          # on build/linux-glibc235.
+          ref: 33d66cf1ab859bfe476e5c95ddb375cc0621fc5f
 
       - name: Install Rust toolchain
         run: rustup show
@@ -59,7 +63,7 @@ jobs:
           "$bin" --version | grep -qF "$GROK_VERSION"
           ldd "$bin" || true
           objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -u | tee glibc-syms.txt
-          if grep -E 'GLIBC_2\.(39|4[0-9]|[5-9])' glibc-syms.txt; then
+          if grep -E 'GLIBC_2\.(39|[4-9][0-9])' glibc-syms.txt; then
             echo "binary still requires glibc newer than 2.35"
             exit 1
           fi
