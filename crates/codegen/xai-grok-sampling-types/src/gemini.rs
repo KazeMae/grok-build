@@ -155,6 +155,8 @@ pub struct GenerationConfig {
     pub response_schema: Option<serde_json::Value>,
 }
 
+/// Gemini 2.5 takes `thinkingBudget`. Gemini 3 and later take `thinkingLevel`
+/// and reject a budget with HTTP 400. The two fields are mutually exclusive.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
@@ -162,6 +164,21 @@ pub struct ThinkingConfig {
     pub include_thoughts: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_budget: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<String>,
+}
+
+/// Gemini 3+ (`gemini-3…`, `gemini-4-argon`, `gemini-flash-latest`) speak
+/// `thinkingLevel`. Gemini 2.5 and unknown ids keep the token budget.
+pub fn gemini_uses_thinking_level(model: &str) -> bool {
+    let id = model
+        .trim()
+        .trim_start_matches("models/")
+        .to_ascii_lowercase();
+    id.starts_with("gemini-3")
+        || id.starts_with("gemini-4")
+        || id == "gemini-flash-latest"
+        || id == "gemini-flash-lite-latest"
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

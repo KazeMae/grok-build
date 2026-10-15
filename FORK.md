@@ -154,7 +154,9 @@ Personal patches on top of that base:
 - `81904d59` adds a native Gemini `generateContent` REST/SSE backend
   (`api_backend = "gemini"`), distinct from OpenAI-compatible Chat Completions.
   `ApiBackend::default_max_request_bytes` (new upstream) now also covers the
-  `Gemini` arm.
+  `Gemini` arm. Gemini 3 and later send `thinkingLevel` (Argon clamps
+  `minimal` to `low` and `xhigh` / `max` to `high`); Gemini 2.5 keeps
+  `thinkingBudget`.
 
 Upstream still implements neither heartbeat ignore nor reasoning omission, so those
 two patches remain required. Telemetry stays compile-time locked. The Gemini backend

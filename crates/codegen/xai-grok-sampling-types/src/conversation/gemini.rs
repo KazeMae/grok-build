@@ -3,7 +3,8 @@ use super::*;
 use crate::gemini::{
     GeminiContent, GeminiFunctionCall, GeminiFunctionDeclaration, GeminiFunctionResponse,
     GeminiFunctionResponsePart, GeminiInlineData, GeminiPart, GeminiTool, GenerateContentRequest,
-    GenerationConfig, ThinkingConfig, json_schema_to_gemini_schema, wire_thought_signature,
+    GenerationConfig, ThinkingConfig, gemini_uses_thinking_level, json_schema_to_gemini_schema,
+    wire_thought_signature,
 };
 
 /// Map a conversation onto Gemini `generateContent` JSON (python-genai REST).
@@ -156,22 +157,13 @@ pub fn build_gemini_request(req: &ConversationRequest) -> GenerateContentRequest
         }])
     };
 
-    let thinking_budget = req.reasoning_effort.map(|effort| match effort {
-        crate::ReasoningEffort::None | crate::ReasoningEffort::Minimal => 0,
-        crate::ReasoningEffort::Low => 1024,
-        crate::ReasoningEffort::Medium => 8192,
-        crate::ReasoningEffort::High => 16384,
-        crate::ReasoningEffort::Xhigh | crate::ReasoningEffort::Max => -1,
-    });
+    let thinking_config = thinking_config_for(req.model.as_deref(), req.reasoning_effort);
 
     let generation_config = Some(GenerationConfig {
         temperature: req.temperature,
         top_p: req.top_p,
         max_output_tokens: req.max_output_tokens,
-        thinking_config: Some(ThinkingConfig {
-            include_thoughts: Some(true),
-            thinking_budget,
-        }),
+        thinking_config,
         response_mime_type: req
             .json_schema
             .as_ref()
@@ -208,6 +200,45 @@ pub fn gemini_api_root(base_url: &str) -> String {
         }
     }
     root
+}
+
+/// Gemini 3+ rejects `thinkingBudget` ("Use thinking level instead").
+/// Older models keep the token budget. The two fields are never both set.
+/// Gemini 4 Argon only accepts low/medium/high, so minimal/none clamp to low
+/// and xhigh/max clamp to high.
+fn thinking_config_for(
+    model: Option<&str>,
+    effort: Option<crate::ReasoningEffort>,
+) -> Option<ThinkingConfig> {
+    let effort = effort?;
+    if gemini_uses_thinking_level(model.unwrap_or("")) {
+        let level = match effort {
+            crate::ReasoningEffort::None | crate::ReasoningEffort::Minimal => "low",
+            crate::ReasoningEffort::Low => "low",
+            crate::ReasoningEffort::Medium => "medium",
+            crate::ReasoningEffort::High
+            | crate::ReasoningEffort::Xhigh
+            | crate::ReasoningEffort::Max => "high",
+        };
+        Some(ThinkingConfig {
+            include_thoughts: Some(true),
+            thinking_level: Some(level.to_string()),
+            ..ThinkingConfig::default()
+        })
+    } else {
+        let thinking_budget = match effort {
+            crate::ReasoningEffort::None | crate::ReasoningEffort::Minimal => 0,
+            crate::ReasoningEffort::Low => 1024,
+            crate::ReasoningEffort::Medium => 8192,
+            crate::ReasoningEffort::High => 16384,
+            crate::ReasoningEffort::Xhigh | crate::ReasoningEffort::Max => -1,
+        };
+        Some(ThinkingConfig {
+            include_thoughts: Some(true),
+            thinking_budget: Some(thinking_budget),
+            ..ThinkingConfig::default()
+        })
+    }
 }
 
 pub fn gemini_generate_path(model: &str, stream: bool) -> String {
@@ -291,6 +322,87 @@ mod tests {
         ConversationItem::user(text)
     }
 
+    fn thinking_of(req: &ConversationRequest) -> ThinkingConfig {
+        build_gemini_request(req)
+            .generation_config
+            .and_then(|c| c.thinking_config)
+            .expect("thinking config")
+    }
+
+    #[test]
+    fn gemini_4_argon_sends_thinking_level_not_budget() {
+        let req = ConversationRequest {
+            items: vec![user("hi")],
+            model: Some("gemini-4-argon".into()),
+            reasoning_effort: Some(crate::ReasoningEffort::Max),
+            ..Default::default()
+        };
+        let thinking = thinking_of(&req);
+        assert_eq!(thinking.thinking_level.as_deref(), Some("high"));
+        assert!(thinking.thinking_budget.is_none());
+        let wire = serde_json::to_value(build_gemini_request(&req)).expect("serialize");
+        let wire_text = wire.to_string();
+        assert!(
+            !wire_text.contains("thinkingBudget"),
+            "Gemini 4 rejects thinkingBudget: {wire_text}"
+        );
+        assert!(wire_text.contains("thinkingLevel"));
+    }
+
+    #[test]
+    fn gemini_3_flash_latest_also_uses_thinking_level() {
+        let req = ConversationRequest {
+            items: vec![user("hi")],
+            model: Some("models/gemini-3.8-flash".into()),
+            reasoning_effort: Some(crate::ReasoningEffort::Minimal),
+            ..Default::default()
+        };
+        let thinking = thinking_of(&req);
+        assert_eq!(thinking.thinking_level.as_deref(), Some("low"));
+        assert!(thinking.thinking_budget.is_none());
+
+        let latest = ConversationRequest {
+            items: vec![user("hi")],
+            model: Some("gemini-flash-latest".into()),
+            reasoning_effort: Some(crate::ReasoningEffort::Medium),
+            ..Default::default()
+        };
+        assert_eq!(
+            thinking_of(&latest).thinking_level.as_deref(),
+            Some("medium")
+        );
+    }
+
+    #[test]
+    fn gemini_25_keeps_thinking_budget() {
+        let req = ConversationRequest {
+            items: vec![user("hi")],
+            model: Some("gemini-2.5-flash".into()),
+            reasoning_effort: Some(crate::ReasoningEffort::Low),
+            ..Default::default()
+        };
+        let thinking = thinking_of(&req);
+        assert_eq!(thinking.thinking_budget, Some(1024));
+        assert!(thinking.thinking_level.is_none());
+        let wire = serde_json::to_string(&build_gemini_request(&req)).expect("serialize");
+        assert!(!wire.contains("thinkingLevel"));
+    }
+
+    #[test]
+    fn omits_thinking_config_without_effort() {
+        let req = ConversationRequest {
+            items: vec![user("hi")],
+            model: Some("gemini-4-argon".into()),
+            ..Default::default()
+        };
+        assert!(
+            build_gemini_request(&req)
+                .generation_config
+                .and_then(|c| c.thinking_config)
+                .is_none()
+        );
+    }
+
     #[test]
     fn maps_user_and_system() {
         let req = ConversationRequest {
@@ -312,12 +424,11 @@ mod tests {
             g.contents.first().and_then(|c| c.role.as_deref()),
             Some("user")
         );
-        assert_eq!(
+        assert!(
             g.generation_config
                 .as_ref()
                 .and_then(|c| c.thinking_config.as_ref())
-                .and_then(|t| t.include_thoughts),
-            Some(true)
+                .is_none()
         );
     }
 

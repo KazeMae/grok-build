@@ -88,7 +88,7 @@ api_backend = "gemini"
 env_key = "GEMINI_API_KEY"
 ```
 
-Auth is the existing Bearer (or `x-api-key`) credential, also sent as `x-goog-api-key` to match [python-genai](https://github.com/googleapis/python-genai). Thinking parts and `thoughtSignature` round-trip on Gemini and are omitted on other backends.
+Auth is the existing Bearer (or `x-api-key`) credential, also sent as `x-goog-api-key` to match [python-genai](https://github.com/googleapis/python-genai). Thinking parts and `thoughtSignature` round-trip on Gemini and are omitted on other backends. Reasoning effort is sent as `thinkingLevel` on Gemini 3 and later (`gemini-3…`, `gemini-4-argon`, `gemini-flash-latest`) and as `thinkingBudget` on Gemini 2.5. Gemini 4 Argon accepts only `low`, `medium`, and `high`, so `minimal` is sent as `low` and `xhigh` / `max` as `high`.
 
 Switching mid-session across backends (for example Responses `gpt-6-astra` to Messages Claude, or `gpt-6-astra` to Grok) keeps the full transcript. On the next request Grok omits thinking/reasoning blobs the destination cannot verify — OpenAI `gAAAAA…` / `rs_…` items except when the target model name contains `gpt`, xAI `tco_…` items except when it contains `grok`, Anthropic `CA…` / empty-id items on Responses, and Gemini `gsig:…` thought signatures on anything but Gemini. That avoids `Invalid signature in thinking block`, `Invalid 'input[N].id': ''`, and `Could not decrypt the provided encrypted_content` without a lossy compact. Distinct `model_family` values still trigger a separate compact.
 
